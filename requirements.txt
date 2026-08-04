@@ -1,1 +1,2 @@
 # torch, numpy and Pillow are supplied by ComfyUI.
+imageio-ffmpeg>=0.5

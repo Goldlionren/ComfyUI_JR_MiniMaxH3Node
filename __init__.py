@@ -7,6 +7,7 @@ from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
 from .nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner
 
 __version__ = "0.1.0"
+WEB_DIRECTORY = "./js"
 
 NODE_CLASS_MAPPINGS = {
     "JR_H3_OpenAICompatiblePromptOptimizer": JR_H3_OpenAICompatiblePromptOptimizer,
@@ -24,4 +25,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_LastFrame": "JR MiniMax H3 Last Frame",
 }
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "__version__"]
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY", "__version__"]

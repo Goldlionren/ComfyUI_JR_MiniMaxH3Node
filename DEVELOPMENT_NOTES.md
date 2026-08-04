@@ -2,13 +2,15 @@
 
 ## Local ComfyUI skill rules applied
 
-The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills` were read before implementation: basics, inputs, outputs, datatypes, lifecycle, packaging, and migration. The frontend skill was not needed because standard ComfyUI output preview payloads are sufficient.
+The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills` were read before implementation: basics, inputs, outputs, datatypes, lifecycle, packaging, migration, and frontend. The frontend skill became necessary when Enhanced Video Combine added its interactive player, export checkboxes, download action, and compatibility-preview fallback.
 
 - Phase 1 deliberately uses the V1 Python node API requested by the task: `INPUT_TYPES`, `FUNCTION`, `RETURN_TYPES`, tuple results, and root `NODE_CLASS_MAPPINGS`/`NODE_DISPLAY_NAME_MAPPINGS`.
 - Node IDs use the globally unique `JR_H3_` prefix and should remain stable after release.
 - Execution parameters match input IDs; optional values have defaults. Every data result matches the declared output count and order.
 - IMAGE values are tensors shaped `[B,H,W,C]`. Tensor existence is checked with `is not None`, not truthiness. Last Frame preserves the batch dimension.
 - Output-writing nodes use `OUTPUT_NODE = True`; video encoding uses `IS_CHANGED` so queuing creates a fresh output.
+- V1 UI results use `{"ui": ..., "result": (...)}`. Enhanced Video Combine publishes complete `gifs` and `images` asset descriptors and exposes `WEB_DIRECTORY = "./js"` for its DOM preview widget.
+- Frontend extensions import only the stable `scripts/app` and `scripts/api` modules, preserve existing node lifecycle callbacks, prevent DOM interactions from reaching the canvas, and release the video element when a node is removed.
 - Validation that depends on actual tensors, CUDA, FFmpeg, HTTP, or optional SDKs occurs only during execution.
 - Imports do not contact HTTP services, run FFmpeg, initialize CUDA, or import `nvvfx`.
 - ComfyUI already supplies torch, NumPy, and Pillow, so they are not duplicated in ordinary requirements.

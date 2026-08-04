@@ -7,7 +7,7 @@ Five focused ComfyUI V1 nodes for preparing prompts, calculating dimensions, opt
 - **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** calls `/v1/models` and `/v1/chat/completions`, accepts text plus up to nine IMAGE sockets, and always returns optimized prompt, original prompt, and status. Its built-in Chinese H3 director prompt enforces reference-image mapping, timed shot headings, continuity, hard constraints, and a visible final state, with Standard, Cinematic Drama, Action, and Character Consistency profiles.
 - **JR MiniMax H3 Resolution Scale Calculator** preserves a selected aspect ratio within a target pixel area and aligns both dimensions to 8, 16, or 32.
 - **JR MiniMax H3 RTX Upscaler & Refiner** exposes denoise, deblur, VSR/high-bitrate and sizing controls while loading optional RTX dependencies only on execution.
-- **JR MiniMax H3 Enhanced Video Combine** sends an IMAGE batch to FFmpeg, supports H.264/H.265/VP9, MP4/WebM/MKV, CRF quality, optional AUDIO, metadata, ping-pong, first/last PNG export, saved filename, and optional frame pass-through.
+- **JR MiniMax H3 Enhanced Video Combine** provides an in-node video player, Autoplay and Download controls, first/last-frame save controls, ComfyUI Assets publication, AV1/VP9/H.265/H.264 with GPU-to-software fallback, 8/10-bit output, MP4/WebM/MKV and animated WebP/AVIF, configurable audio, metadata, ping-pong, and optional frame pass-through.
 - **JR MiniMax H3 Last Frame** returns `frames[-1:].contiguous()` and therefore preserves `[1,H,W,C]`, dtype, device, channels, and values.
 
 ## Installation
@@ -63,9 +63,15 @@ RTX Upscaler & Refiner returns RGB. If all effects are off it safely passes RGB 
 
 ## Video combine and Last Frame
 
-Connect an IMAGE batch, select frame rate/codec/container/quality, and queue the output node. `pingpong` appends reversed interior frames. Optional AUDIO is written to a temporary WAV and muxed, with cleanup in `finally`. Metadata is bounded. FFmpeg runs with an argument array, never `shell=True`, has a timeout, checks the return code, and limits surfaced stderr.
+Connect an IMAGE batch, select frame rate/codec/container/bit depth/quality, and queue the output node. The completed video appears inside the node with native playback controls, resolution, duration, FPS, Autoplay and Download. Hovering enables preview audio; leaving mutes it. AV1, HEVC, 10-bit, MKV, and other browser-incompatible results use a streamed H.264 compatibility preview without changing or duplicating the saved source file.
 
-Filename input is reduced to a safe basename to prevent traversal; spaces and Unicode are supported. First/last exports are PNG files beside the video.
+`codec=Auto` runtime-tests AV1/WebM, VP9/WebM, then H.264/MP4. Explicit codecs prefer NVIDIA NVENC, Intel QSV, AMD AMF, VAAPI, then software encoding. A final H.264/MP4 fallback is always attempted. Explicit codecs can auto-detect 8- versus 10-bit frame quantization; Auto uses browser-safe 8-bit. Animated WebP/AVIF are explicit container choices and omit connected audio.
+
+Optional AUDIO supports Auto/AAC/Opus/MP3 and 64k–320k bitrate selection; `crop_to_audio` limits output to the audio duration. Temporary raw audio, metadata and failed partial files are cleaned up. Frames are streamed to FFmpeg in bounded chunks, encoding progress is reported to ComfyUI, subprocess execution has a timeout, and surfaced stderr is bounded.
+
+Filename prefixes support safe subfolders, Unicode, `%date%`, `%date:yyyy-MM-dd%`, and `%date:hhmmss%`. `save_output=true` writes to ComfyUI output; false writes to temp. The encoded file and selected native-resolution first/last PNGs are published to ComfyUI Assets. Existing workflows from the earlier JR node schema are migrated by the frontend when loaded.
+
+See [`docs/ENHANCED_VIDEO_COMBINE.md`](docs/ENHANCED_VIDEO_COMBINE.md) for the complete codec, container, preview, audio, timeout, and fallback behavior.
 
 **To connect the `frames` output to JR MiniMax H3 Last Frame, enable `pass_frames`.** When false, the node deliberately returns an empty IMAGE batch. A saved last-frame PNG is a disk artifact and is not the graph's IMAGE output. See `examples/WORKFLOW_WIRING.md`.
 
@@ -75,15 +81,16 @@ Filename input is reduced to a safe basename to prevent traversal; spaces and Un
 - **HTTP 401:** check the API key; it is not included in the displayed error.
 - **No models:** enter the exact model ID or ensure `/v1/models` returns a non-empty `data` list.
 - **FFmpeg not found:** install FFmpeg and restart ComfyUI so its PATH is refreshed.
-- **WebM error:** select VP9 with WebM, or use Auto/H.264/MP4.
+- **Preview unavailable:** confirm FFmpeg provides `libx264`; unsupported source formats use the `/jr-h3/enhanced-video-preview` compatibility stream.
+- **Auto chose a lower-priority codec:** a listed hardware/software encoder failed a real runtime attempt, so the node continued to the next compatible choice.
 - **Last Frame says empty batch:** enable `pass_frames` on Enhanced Video Combine.
 - **RTX error:** verify CUDA, the GPU/driver, NVIDIA SDK, and the SDK-specific `nvvfx` binding.
 
 ## Known limitations and licensing
 
 - RTX SDK bindings are not standardized. The installed binding must expose `VideoSuperRes` plus the requested VSR/Denoise/Deblur/High-Bitrate `QualityLevel` enum values.
-- Video Auto currently selects the broadly compatible H.264/MP4 path, rather than probing every advertised hardware encoder.
-- FFmpeg encoding timeout is 300 seconds per node execution.
+- Animated WebP and Animated AVIF cannot mux AUDIO; the node logs that the connected audio was omitted.
+- FFmpeg encoding has a 3600-second overall limit, a short no-progress guard for hardware candidates, and a 120-second progress-stall guard; preview stream reads have a 60-second inactivity timeout.
 - The task's DaSiWa license description did not match the cloned repository. No GPL source was incorporated. See `DEVELOPMENT_NOTES.md`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for exact commits and provenance.
 
 The JR source is licensed under Apache-2.0. FFmpeg, NVIDIA SDKs, ComfyUI, and reference repositories retain their own licenses.

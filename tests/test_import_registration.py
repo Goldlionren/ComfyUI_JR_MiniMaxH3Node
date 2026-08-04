@@ -13,6 +13,7 @@ def test_root_import_and_exact_registration(package_name):
     assert set(package.NODE_DISPLAY_NAME_MAPPINGS) == EXPECTED
     assert all(name.startswith("JR MiniMax H3") for name in package.NODE_DISPLAY_NAME_MAPPINGS.values())
     assert package.__version__ == "0.1.0"
+    assert package.WEB_DIRECTORY == "./js"
 
 
 def test_rtx_dependency_is_lazy(package_name):
