@@ -1,0 +1,3 @@
+# Install the NVIDIA Video Effects SDK Python binding that provides `nvvfx`.
+# NVIDIA distributes this component separately and availability depends on SDK version/platform.
+nvvfx; platform_system == "Windows"

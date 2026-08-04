@@ -1,0 +1,7 @@
+ComfyUI_JR_MiniMaxH3Node
+Copyright 2026 JR MiniMax H3 Node contributors
+
+This product includes independent implementations inspired by the documented behavior of
+ComfyUI-DaSiWa-Nodes and Comfyui-minimaxh3-FBcache-shendumao. No source code from either
+reference repository is included. Exact reference commits and observed licenses are recorded
+in THIRD_PARTY_NOTICES.md.
