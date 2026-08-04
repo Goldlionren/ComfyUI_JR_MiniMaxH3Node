@@ -15,7 +15,9 @@ The development task stated that this repository was Apache-2.0. The actual chec
 - Shallow-clone commit: `8d2aa84f7f5fe66398b2c6db192a2cbd3a1926af`
 - Referenced behavior: OpenAI-compatible prompt optimization, multiple reference images, profile selection, original/optimized/status outputs, and safe fallback.
 
-The optimizer in this project is a clean-room implementation. It does not copy `h3_ollama_prompt_optimizer.py`, its comments, system prompts, large strings, function organization, variable names, or Ollama calls.
+The OpenAI-compatible request layer and node implementation in this project are independent and do not bundle the upstream Python file, comments, function organization, assets, or Ollama request code. At the user's request, the H3 system-prompt constraint strategy was aligned with `_build_system_prompt` from the referenced commit, then reorganized and rewritten for this project's OpenAI-compatible workflow.
+
+No top-level license file was present in the shallow checkout at the recorded commit. This notice provides attribution and does not grant rights to the upstream repository; review its current terms before reusing upstream material.
 
 ## Runtime tools
 

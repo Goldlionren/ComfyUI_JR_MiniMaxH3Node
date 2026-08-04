@@ -1,96 +1,126 @@
 # ComfyUI JR MiniMax H3 Node
 
-Five focused ComfyUI V1 nodes for preparing prompts, calculating dimensions, optional RTX enhancement, encoding IMAGE batches, and carrying the last video frame into the next MiniMax H3 segment.
+A focused ComfyUI custom-node suite for MiniMax H3 prompt preparation, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
 
-## Nodes
+面向 MiniMax H3 视频工作流的 ComfyUI 节点套件：提示词优化、分辨率计算、RTX 放大与修复、视频合成预览，以及末帧续接。
 
-- **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** calls `/v1/models` and `/v1/chat/completions`, accepts text plus up to nine IMAGE sockets, and always returns optimized prompt, original prompt, and status. Its built-in Chinese H3 director prompt enforces reference-image mapping, timed shot headings, continuity, hard constraints, and a visible final state, with Standard, Cinematic Drama, Action, and Character Consistency profiles.
-- **JR MiniMax H3 Resolution Scale Calculator** preserves a selected aspect ratio within a target pixel area and aligns both dimensions to 8, 16, or 32.
-- **JR MiniMax H3 RTX Upscaler & Refiner** exposes denoise, deblur, VSR/high-bitrate and sizing controls while loading optional RTX dependencies only on execution.
-- **JR MiniMax H3 Enhanced Video Combine** provides an in-node video player, Autoplay and Download controls, first/last-frame save controls, ComfyUI Assets publication, AV1/VP9/H.265/H.264 with GPU-to-software fallback, 8/10-bit output, MP4/WebM/MKV and animated WebP/AVIF, configurable audio, metadata, ping-pong, and optional frame pass-through.
-- **JR MiniMax H3 Last Frame** returns `frames[-1:].contiguous()` and therefore preserves `[1,H,W,C]`, dtype, device, channels, and values.
+## 功能概览
 
-## Installation
+| 节点 | 用途 |
+| --- | --- |
+| **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** | 通过 OpenAI 兼容的 `/v1/models` 与 `/v1/chat/completions` 接口，把简短创意和最多 9 路参考图整理成 H3 中文分镜提示词。 |
+| **JR MiniMax H3 Resolution Scale Calculator** | 按目标像素面积、宽高比和 8/16/32 倍数计算适合视频模型的宽高。 |
+| **JR MiniMax H3 RTX Upscaler & Refiner** | 使用 NVIDIA Video Effects SDK 执行 Denoise、Deblur、VSR/High Bitrate 与尺寸调整；依赖按执行时加载。 |
+| **JR MiniMax H3 Enhanced Video Combine** | 将 IMAGE 批次编码为视频或动画，支持节点内预览、Download、首尾帧保存、音频、metadata、ping-pong 和帧透传。 |
+| **JR MiniMax H3 Last Frame** | 从 IMAGE 批次提取最后一帧，供下一段 H3 视频继续生成。 |
 
-Copy or link this project into `ComfyUI\custom_nodes`, then install ordinary dependencies in the same Python environment as ComfyUI:
+节点分类统一位于 `JR MiniMax H3`。
 
-```powershell
-cd F:\ComfyUI-aki-v3\ComfyUI
-python -m pip install -r F:\AI\custom_nodes\ComfyUI_JR_MiniMaxH3Node\requirements.txt
-Copy-Item -Recurse -Force `
-  'F:\AI\custom_nodes\ComfyUI_JR_MiniMaxH3Node' `
-  'F:\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI_JR_MiniMaxH3Node'
-```
+## 安装
 
-Do the copy only while ComfyUI is stopped. The development process does not modify the production directory.
-
-FFmpeg must be installed and `ffmpeg.exe` must be on `PATH` (or available through `imageio-ffmpeg`). Video encoding is performed only when the combine node executes.
-
-RTX processing is optional. It requires a compatible NVIDIA RTX GPU, current driver, NVIDIA Video Effects SDK, and a Python binding that provides `nvvfx`:
+在 ComfyUI 停止运行时，进入它的 `custom_nodes` 目录：
 
 ```powershell
-python -m pip install -r F:\AI\custom_nodes\ComfyUI_JR_MiniMaxH3Node\requirements-rtx.txt
+git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 ```
 
-NVIDIA SDK packaging changes between releases; verify the SDK's Windows installation instructions. A missing SDK never prevents the other four nodes from loading.
-
-## OpenAI-compatible prompt optimization
-
-Example llama.cpp server (replace the placeholder model path):
+然后使用 **ComfyUI 自己的 Python** 安装普通依赖：
 
 ```powershell
-llama-server.exe `
-  -m "F:\Models\YourModel\model.gguf" `
-  --host 127.0.0.1 `
-  --port 10000
+<ComfyUI-Python> -m pip install -r .\ComfyUI_JR_MiniMaxH3Node\requirements.txt
 ```
 
-Set `api_base_url` to any of these equivalent forms: `http://127.0.0.1:10000`, the same URL with `/`, `/v1`, `/v1/`, or `/v1/chat/completions`. The node normalizes them without duplicated path segments. `model` is a plain STRING: enter a model ID to avoid discovery, or leave it empty to select the first ID returned by `/v1/models` during execution.
+例如，Windows Portable 通常可以在 `ComfyUI\custom_nodes` 下执行：
 
-Choose Standard, Cinematic Drama, Action, or Character Consistency. For example, a rough prompt such as “a pilot reaches a storm-lit landing pad and recognizes her brother” becomes a chronological shot description sized to the requested duration and resolution.
+```powershell
+..\..\python_embeded\python.exe -m pip install -r .\ComfyUI_JR_MiniMaxH3Node\requirements.txt
+```
 
-Connect up to nine reference IMAGE inputs. Every batch frame is JPEG-encoded after RGB/RGBA validation, white alpha compositing, clamping, aspect-preserving resize, and is sent after its own `[Picture N]` text separator. Picture aliases in text are normalized to `<Picture N>`.
+重启 ComfyUI。升级插件时进入插件目录执行 `git pull`；如果前端预览控件没有立即更新，请重启 ComfyUI 并对浏览器执行一次强制刷新。
 
-Leave `api_key` blank for local llama.cpp. When non-empty, it is sent only as a Bearer header. Keys, Authorization headers, base64 images, and complete prompts are never logged. Use ComfyUI secrets/environment controls where possible and never publish workflows containing credentials.
+## 运行依赖
 
-With `disable_reasoning=true`, the first request includes common reasoning-disable extensions. An HTTP 400 triggers exactly one retry without those extensions. `Return Original` produces a safe fallback status; `Stop Workflow` raises an error.
+- ComfyUI 已提供 `torch`、`numpy` 和 Pillow，本项目不会重复固定这些大型依赖。
+- 视频合成需要 FFmpeg。节点会使用系统 `ffmpeg.exe`，也会识别 `imageio-ffmpeg` 提供的可执行文件。
+- Prompt Optimizer 需要一个 OpenAI 兼容的本地或远程服务；本地服务可以不填写 API Key。
+- RTX 节点是可选功能，不影响其他四个节点加载。
 
-## Scaling and RTX
+### 可选 RTX 支持
 
-Enter source dimensions, target megapixels, aspect and divisor in Resolution Scale Calculator. Outputs are aligned width, height, geometric scale factor and actual megapixels.
+需要 Windows、兼容的 NVIDIA RTX GPU/驱动，以及能够导入 `nvvfx` 的 NVIDIA Video Effects SDK Python binding：
 
-RTX Upscaler & Refiner returns RGB. If all effects are off it safely passes RGB through. The NVIDIA binding represents VSR, High Bitrate, Denoise, and Deblur through one `nvvfx.VideoSuperRes` class; the node selects the operation with `QualityLevel` values such as `DENOISE_HIGH`, `DEBLUR_HIGH`, and `HIGHBITRATE_HIGH`. Enabled passes run in Denoise → Deblur → Upscale order, reuse their effects across the batch, clone every DLPack result, and release each SDK context after execution.
+```powershell
+<ComfyUI-Python> -m pip install -r .\ComfyUI_JR_MiniMaxH3Node\requirements-rtx.txt
+```
 
-## Video combine and Last Frame
+当前可安装发行包名为 `nvidia-vfx`，Python 导入名为 `nvvfx`。不同 SDK/binding 版本暴露的效果和枚举可能不同；节点会在执行时给出明确错误，不会在 ComfyUI 启动阶段初始化 CUDA 或 SDK。
 
-Connect an IMAGE batch, select frame rate/codec/container/bit depth/quality, and queue the output node. The completed video appears inside the node with native playback controls, resolution, duration, FPS, Autoplay and Download. Hovering enables preview audio; leaving mutes it. AV1, HEVC, 10-bit, MKV, and other browser-incompatible results use a streamed H.264 compatibility preview without changing or duplicating the saved source file.
+## Prompt Optimizer
 
-`codec=Auto` runtime-tests AV1/WebM, VP9/WebM, then H.264/MP4. Explicit codecs prefer NVIDIA NVENC, Intel QSV, AMD AMF, VAAPI, then software encoding. A final H.264/MP4 fallback is always attempted. Explicit codecs can auto-detect 8- versus 10-bit frame quantization; Auto uses browser-safe 8-bit. Animated WebP/AVIF are explicit container choices and omit connected audio.
+`api_base_url` 可填写服务根地址、`/v1` 或完整的 `/v1/chat/completions` 地址，节点会统一规范化。`model` 留空时才会在执行阶段调用 `/v1/models` 自动选择模型。
 
-Optional AUDIO supports Auto/AAC/Opus/MP3 and 64k–320k bitrate selection; `crop_to_audio` limits output to the audio duration. Temporary raw audio, metadata and failed partial files are cleaned up. Frames are streamed to FFmpeg in bounded chunks, encoding progress is reported to ComfyUI, subprocess execution has a timeout, and surfaced stderr is bounded.
+支持四种优化档位：Standard、Cinematic Drama、Action、Character Consistency。内置 H3 中文导演提示词会处理 `<Picture N>` 映射、镜头时间轴、人物与场景连续性、硬约束和清晰的结束状态。
 
-Filename prefixes support safe subfolders, Unicode, `%date%`, `%date:yyyy-MM-dd%`, and `%date:hhmmss%`. `save_output=true` writes to ComfyUI output; false writes to temp. The encoded file and selected native-resolution first/last PNGs are published to ComfyUI Assets. Existing workflows from the earlier JR node schema are migrated by the frontend when loaded.
+节点可连接最多 9 路参考 IMAGE。图片会经过 RGB/RGBA 校验、透明区域白底合成、限边缩放和 JPEG 编码，再按顺序发送。API Key、Authorization header、完整 base64 图片和完整用户提示词不会写入普通日志。
 
-See [`docs/ENHANCED_VIDEO_COMBINE.md`](docs/ENHANCED_VIDEO_COMBINE.md) for the complete codec, container, preview, audio, timeout, and fallback behavior.
+## RTX Upscaler & Refiner
 
-**To connect the `frames` output to JR MiniMax H3 Last Frame, enable `pass_frames`.** When false, the node deliberately returns an empty IMAGE batch. A saved last-frame PNG is a disk artifact and is not the graph's IMAGE output. See `examples/WORKFLOW_WIRING.md`.
+可组合 Denoise、Deblur 与 VSR/High Bitrate 放大。当前 `nvidia-vfx` binding 通过 `nvvfx.VideoSuperRes` 和不同的 `QualityLevel` 枚举选择相应处理模式；节点会复用批次内效果对象，并在执行结束后释放 SDK context。
 
-## Troubleshooting
+所有效果关闭时，节点安全地执行 RGB 透传。建议先用较小的 IMAGE 批次验证当前 GPU、驱动、SDK 和 binding 组合。
 
-- **Connection refused / timeout:** start the OpenAI-compatible service and check its port. Local model discovery happens only when the node runs.
-- **HTTP 401:** check the API key; it is not included in the displayed error.
-- **No models:** enter the exact model ID or ensure `/v1/models` returns a non-empty `data` list.
-- **FFmpeg not found:** install FFmpeg and restart ComfyUI so its PATH is refreshed.
-- **Preview unavailable:** confirm FFmpeg provides `libx264`; unsupported source formats use the `/jr-h3/enhanced-video-preview` compatibility stream.
-- **Auto chose a lower-priority codec:** a listed hardware/software encoder failed a real runtime attempt, so the node continued to the next compatible choice.
-- **Last Frame says empty batch:** enable `pass_frames` on Enhanced Video Combine.
-- **RTX error:** verify CUDA, the GPU/driver, NVIDIA SDK, and the SDK-specific `nvvfx` binding.
+## Enhanced Video Combine
 
-## Known limitations and licensing
+主要能力：
 
-- RTX SDK bindings are not standardized. The installed binding must expose `VideoSuperRes` plus the requested VSR/Denoise/Deblur/High-Bitrate `QualityLevel` enum values.
-- Animated WebP and Animated AVIF cannot mux AUDIO; the node logs that the connected audio was omitted.
-- FFmpeg encoding has a 3600-second overall limit, a short no-progress guard for hardware candidates, and a 120-second progress-stall guard; preview stream reads have a 60-second inactivity timeout.
-- The task's DaSiWa license description did not match the cloned repository. No GPL source was incorporated. See `DEVELOPMENT_NOTES.md`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for exact commits and provenance.
+- 节点内视频播放器、Autoplay、Download，以及分辨率、时长和 FPS 信息
+- AV1、VP9、H.265、H.264；MP4、WebM、MKV；Animated WebP、Animated AVIF
+- NVIDIA NVENC、Intel QSV、AMD AMF、VAAPI 到软件编码器的逐级回退
+- 8/10-bit 输出、质量控制、ping-pong、metadata 和安全的日期/子目录文件名
+- 可选 AUDIO、AAC/Opus/MP3、64k–320k bitrate 和 `crop_to_audio`
+- 保存原生分辨率首帧/末帧，并将视频和图片发布到 ComfyUI Assets
+- 按块向 FFmpeg 输送帧、ComfyUI 进度反馈、超时、卡死检测和失败文件清理
 
-The JR source is licensed under Apache-2.0. FFmpeg, NVIDIA SDKs, ComfyUI, and reference repositories retain their own licenses.
+`codec=Auto` 会依次实际尝试 AV1/WebM、VP9/WebM、H.264/MP4。浏览器不支持直接播放的 AV1、HEVC、10-bit 或 MKV 文件会通过临时 H.264 兼容流预览，但 Download 始终下载原始输出文件。
+
+完整参数和回退逻辑见 [`docs/ENHANCED_VIDEO_COMBINE.md`](docs/ENHANCED_VIDEO_COMBINE.md)。
+
+## 末帧续接
+
+如果要把合成节点的 `frames` 输出连接到 **JR MiniMax H3 Last Frame**，必须启用 `pass_frames`：
+
+```text
+MiniMax H3 IMAGE frames
+  -> JR MiniMax H3 Enhanced Video Combine (images)
+       pass_frames = true
+       frames -> JR MiniMax H3 Last Frame (frames)
+                    image -> Preview Image / 下一段 H3 的首帧输入
+```
+
+`save_last_frame=true` 保存的是磁盘 PNG，不等同于节点图中的 IMAGE 输出。更多说明见 [`examples/WORKFLOW_WIRING.md`](examples/WORKFLOW_WIRING.md)。
+
+## 常见问题
+
+- **找不到 FFmpeg：** 确认已安装 `requirements.txt`，或者把 `ffmpeg.exe` 加入 ComfyUI 进程的 PATH，然后重启 ComfyUI。
+- **没有视频预览或 Download：** 确认整个 `js` 目录和根目录 `__init__.py` 已更新，并强制刷新浏览器。
+- **Prompt Optimizer 连接失败：** 检查服务地址和端口；模型发现只在节点执行时发生。
+- **HTTP 401：** 检查 API Key；错误消息不会回显密钥。
+- **Last Frame 收到空批次：** 在 Enhanced Video Combine 中启用 `pass_frames`。
+- **RTX 执行失败：** 检查 `nvidia-vfx`、NVIDIA Video Effects SDK、驱动和当前 binding 暴露的 `QualityLevel`。
+- **Auto 选择了较低优先级编码器：** 更高优先级候选在真实运行测试中失败或没有产生进度，节点已自动继续回退。
+
+## 开发与验证
+
+```powershell
+python -m pytest -q
+python -m compileall -q .
+python -m ruff check . --exclude .reference
+```
+
+开发过程遵循延迟加载原则：import 阶段不会访问网络、加载模型、初始化 CUDA/RTX SDK 或启动 FFmpeg。网络请求、文件操作和 FFmpeg 子进程均包含异常处理、超时与资源清理。
+
+## 许可证与来源
+
+本项目源代码采用 [Apache License 2.0](LICENSE)。FFmpeg、NVIDIA SDK/binding、ComfyUI 和参考仓库保留各自的许可证与使用条款。
+
+功能设计参考了 ComfyUI-DaSiWa-Nodes 与 Comfyui-minimaxh3-FBcache-shendumao。DaSiWa 的实现未被复制到本项目；H3 提示词约束策略根据参考实现重新组织和改写。具体参考 commit、观察到的许可证和归属说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 与 [`NOTICE`](NOTICE)。

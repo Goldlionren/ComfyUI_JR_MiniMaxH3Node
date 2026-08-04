@@ -9,7 +9,12 @@ description = "ComfyUI nodes for MiniMax H3 prompt, scaling, RTX and video workf
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
-dependencies = []
+dependencies = ["imageio-ffmpeg>=0.5"]
+
+[project.urls]
+Repository = "https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node"
+Documentation = "https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node#readme"
+Issues = "https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
