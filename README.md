@@ -4,7 +4,7 @@ Five focused ComfyUI V1 nodes for preparing prompts, calculating dimensions, opt
 
 ## Nodes
 
-- **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** calls `/v1/models` and `/v1/chat/completions`, accepts text plus up to nine IMAGE sockets, and always returns optimized prompt, original prompt, and status.
+- **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** calls `/v1/models` and `/v1/chat/completions`, accepts text plus up to nine IMAGE sockets, and always returns optimized prompt, original prompt, and status. Its built-in Chinese H3 director prompt enforces reference-image mapping, timed shot headings, continuity, hard constraints, and a visible final state, with Standard, Cinematic Drama, Action, and Character Consistency profiles.
 - **JR MiniMax H3 Resolution Scale Calculator** preserves a selected aspect ratio within a target pixel area and aligns both dimensions to 8, 16, or 32.
 - **JR MiniMax H3 RTX Upscaler & Refiner** exposes denoise, deblur, VSR/high-bitrate and sizing controls while loading optional RTX dependencies only on execution.
 - **JR MiniMax H3 Enhanced Video Combine** sends an IMAGE batch to FFmpeg, supports H.264/H.265/VP9, MP4/WebM/MKV, CRF quality, optional AUDIO, metadata, ping-pong, first/last PNG export, saved filename, and optional frame pass-through.
