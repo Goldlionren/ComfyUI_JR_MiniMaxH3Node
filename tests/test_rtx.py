@@ -1,6 +1,35 @@
 import pytest
 import torch
-from ComfyUI_JR_MiniMaxH3Node.nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner, target_size
+from ComfyUI_JR_MiniMaxH3Node.nodes.rtx_upscaler_refiner import (
+    JR_H3_RTXUpscalerRefiner,
+    _quality_level,
+    target_size,
+)
+
+
+class FakeQualityLevel:
+    LOW = "vsr-low"
+    DENOISE_HIGH = "denoise-high"
+    DEBLUR_ULTRA = "deblur-ultra"
+    HIGHBITRATE_MEDIUM = "high-bitrate-medium"
+
+
+@pytest.mark.parametrize(
+    "operation,quality,expected_name,expected_value",
+    [
+        ("VSR", "Low", "LOW", "vsr-low"),
+        ("Denoise", "High", "DENOISE_HIGH", "denoise-high"),
+        ("Deblur", "Ultra", "DEBLUR_ULTRA", "deblur-ultra"),
+        ("High Bitrate", "Medium", "HIGHBITRATE_MEDIUM", "high-bitrate-medium"),
+    ],
+)
+def test_quality_level_uses_single_video_super_res_enum(operation, quality, expected_name, expected_value):
+    assert _quality_level(FakeQualityLevel, operation, quality) == (expected_value, expected_name)
+
+
+def test_missing_effect_quality_is_explicit():
+    with pytest.raises(RuntimeError, match="does not support Denoise"):
+        _quality_level(FakeQualityLevel, "Denoise", "Ultra")
 
 
 def test_target_size_modes():

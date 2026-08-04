@@ -3,6 +3,7 @@
 This module intentionally does not import nvvfx until execution.
 """
 
+import contextlib
 import importlib
 import math
 
@@ -32,13 +33,102 @@ def target_size(width, height, resize_type, scale, megapixels, target_width, tar
 
 def _load_nvvfx():
     try:
-        return importlib.import_module("nvvfx")
+        module = importlib.import_module("nvvfx")
     except ImportError as error:
         raise RuntimeError(
             "JR MiniMax H3 RTX Upscaler & Refiner requires the 'nvvfx' Python package, "
             "a compatible NVIDIA RTX GPU, driver, and NVIDIA Video Effects SDK. "
             "Install requirements-rtx.txt and follow the RTX section in README.md."
         ) from error
+    effect_type = getattr(module, "VideoSuperRes", None)
+    quality_type = getattr(getattr(module, "effects", None), "QualityLevel", None)
+    if quality_type is None and effect_type is not None:
+        quality_type = getattr(effect_type, "QualityLevel", None)
+    if effect_type is None or quality_type is None:
+        raise RuntimeError("nvvfx is installed but VideoSuperRes or QualityLevel is unavailable.")
+    return effect_type, quality_type
+
+
+def _quality_level(quality_type, operation, quality):
+    suffix = quality.upper()
+    prefixes = {
+        "VSR": ("",),
+        "High Bitrate": ("HIGHBITRATE_", "HIGH_BITRATE_"),
+        "Denoise": ("DENOISE_",),
+        "Deblur": ("DEBLUR_",),
+    }
+    for prefix in prefixes[operation]:
+        name = prefix + suffix
+        if hasattr(quality_type, name):
+            return getattr(quality_type, name), name
+    available = ", ".join(sorted(name for name in dir(quality_type) if name.isupper()))
+    raise RuntimeError(
+        f"The installed nvvfx SDK does not support {operation} quality {quality}. "
+        f"Available QualityLevel values: {available or 'none'}."
+    )
+
+
+def _construct_effect(effect_type, level, device_id):
+    attempts = (
+        ((), {"quality": level, "device": device_id}),
+        ((level,), {"device": device_id}),
+        ((), {"quality": level}),
+        ((level,), {}),
+    )
+    last_error = None
+    for args, kwargs in attempts:
+        try:
+            return effect_type(*args, **kwargs)
+        except TypeError as error:
+            last_error = error
+    raise RuntimeError(f"Unable to construct nvvfx.VideoSuperRes: {last_error}")
+
+
+def _close_effect(effect):
+    for name in ("close", "destroy", "unload"):
+        method = getattr(effect, name, None)
+        if callable(method):
+            method()
+            return
+
+
+@contextlib.contextmanager
+def _effect_context(api, enabled, operation, quality, device_id, width, height):
+    if not enabled:
+        yield None
+        return
+    effect_type, quality_type = api
+    level, level_name = _quality_level(quality_type, operation, quality)
+    effect = _construct_effect(effect_type, level, device_id)
+    manager = effect
+    entered = False
+    try:
+        if hasattr(manager, "__enter__"):
+            effect = manager.__enter__()
+            entered = True
+        effect.output_width = int(width)
+        effect.output_height = int(height)
+        load = getattr(effect, "load", None)
+        if callable(load):
+            load()
+        yield effect
+    except Exception as error:
+        raise RuntimeError(f"nvvfx {operation} ({level_name}) failed: {error}") from error
+    finally:
+        if entered and hasattr(manager, "__exit__"):
+            manager.__exit__(None, None, None)
+        else:
+            _close_effect(effect)
+
+
+def _run_effect(effect, frame, cuda_device):
+    if effect is None:
+        return frame
+    frame = frame.contiguous()
+    torch.cuda.current_stream(cuda_device).synchronize()
+    result = effect.run(frame)
+    torch.cuda.synchronize(cuda_device)
+    return torch.from_dlpack(result.image).clone().contiguous()
 
 
 def _fit_aspect(frame, target_width, target_height, resize_method):
@@ -98,32 +188,38 @@ class JR_H3_RTXUpscalerRefiner:
             return (images[..., :3],)
         if not torch.cuda.is_available():
             raise RuntimeError("JR MiniMax H3 RTX processing requires CUDA and a compatible NVIDIA RTX GPU.")
-        nvvfx = _load_nvvfx()
-        if denoise or deblur:
-            raise RuntimeError(
-                "The installed nvvfx binding exposes VideoSuperRes only; Denoise/Deblur effects are unavailable. "
-                "Disable those passes or install an SDK binding that provides them."
-            )
-        if upscale == "Off":
-            return (images[..., :3],)
-        if not hasattr(nvvfx, "VideoSuperRes"):
-            raise RuntimeError("Installed nvvfx package does not expose VideoSuperRes; see README.md.")
+        if device_id < 0 or device_id >= torch.cuda.device_count():
+            raise ValueError(f"CUDA device_id {device_id} is unavailable; detected {torch.cuda.device_count()} devices.")
+        api = _load_nvvfx()
+        upscale_enabled = upscale != "Off"
         source_height, source_width = images.shape[1:3]
-        output_width, output_height = target_size(
-            source_width, source_height, resize_type, scale, megapixels,
-            width, height, divisible_by, ratio_preset,
-        )
-        quality_type = nvvfx.VideoSuperRes.QualityLevel
-        quality = getattr(quality_type, upscale_quality.upper())
-        output = []
+        if upscale_enabled:
+            output_width, output_height = target_size(
+                source_width, source_height, resize_type, scale, megapixels,
+                width, height, divisible_by, ratio_preset,
+            )
+        else:
+            output_width, output_height = source_width, source_height
         cuda_device = torch.device(f"cuda:{device_id}")
-        with torch.cuda.device(cuda_device), torch.inference_mode(), nvvfx.VideoSuperRes(quality=quality, device=device_id) as effect:
-            effect.output_width = output_width
-            effect.output_height = output_height
-            effect.load()
-            for source in images[..., :3]:
+        output = torch.empty(
+            (images.shape[0], output_height, output_width, 3),
+            device=images.device,
+            dtype=images.dtype,
+        )
+        with (
+            torch.cuda.device(cuda_device),
+            torch.inference_mode(),
+            _effect_context(api, denoise, "Denoise", denoise_quality, device_id, source_width, source_height) as denoise_effect,
+            _effect_context(api, deblur, "Deblur", deblur_quality, device_id, source_width, source_height) as deblur_effect,
+            _effect_context(api, upscale_enabled, upscale, upscale_quality, device_id, output_width, output_height) as upscale_effect,
+        ):
+            for index, source in enumerate(images[..., :3]):
                 frame = source.to(device=cuda_device, dtype=torch.float32).permute(2, 0, 1).contiguous()
-                frame = _fit_aspect(frame, output_width, output_height, resize_method).contiguous()
-                enhanced = torch.from_dlpack(effect.run(frame).image).clone()
-                output.append(enhanced.permute(1, 2, 0).clamp(0, 1).to(device=images.device, dtype=images.dtype))
-        return (torch.stack(output, dim=0),)
+                frame = _run_effect(denoise_effect, frame, cuda_device)
+                frame = _run_effect(deblur_effect, frame, cuda_device)
+                if upscale_enabled:
+                    frame = _fit_aspect(frame, output_width, output_height, resize_method).contiguous()
+                    frame = _run_effect(upscale_effect, frame, cuda_device)
+                result = frame.permute(1, 2, 0).clamp(0, 1).to(device=images.device, dtype=images.dtype)
+                output[index].copy_(result)
+        return (output,)

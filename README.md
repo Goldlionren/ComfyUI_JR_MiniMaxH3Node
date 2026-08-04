@@ -59,7 +59,7 @@ With `disable_reasoning=true`, the first request includes common reasoning-disab
 
 Enter source dimensions, target megapixels, aspect and divisor in Resolution Scale Calculator. Outputs are aligned width, height, geometric scale factor and actual megapixels.
 
-RTX Upscaler & Refiner returns RGB. If all effects are off it safely passes RGB through. VSR and High Bitrate use the installed `nvvfx.VideoSuperRes` DLPack API and process frames sequentially. Any actual RTX operation checks CUDA and the optional binding at execution. If the installed binding provides only VideoSuperRes, selecting Denoise or Deblur raises an explicit error rather than silently skipping the requested pass.
+RTX Upscaler & Refiner returns RGB. If all effects are off it safely passes RGB through. The NVIDIA binding represents VSR, High Bitrate, Denoise, and Deblur through one `nvvfx.VideoSuperRes` class; the node selects the operation with `QualityLevel` values such as `DENOISE_HIGH`, `DEBLUR_HIGH`, and `HIGHBITRATE_HIGH`. Enabled passes run in Denoise → Deblur → Upscale order, reuse their effects across the batch, clone every DLPack result, and release each SDK context after execution.
 
 ## Video combine and Last Frame
 
@@ -81,7 +81,7 @@ Filename input is reduced to a safe basename to prevent traversal; spaces and Un
 
 ## Known limitations and licensing
 
-- RTX SDK bindings are not standardized. VSR is implemented against `nvvfx.VideoSuperRes`; Denoise/Deblur require a binding that exposes those effects and are unavailable in the locally detected VideoSuperRes-only binding.
+- RTX SDK bindings are not standardized. The installed binding must expose `VideoSuperRes` plus the requested VSR/Denoise/Deblur/High-Bitrate `QualityLevel` enum values.
 - Video Auto currently selects the broadly compatible H.264/MP4 path, rather than probing every advertised hardware encoder.
 - FFmpeg encoding timeout is 300 seconds per node execution.
 - The task's DaSiWa license description did not match the cloned repository. No GPL source was incorporated. See `DEVELOPMENT_NOTES.md`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for exact commits and provenance.
