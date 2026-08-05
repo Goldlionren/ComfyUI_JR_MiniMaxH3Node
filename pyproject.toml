@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfyui-jr-minimax-h3-node"
-version = "0.1.0"
-description = "ComfyUI nodes for MiniMax H3 prompt, scaling, RTX and video workflows"
+version = "0.2.0"
+description = "ComfyUI nodes for MiniMax H3 prompt review, scaling, RTX and video workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}

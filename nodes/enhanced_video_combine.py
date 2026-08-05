@@ -503,6 +503,7 @@ def _preview_source_path(filename: str, subfolder: str, output_type: str) -> Pat
 
 try:
     from aiohttp import web
+
     from server import PromptServer
 except ImportError:
     web = None

@@ -3,14 +3,19 @@
 from .nodes.enhanced_video_combine import JR_H3_EnhancedVideoCombine
 from .nodes.h3_openai_prompt_optimizer import JR_H3_OpenAICompatiblePromptOptimizer
 from .nodes.last_frame import JR_H3_LastFrame
+from .nodes.prompt_review_pause import JR_H3_PromptReviewPause
 from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
 from .nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner
+from .server import register_prompt_review_routes
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 WEB_DIRECTORY = "./js"
+
+register_prompt_review_routes()
 
 NODE_CLASS_MAPPINGS = {
     "JR_H3_OpenAICompatiblePromptOptimizer": JR_H3_OpenAICompatiblePromptOptimizer,
+    "JR_H3_PromptReviewPause": JR_H3_PromptReviewPause,
     "JR_H3_RTXUpscalerRefiner": JR_H3_RTXUpscalerRefiner,
     "JR_H3_ResolutionScaleCalculator": JR_H3_ResolutionScaleCalculator,
     "JR_H3_EnhancedVideoCombine": JR_H3_EnhancedVideoCombine,
@@ -19,6 +24,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_OpenAICompatiblePromptOptimizer": "JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)",
+    "JR_H3_PromptReviewPause": "JR MiniMax H3 Prompt Review & Continue",
     "JR_H3_RTXUpscalerRefiner": "JR MiniMax H3 RTX Upscaler & Refiner",
     "JR_H3_ResolutionScaleCalculator": "JR MiniMax H3 Resolution Scale Calculator",
     "JR_H3_EnhancedVideoCombine": "JR MiniMax H3 Enhanced Video Combine",

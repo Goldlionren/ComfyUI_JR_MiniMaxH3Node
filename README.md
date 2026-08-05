@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-A focused ComfyUI custom-node suite for MiniMax H3 prompt preparation, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
+A focused six-node ComfyUI suite for MiniMax H3 prompt preparation and review, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
 
 面向 MiniMax H3 视频工作流的 ComfyUI 节点套件：提示词优化、分辨率计算、RTX 放大与修复、视频合成预览，以及末帧续接。
 
@@ -9,12 +9,13 @@ A focused ComfyUI custom-node suite for MiniMax H3 prompt preparation, resolutio
 | 节点 | 用途 |
 | --- | --- |
 | **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** | 通过 OpenAI 兼容的 `/v1/models` 与 `/v1/chat/completions` 接口，把简短创意和最多 9 路参考图整理成 H3 中文分镜提示词。 |
+| **JR MiniMax H3 Prompt Review & Continue** | 在工作流中暂停，让用户逐字审核或修改 H3 提示词，点击 Next / Continue 后才允许下游继续执行。 |
 | **JR MiniMax H3 Resolution Scale Calculator** | 按目标像素面积、宽高比和 8/16/32 倍数计算适合视频模型的宽高。 |
 | **JR MiniMax H3 RTX Upscaler & Refiner** | 使用 NVIDIA Video Effects SDK 执行 Denoise、Deblur、VSR/High Bitrate 与尺寸调整；依赖按执行时加载。 |
 | **JR MiniMax H3 Enhanced Video Combine** | 将 IMAGE 批次编码为视频或动画，支持节点内预览、Download、首尾帧保存、音频、metadata、ping-pong 和帧透传。 |
 | **JR MiniMax H3 Last Frame** | 从 IMAGE 批次提取最后一帧，供下一段 H3 视频继续生成。 |
 
-节点分类统一位于 `JR MiniMax H3`。
+节点位于 `JR MiniMax H3` 分类；人工审核节点位于其 `Prompt` 子分类。
 
 ## 安装
 
@@ -43,7 +44,7 @@ git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 - ComfyUI 已提供 `torch`、`numpy` 和 Pillow，本项目不会重复固定这些大型依赖。
 - 视频合成需要 FFmpeg。节点会使用系统 `ffmpeg.exe`，也会识别 `imageio-ffmpeg` 提供的可执行文件。
 - Prompt Optimizer 需要一个 OpenAI 兼容的本地或远程服务；本地服务可以不填写 API Key。
-- RTX 节点是可选功能，不影响其他四个节点加载。
+- RTX 节点是可选功能，不影响其他五个节点加载。
 
 ### 可选 RTX 支持
 
@@ -62,6 +63,25 @@ git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 支持四种优化档位：Standard、Cinematic Drama、Action、Character Consistency。内置 H3 中文导演提示词会处理 `<Picture N>` 映射、镜头时间轴、人物与场景连续性、硬约束和清晰的结束状态。
 
 节点可连接最多 9 路参考 IMAGE。图片会经过 RGB/RGBA 校验、透明区域白底合成、限边缩放和 JPEG 编码，再按顺序发送。API Key、Authorization header、完整 base64 图片和完整用户提示词不会写入普通日志。
+
+## Prompt Review & Continue
+
+**JR MiniMax H3 Prompt Review & Continue** is the sixth node and provides a mandatory human-review checkpoint. Connect the Prompt Optimizer's `optimized_prompt` output to its `prompt` socket. When execution reaches this node, the workflow pauses and the incoming text appears in a large editor inside the node.
+
+Edit the text as needed, then click **Next / Continue**. Only the approved text is emitted from `reviewed_prompt`; downstream MiniMax H3 nodes do not execute before approval. Unicode, line breaks, punctuation, and `<Picture N>` tags are preserved exactly.
+
+The review runs again on every queue, even when the input is unchanged. **Stop** cancels the wait, and the configured timeout stops the workflow instead of silently returning the original prompt. This interactive node requires an active ComfyUI browser client and is intentionally unsupported in unattended/headless API workflows. Do not place it in automatic queues or unattended batch jobs. Browser refresh uses the same ComfyUI client ID to recover a still-pending review; closing the browser permanently leaves the workflow waiting until reconnect, Stop, or timeout.
+
+```text
+JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)
+    optimized_prompt
+        -> JR MiniMax H3 Prompt Review & Continue
+             reviewed_prompt
+                 -> MiniMax H3 text prompt input
+```
+
+See [`docs/PROMPT_REVIEW_CONTINUE.md`](docs/PROMPT_REVIEW_CONTINUE.md) for interaction, timeout, cancellation, recovery, and API-mode behavior.
+The importable example [`examples/jr_minimax_h3_prompt_review_workflow.json`](examples/jr_minimax_h3_prompt_review_workflow.json) demonstrates the complete Prompt Optimizer → review pause → downstream text preview chain. Set its API URL and model for your OpenAI-compatible service before running.
 
 ## RTX Upscaler & Refiner
 
