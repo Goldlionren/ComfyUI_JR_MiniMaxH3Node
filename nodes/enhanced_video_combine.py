@@ -44,6 +44,7 @@ _ENCODE_TIMEOUT_SECONDS = 3600
 _HARDWARE_STARTUP_TIMEOUT_SECONDS = 8
 _SOFTWARE_STARTUP_TIMEOUT_SECONDS = 120
 _PROGRESS_STALL_TIMEOUT_SECONDS = 120
+_OUTPUT_ALLOCATION_LOCK = threading.Lock()
 
 
 def _log(message: str) -> None:
@@ -132,30 +133,39 @@ def _safe_relative_prefix(value: str) -> str:
     return "/".join(components) or "jr_h3_video"
 
 
-def _allocate_output(prefix: str, output_dir: str, width: int, height: int):
+def _allocate_output(prefix: str, output_dir: str, width: int, height: int, filename_tag: str | None = None):
     fp = _folder_paths()
     safe_prefix = _safe_relative_prefix(_format_date_tokens(prefix))
+    if filename_tag:
+        parent, separator, name = safe_prefix.rpartition("/")
+        safe_prefix = f"{parent}{separator}{name}_{filename_tag}"
     if hasattr(fp, "get_save_image_path"):
         folder, basename, counter, subfolder, _ = fp.get_save_image_path(safe_prefix, output_dir, width, height)
-        Path(folder).mkdir(parents=True, exist_ok=True)
-        return Path(folder), basename, int(counter), str(subfolder).replace("\\", "/")
-    relative = Path(*safe_prefix.split("/"))
-    folder = Path(output_dir, relative.parent).resolve()
-    root = Path(output_dir).resolve()
-    if os.path.commonpath((str(folder), str(root))) != str(root):
-        raise ValueError("filename_prefix resolves outside the ComfyUI output directory.")
+        folder = Path(folder)
+        counter = int(counter)
+    else:
+        relative = Path(*safe_prefix.split("/"))
+        folder = Path(output_dir, relative.parent).resolve()
+        root = Path(output_dir).resolve()
+        if os.path.commonpath((str(folder), str(root))) != str(root):
+            raise ValueError("filename_prefix resolves outside the ComfyUI output directory.")
+        basename = relative.name
+        counter = 1
+        subfolder = "" if folder == root else folder.relative_to(root).as_posix()
     folder.mkdir(parents=True, exist_ok=True)
-    basename = relative.name
-    counter = 1
-    while any(folder.glob(f"{basename}_{counter:05d}*")):
-        counter += 1
-    subfolder = "" if folder == root else folder.relative_to(root).as_posix()
+    # ComfyUI's image counter does not recognize names such as
+    # ``clip_00001-audio.mp4``. Check every output extension/marker ourselves so
+    # repeated video executions never overwrite an earlier result.
+    with _OUTPUT_ALLOCATION_LOCK:
+        existing = {entry.name.casefold() for entry in folder.iterdir() if entry.is_file()}
+        counter = max(1, counter)
+        while any(name.startswith(f"{basename}_{counter:05d}".casefold()) for name in existing):
+            counter += 1
     return folder, basename, counter, subfolder
 
 
-def _output_name(basename: str, counter: int, extension: str, has_audio: bool) -> str:
-    audio_marker = "-audio" if has_audio else ""
-    return f"{basename}_{counter:05d}{audio_marker}{extension}"
+def _output_name(basename: str, counter: int, extension: str) -> str:
+    return f"{basename}_{counter:05d}{extension}"
 
 
 def _to_raw_bytes(frames: torch.Tensor, bit_depth: int) -> bytes:
@@ -595,7 +605,10 @@ class JR_H3_EnhancedVideoCombine:
         output_dir = fp.get_output_directory() if save_output else fp.get_temp_directory()
         output_type = "output" if save_output else "temp"
         height, width = map(int, images.shape[1:3])
-        output_folder, basename, counter, subfolder = _allocate_output(filename_prefix, output_dir, width, height)
+        audio_filename_tag = "audio" if audio is not None and container not in _ANIMATION_FORMATS else None
+        output_folder, basename, counter, subfolder = _allocate_output(
+            filename_prefix, output_dir, width, height, audio_filename_tag,
+        )
         selected_depth = _resolve_bit_depth(codec, bit_depth, images)
         available = _available_video_encoders(ffmpeg)
         metadata_path = _write_metadata(prompt, extra_pnginfo) if save_metadata else None
@@ -635,7 +648,7 @@ class JR_H3_EnhancedVideoCombine:
                 extension, _ = _ANIMATION_FORMATS[container]
                 if audio_info:
                     _log(f"{container} cannot contain audio; the connected audio is omitted.")
-                output_path = output_folder / _output_name(basename, counter, extension, False)
+                output_path = output_folder / _output_name(basename, counter, extension)
                 encoder = _encode_animation(
                     ffmpeg, available, container, selected_depth, width, height, frame_rate,
                     chunks, output_path, int(quality), progress,
@@ -649,9 +662,7 @@ class JR_H3_EnhancedVideoCombine:
                         if extension is None:
                             failures.append(f"{candidate_codec}/{candidate_container}: incompatible container")
                             continue
-                        candidate_path = output_folder / _output_name(
-                            basename, counter, extension, audio_info is not None,
-                        )
+                        candidate_path = output_folder / _output_name(basename, counter, extension)
                         if codec == "Auto":
                             _log(f"Testing automatic choice {candidate_codec}/{candidate_container}.")
                         try:
@@ -672,7 +683,7 @@ class JR_H3_EnhancedVideoCombine:
                     if output_path is not None:
                         break
                 if output_path is None:
-                    fallback_path = output_folder / _output_name(basename, counter, ".mp4", audio_info is not None)
+                    fallback_path = output_folder / _output_name(basename, counter, ".mp4")
                     _log("Requested combinations failed; trying mandatory H.264/MP4 fallback.")
                     try:
                         encoder = _encode_video(
@@ -701,10 +712,12 @@ class JR_H3_EnhancedVideoCombine:
             mime = _ANIMATION_FORMATS[selected_container][1]
         else:
             mime = _VIDEO_MIME_TYPES[selected_container]
+        output_stat = output_path.stat()
         video_asset = {
             "filename": output_path.name, "subfolder": subfolder, "type": output_type,
             "format": mime, "width": width, "height": height, "codec": selected_codec,
             "bit_depth": selected_depth, "container": selected_container,
+            "preview_id": f"{output_stat.st_mtime_ns:x}-{output_stat.st_size:x}",
         }
         assets = [video_asset]
         assets.extend({

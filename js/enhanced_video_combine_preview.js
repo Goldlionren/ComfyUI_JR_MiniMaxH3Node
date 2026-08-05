@@ -10,6 +10,7 @@ function assetUrl(asset) {
         subfolder: asset.subfolder || "",
         type: asset.type || "output",
     });
+    if (asset.preview_id) query.set("v", asset.preview_id);
     return api.apiURL(`/view?${query.toString()}`);
 }
 
@@ -19,6 +20,7 @@ function compatibilityPreviewUrl(asset) {
         subfolder: asset.subfolder || "",
         type: asset.type || "output",
     });
+    if (asset.preview_id) query.set("v", asset.preview_id);
     return api.apiURL(`/jr-h3/enhanced-video-preview?${query.toString()}`);
 }
 
@@ -204,9 +206,13 @@ function buildPreview(node) {
 
     const selectSource = (asset, forceCompatibility = false) => {
         video.dataset.fallback = forceCompatibility ? "1" : "0";
-        video.src = forceCompatibility || needsCompatibilityPreview(asset)
+        const source = forceCompatibility || needsCompatibilityPreview(asset)
             ? compatibilityPreviewUrl(asset)
             : assetUrl(asset);
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        video.src = source;
         video.load();
     };
 

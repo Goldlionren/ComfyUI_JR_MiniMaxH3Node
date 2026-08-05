@@ -12,6 +12,7 @@ from ComfyUI_JR_MiniMaxH3Node.nodes.enhanced_video_combine import (
     CODECS,
     CONTAINERS,
     JR_H3_EnhancedVideoCombine,
+    _allocate_output,
     _available_video_encoders,
     _codec_order,
     _container_order,
@@ -72,8 +73,10 @@ def test_ffmpeg_smoke_and_frame_contract(tmp_path, directory_name):
             "codec": "H.264",
             "bit_depth": 8,
             "container": "MP4",
+            "preview_id": result["ui"]["gifs"][0]["preview_id"],
             "fps": 4.0,
         }
+        assert result["ui"]["gifs"][0]["preview_id"]
         assert len(result["ui"]["images"]) == 3
     finally:
         if old is None: sys.modules.pop("folder_paths", None)
@@ -126,6 +129,67 @@ def test_date_tokens_and_prefix_safety():
     assert _safe_relative_prefix("C:\\unsafe\\a:b") == "C/unsafe/ab"
 
 
+def test_output_counter_recognizes_audio_marker_and_all_video_extensions(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "clip_audio_00001.mp4").write_bytes(b"first")
+    (output / "clip_audio_00002.webm").write_bytes(b"second")
+    stub = types.SimpleNamespace(
+        get_save_image_path=lambda prefix, _root, _width, _height: (str(output), prefix, 1, "", prefix),
+    )
+    old = sys.modules.get("folder_paths")
+    sys.modules["folder_paths"] = stub
+    try:
+        folder, basename, counter, subfolder = _allocate_output("clip", str(output), 24, 16, "audio")
+        assert (folder, basename, counter, subfolder) == (output, "clip_audio", 3, "")
+    finally:
+        if old is None:
+            sys.modules.pop("folder_paths", None)
+        else:
+            sys.modules["folder_paths"] = old
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="FFmpeg unavailable")
+def test_repeated_audio_video_runs_increment_filename_and_preview_version(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    stub = types.SimpleNamespace(
+        get_output_directory=lambda: str(output),
+        get_temp_directory=lambda: str(output),
+        get_directory_by_type=lambda _kind: str(output),
+        # Simulate a stale/incorrect generic counter suggestion. The node must
+        # still inspect real files before choosing the final number.
+        get_save_image_path=lambda prefix, _root, _width, _height: (str(output), prefix, 1, "", prefix),
+    )
+    old = sys.modules.get("folder_paths")
+    sys.modules["folder_paths"] = stub
+    try:
+        frames = torch.zeros(2, 16, 24, 3)
+        audio = {"waveform": torch.zeros(1, 1, 2000), "sample_rate": 8000}
+        arguments = dict(
+            images=frames, frame_rate=4.0, codec="H.264", container="MP4", bit_depth="8-bit",
+            quality=28, log_level="Standard", pingpong=False, save_metadata=False,
+            filename_prefix="clip", save_output=True, pass_frames=False, crop_to_audio=False,
+            audio_codec="Auto", audio_bitrate="192k", audio=audio,
+        )
+        first = JR_H3_EnhancedVideoCombine().combine(**arguments)
+        first_path = Path(first["result"][1])
+        first_bytes = first_path.read_bytes()
+        second = JR_H3_EnhancedVideoCombine().combine(**arguments)
+        second_path = Path(second["result"][1])
+
+        assert first_path.name == "clip_audio_00001.mp4"
+        assert second_path.name == "clip_audio_00002.mp4"
+        assert first_path.read_bytes() == first_bytes
+        assert first_path != second_path and second_path.stat().st_size > 0
+        assert first["ui"]["gifs"][0]["preview_id"] != second["ui"]["gifs"][0]["preview_id"]
+    finally:
+        if old is None:
+            sys.modules.pop("folder_paths", None)
+        else:
+            sys.modules["folder_paths"] = old
+
+
 def test_audio_conversion_supports_comfy_shapes_and_cleans_up():
     audio_info, duration = _write_audio({"waveform": torch.zeros(1, 2, 800), "sample_rate": 8000})
     try:
@@ -156,6 +220,7 @@ def test_frontend_extension_contains_preview_save_and_download_contract():
     for marker in (
         "JR_H3_EnhancedVideoCombine", "addDOMWidget", 'createElement("video")', "Save first frame",
         "Save last frame", "Autoplay", "Download", "/jr-h3/enhanced-video-preview",
+        "preview_id", 'removeAttribute("src")',
     ):
         assert marker in source
 
