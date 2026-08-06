@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- Fixed excessive cache invalidation caused by using transient conditioning/reference tensor storage addresses in the sampling signature.
+- Equivalent tensors recreated by ComfyUI now preserve cache history; seed, model, tensor structure, reference structure, packed layout, and timestep restarts still invalidate it.
+- Initial state creation is no longer counted as a reset, and cleanup now starts the next workflow with fresh per-sampling statistics.
+- Added regression coverage proving storage-address changes can hit while semantic/structural changes still reset safely.
+
 ## 0.3.1
 
 - Fixed CPU and Auto residual-cache modes keeping sampled metric history on CPU, which caused CUDA/CPU device mismatch during real MiniMax H3 sampling.

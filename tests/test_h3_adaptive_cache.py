@@ -260,6 +260,81 @@ def test_shape_dtype_batch_and_audio_layout_changes_reset_state():
     assert runtime.stats.cache_resets > reset_count
 
 
+def test_equivalent_recreated_context_and_reference_storage_do_not_reset_state():
+    runtime = _runtime("visual_fast")
+    executor = PassExecutor()
+    video = torch.ones(1, 1, 1, 2, 2)
+    audio = torch.ones(1, 1, 2, 2)
+    context = torch.ones(1, 1, 4)
+    reference = torch.ones(1, 2, 2)
+    payload = {
+        "layout": Layout(),
+        "seed": 7,
+        "refs": [{"kind": "image", "latent_h": 2, "latent_w": 2, "latent": reference}],
+    }
+    runtime.diffusion_wrapper(executor, [video, audio], torch.tensor([900]), context, {}, payload)
+    reset_count = runtime.stats.cache_resets
+    recreated_payload = {
+        "layout": Layout(),
+        "seed": 7,
+        "refs": [{"kind": "image", "latent_h": 2, "latent_w": 2, "latent": reference.clone()}],
+    }
+    runtime.diffusion_wrapper(
+        executor, [video.clone(), audio.clone()], torch.tensor([800]), context.clone(), {}, recreated_payload
+    )
+    assert runtime.stats.cache_resets == reset_count
+    assert runtime.stats.full_step_cache_hits == 1
+
+
+def test_reference_structure_seed_and_layout_segments_still_invalidate_state():
+    runtime = _runtime("visual_fast")
+    video = torch.ones(1, 1, 1, 2, 2)
+    audio = torch.ones(1, 1, 2, 2)
+    context = torch.ones(1, 1, 4)
+    model_obj = object()
+    reference = torch.ones(1, 2, 2)
+    base = {
+        "layout": Layout(),
+        "seed": 7,
+        "refs": [{"kind": "image", "latent_h": 2, "latent_w": 2, "latent": reference}],
+    }
+    runtime._begin_forward(video, audio, torch.tensor([900]), context, base, model_obj)
+    assert runtime.stats.cache_resets == 0
+
+    changed_seed = dict(base, seed=8)
+    runtime._begin_forward(video, audio, torch.tensor([800]), context, changed_seed, model_obj)
+    assert runtime.stats.cache_resets == 1
+
+    changed_ref = dict(base, seed=8, refs=[{
+        "kind": "image", "latent_h": 2, "latent_w": 3, "latent": torch.ones(1, 2, 3)
+    }])
+    runtime._begin_forward(video, audio, torch.tensor([700]), context, changed_ref, model_obj)
+    assert runtime.stats.cache_resets == 2
+
+    class ChangedLayout(Layout):
+        segments = [(0, 1, "text"), (1, 4, "audio"), (4, 9, "video")]
+
+    changed_layout = dict(changed_ref, layout=ChangedLayout())
+    runtime._begin_forward(video, audio, torch.tensor([600]), context, changed_layout, model_obj)
+    assert runtime.stats.cache_resets == 3
+
+
+def test_cleanup_clears_per_sampling_statistics_and_state():
+    runtime = _runtime("visual_fast")
+    executor = PassExecutor()
+    context = torch.ones(1, 1, 4)
+    video = torch.ones(1, 1, 1, 2, 2)
+    audio = torch.ones(1, 1, 2, 2)
+    runtime.diffusion_wrapper(
+        executor, [video, audio], torch.tensor([900]), context, {}, {"layout": Layout(), "seed": 1}
+    )
+    assert runtime.stats.total_steps == 1
+    runtime.cleanup()
+    assert runtime.stats.total_steps == 0
+    assert runtime.stats.cache_resets == 0
+    assert runtime._sample_signature is None
+
+
 def test_forward_exception_clears_pending_cache_state():
     class BrokenExecutor:
         class_obj = object()

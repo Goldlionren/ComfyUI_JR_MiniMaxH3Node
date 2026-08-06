@@ -57,9 +57,11 @@ GPU residual cache minimizes latency. CPU residual cache stores a whole full-ste
 
 ## Invalidation and forced refresh
 
-State belongs to one cloned ModelPatcher. It resets when model identity, seed/payload identity, conditioning storage, layout signature, tensor shape, dtype, device, batch, video/audio length or presence changes, or when timestep order restarts. Forward exceptions and ModelPatcher cleanup also reset state. Hit streak limits force a real refresh even if metrics remain low.
+State belongs to one cloned ModelPatcher. It resets when model identity, seed, conditioning/reference structure, packed layout segments, tensor shape, dtype, device, batch, video/audio length or presence changes, or when timestep order restarts. It deliberately does not use tensor storage addresses: ComfyUI may recreate equivalent context and reference tensors between denoise steps. Forward exceptions and ModelPatcher cleanup also reset state. Hit streak limits force a real refresh even if metrics remain low.
 
 Reference conditioning is part of the H3 payload/conditioning identity. Cache content never crosses ModelPatcher clones or sampling cleanup.
+
+Runtime summary statistics are per sampling workflow. Initial state creation is not a reset, and cleanup clears counters after logging them. A high `resets` count therefore indicates a real structural change or timestep restart rather than normal tensor allocation churn.
 
 ## Router boundary
 

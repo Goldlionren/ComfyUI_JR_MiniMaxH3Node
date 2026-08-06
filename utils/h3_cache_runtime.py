@@ -117,7 +117,8 @@ class H3AdaptiveCacheRuntime:
             self._metric_device or "uninitialized", s.residual_to_cpu, s.residual_to_gpu,
             s.metric_migrations, reduction,
         )
-        self.reset("sampling cleanup")
+        self.reset("sampling cleanup", keep_stats=False)
+        self.stats = CacheStats()
 
     def _make_signature(self, video, audio, context, payload, model_obj) -> tuple:
         def condition_items(items):
@@ -127,23 +128,29 @@ class H3AdaptiveCacheRuntime:
                 for key in ("latent", "audio_latent"):
                     tensor = item.get(key) if isinstance(item, dict) else None
                     if tensor is not None:
-                        tensors.append((key, tensor_signature(tensor), int(tensor.data_ptr())))
-                signature.append((item.get("kind") if isinstance(item, dict) else None,
-                                  item.get("resolved_frame_index") if isinstance(item, dict) else None,
-                                  tuple(tensors)))
+                        tensors.append((key, tensor_signature(tensor)))
+                metadata = tuple(
+                    (key, item.get(key)) for key in (
+                        "kind", "resolved_frame_index", "latent_t", "latent_h", "latent_w", "ref_audio_t"
+                    ) if isinstance(item, dict) and item.get(key) is not None
+                )
+                signature.append((metadata, tuple(tensors)))
             return tuple(signature)
+        layout = payload.get("layout")
         return (
             id(model_obj), tensor_signature(video), tensor_signature(audio),
-            tuple(context.shape), str(context.dtype), str(context.device), int(context.data_ptr()),
+            tensor_signature(context),
             payload.get("seed"), condition_items(payload.get("refs")), condition_items(payload.get("keyframes")),
-            getattr(payload.get("layout"), "signature", None),
+            getattr(layout, "signature", None), tuple(getattr(layout, "segments", ())),
         )
 
     def _begin_forward(self, video, audio, timestep, context, payload, model_obj):
         value = float(timestep.flatten()[0].detach().float().item())
         signature = self._make_signature(video, audio, context, payload, model_obj)
         restarted = self._previous_timestep is not None and value > self._previous_timestep + 1e-5
-        if signature != self._sample_signature or restarted:
+        if self._sample_signature is None:
+            self._sample_signature = signature
+        elif signature != self._sample_signature or restarted:
             self.reset("new sampling signature" if signature != self._sample_signature else "timestep restart")
             self._sample_signature = signature
         self._previous_timestep = value
