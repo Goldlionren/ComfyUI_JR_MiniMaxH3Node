@@ -139,5 +139,7 @@ class JR_H3_AdaptiveCache:
                 patched.set_model_patch_replace(runtime.block_wrapper(index), "dit", "double_block", index)
         status = (source_text + f"\n{config.profile} | {block_count} blocks | F{runtime.front_blocks}-"
                   f"M{block_count - runtime.front_blocks - runtime.back_blocks}-B{runtime.back_blocks} | "
-                  f"{config.cache_device} cache")
+                  f"Residual cache device: {config.cache_device}"
+                  f"{' (resolved at runtime)' if config.cache_device == 'Auto' else ''} | "
+                  "Metric state device: active compute device")
         return patched, config.profile, status

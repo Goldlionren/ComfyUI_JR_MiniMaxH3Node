@@ -18,6 +18,7 @@ The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills
 - ComfyUI already supplies torch, NumPy, and Pillow, so they are not duplicated in ordinary requirements.
 - V3 migration is optional future work. The skill does not identify a requirement that forces V3 for this suite.
 - Adaptive Cache remains V1 at the node boundary but uses the current ModelPatcher clone, keyed diffusion wrapper, keyed cleanup callback, and native `patches_replace["dit"]` Block hook. Its state is attached to one cloned patcher, never stored in an unprotected global.
+- Adaptive Cache treats sampled fp32 metric history as lifecycle state on the active tensor device. Only large reusable residuals obey CPU/GPU/Auto placement; cleanup and invalidation release both classes without retaining graphs or full-tensor backing storage.
 - The production MiniMax H3 implementation was inspected read-only: `MiniMaxH3Model` defaults to 50 joint packed audio/video blocks, target audio then target video are the final packed segments, and the core prefetch queue advances outside Block replacement callbacks. Skipped blocks therefore still receive balanced prefetch pop/cleanup calls.
 - `JR_H3_CACHE_CONFIG` is an immutable Python object. Router results override every manual cache widget; Prompt Optimizer remains unchanged at three outputs and retains its independent system prompt.
 

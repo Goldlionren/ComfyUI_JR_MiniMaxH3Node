@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from .h3_cache_config import H3CacheConfig
-from .h3_cache_metrics import relative_delta, tensor_signature
+from .h3_cache_metrics import metric_sample, relative_delta, tensor_signature
 
 
 @dataclass
@@ -20,7 +20,14 @@ class CacheStats:
     video_veto_count: int = 0
     cache_resets: int = 0
     cache_bytes: int = 0
-    cpu_gpu_transfers: int = 0
+    residual_to_cpu: int = 0
+    residual_to_gpu: int = 0
+    metric_migrations: int = 0
+
+    @property
+    def cpu_gpu_transfers(self) -> int:
+        """Backward-compatible aggregate for benchmark consumers."""
+        return self.residual_to_cpu + self.residual_to_gpu
 
 
 class H3AdaptiveCacheRuntime:
@@ -33,11 +40,13 @@ class H3AdaptiveCacheRuntime:
         self.verbose = bool(verbose)
         self.stats = CacheStats()
         self._resolved_device = None
+        self._metric_device = None
         self._sample_signature = None
         self._previous_timestep = None
         self._last_counted_timestep = None
-        self._previous_inputs = None
+        self._previous_input_metrics = None
         self._previous_outputs = None
+        self._previous_output_metrics = None
         self._full_hit_streak = 0
         self._block_hit_streak = 0
         self._path = "full"
@@ -75,10 +84,12 @@ class H3AdaptiveCacheRuntime:
         self._sample_signature = None
         self._previous_timestep = None
         self._last_counted_timestep = None
-        self._previous_inputs = None
+        self._previous_input_metrics = None
         self._previous_outputs = None
+        self._previous_output_metrics = None
         self._probe_video = None
         self._probe_audio = None
+        self._metric_device = None
         self._middle_entry = None
         self._middle_residual = None
         self._full_hit_streak = 0
@@ -98,10 +109,13 @@ class H3AdaptiveCacheRuntime:
         reduction = 100.0 * skipped / possible
         logging.info(
             "JR H3 Adaptive Cache summary: steps=%d full=%d full_hits=%d block_hits=%d forced=%d "
-            "audio_veto=%d video_veto=%d resets=%d cache_bytes=%d transfers=%d compute_reduction=%.1f%%",
+            "audio_veto=%d video_veto=%d resets=%d cache_bytes=%d residual_device=%s metric_device=%s "
+            "residual_to_cpu=%d residual_to_gpu=%d metric_migrations=%d compute_reduction=%.1f%%",
             s.total_steps, s.full_forward_count, s.full_step_cache_hits, s.block_cache_hits,
             s.forced_refresh_count, s.audio_veto_count, s.video_veto_count, s.cache_resets,
-            s.cache_bytes, s.cpu_gpu_transfers, reduction,
+            s.cache_bytes, self._resolved_device or self.config.cache_device,
+            self._metric_device or "uninitialized", s.residual_to_cpu, s.residual_to_gpu,
+            s.metric_migrations, reduction,
         )
         self.reset("sampling cleanup")
 
@@ -151,11 +165,16 @@ class H3AdaptiveCacheRuntime:
                 self._audio_slice = slice(start, stop)
 
     def _stream_scores(self, video, audio):
-        if self._previous_inputs is None:
+        if self._previous_input_metrics is None:
             return float("inf"), float("inf")
-        prev_video, prev_audio = self._previous_inputs
-        video_score = relative_delta(video, prev_video, self.config.video_metric_stride)
-        audio_score = relative_delta(audio, prev_audio, self.config.audio_metric_stride) if self.audio_required else 0.0
+        prev_video, prev_audio = self._previous_input_metrics
+        current_video = metric_sample(video, self.config.video_metric_stride)
+        video_score = relative_delta(current_video, prev_video)
+        if self.audio_required:
+            current_audio = metric_sample(audio, self.config.audio_metric_stride)
+            audio_score = relative_delta(current_audio, prev_audio)
+        else:
+            audio_score = 0.0
         self._video_cumulative_change += video_score if video_score != float("inf") else 0.0
         self._audio_cumulative_change += audio_score if audio_score != float("inf") else 0.0
         self.metrics.update(video_input_change=video_score, audio_input_change=audio_score,
@@ -216,25 +235,38 @@ class H3AdaptiveCacheRuntime:
             self._resolved_device = "CPU"
         return self._resolved_device
 
-    def _store(self, tensor):
+    def _store_residual(self, tensor):
         if tensor is None:
             return None
         target = self._resolve_cache_device([tensor])
         stored = tensor.detach().clone()
         if target == "CPU" and stored.device.type != "cpu":
             stored = stored.to("cpu")
-            self.stats.cpu_gpu_transfers += 1
+            self.stats.residual_to_cpu += 1
         return stored
 
-    def _restore(self, tensor, like):
+    def _restore_residual(self, tensor, like):
         if tensor is None:
             return None
         if tensor.device != like.device:
-            self.stats.cpu_gpu_transfers += 1
+            if tensor.device.type == "cpu" and like.device.type != "cpu":
+                self.stats.residual_to_gpu += 1
+            elif tensor.device.type != "cpu" and like.device.type == "cpu":
+                self.stats.residual_to_cpu += 1
         return tensor.to(device=like.device, dtype=like.dtype)
 
+    def _store_metric(self, tensor, stride: int):
+        if tensor is None:
+            return None
+        stored = metric_sample(tensor, stride)
+        self._metric_device = str(tensor.device)
+        return stored
+
     def _remember_inputs(self, video, audio):
-        self._previous_inputs = (self._store(video), self._store(audio))
+        self._previous_input_metrics = (
+            self._store_metric(video, self.config.video_metric_stride),
+            self._store_metric(audio, self.config.audio_metric_stride) if self.audio_required else None,
+        )
 
     def can_full_hit(self, video, audio) -> bool:
         if self._path != "fast" or self._previous_outputs is None or self.config.max_full_step_hits <= 0:
@@ -250,13 +282,21 @@ class H3AdaptiveCacheRuntime:
         return True
 
     def full_hit_output(self, video, audio):
-        return [self._restore(self._previous_outputs[0], video), self._restore(self._previous_outputs[1], audio)]
+        return [self._restore_residual(self._previous_outputs[0], video),
+                self._restore_residual(self._previous_outputs[1], audio)]
 
     def remember_full_forward(self, video, audio, outputs, *, counted_as_full: bool = True):
-        if self._previous_outputs is not None:
-            self.metrics["video_output_change"] = relative_delta(outputs[0], self._previous_outputs[0].to(outputs[0].device), self.config.video_metric_stride)
-            self.metrics["audio_output_change"] = relative_delta(outputs[1], self._previous_outputs[1].to(outputs[1].device), self.config.audio_metric_stride)
-        self._previous_outputs = (self._store(outputs[0]), self._store(outputs[1]))
+        current_output_metrics = (
+            self._store_metric(outputs[0], self.config.video_metric_stride),
+            self._store_metric(outputs[1], self.config.audio_metric_stride),
+        )
+        if self._previous_output_metrics is not None:
+            self.metrics["video_output_change"] = relative_delta(
+                current_output_metrics[0], self._previous_output_metrics[0])
+            self.metrics["audio_output_change"] = relative_delta(
+                current_output_metrics[1], self._previous_output_metrics[1])
+        self._previous_output_metrics = current_output_metrics
+        self._previous_outputs = (self._store_residual(outputs[0]), self._store_residual(outputs[1]))
         self._remember_inputs(video, audio)
         self._full_hit_streak = 0
         if counted_as_full:
@@ -270,8 +310,11 @@ class H3AdaptiveCacheRuntime:
             return False
         video = h[self._video_slice]
         audio = h[self._audio_slice]
-        video_score = relative_delta(video, self._probe_video.to(video.device), self.config.video_metric_stride) if self._probe_video is not None else float("inf")
-        audio_score = relative_delta(audio, self._probe_audio.to(audio.device), self.config.audio_metric_stride) if self._probe_audio is not None and self.audio_required else 0.0
+        current_video = self._store_metric(video, self.config.video_metric_stride)
+        current_audio = self._store_metric(audio, self.config.audio_metric_stride) if self.audio_required else None
+        video_score = relative_delta(current_video, self._probe_video) if self._probe_video is not None else float("inf")
+        audio_score = (relative_delta(current_audio, self._probe_audio)
+                       if self._probe_audio is not None and self.audio_required else 0.0)
         video_ok = video_score < self.config.video_threshold
         audio_ok = not self.audio_required or audio_score < self.config.audio_threshold
         if not video_ok:
@@ -285,23 +328,24 @@ class H3AdaptiveCacheRuntime:
             self._block_hit_streak += 1
             self._full_hit_streak = 0
             self.stats.block_cache_hits += 1
-            self._probe_video = self._store(video)
-            self._probe_audio = self._store(audio)
+            self._probe_video = current_video
+            self._probe_audio = current_audio
             self._skip_middle = True
             return True
         self._block_hit_streak = 0
-        self._middle_entry = self._store(h)
-        self._probe_video = self._store(video)
-        self._probe_audio = self._store(audio)
+        # This entry is consumed later in the same forward. Keeping it on the
+        # compute device avoids a CPU round trip that is unrelated to a hit.
+        self._middle_entry = h.detach().clone()
+        self._probe_video = current_video
+        self._probe_audio = current_audio
         return False
 
     def apply_middle_hit(self, h):
-        return h + self._restore(self._middle_residual, h)
+        return h + self._restore_residual(self._middle_residual, h)
 
     def finish_middle(self, h):
         if self._middle_entry is not None:
-            entry = self._restore(self._middle_entry, h)
-            self._middle_residual = self._store(h - entry)
+            self._middle_residual = self._store_residual(h - self._middle_entry)
             self.stats.cache_bytes = self._cache_size([self._middle_residual, *(self._previous_outputs or ())])
         self._middle_entry = None
 
@@ -339,5 +383,6 @@ class H3AdaptiveCacheRuntime:
         return wrapper
 
     def status(self) -> str:
-        return (f"{self.config.profile} | configured | {self._resolved_device or self.config.cache_device} cache | "
-                f"Configuration source: {self.config.source}")
+        return (f"{self.config.profile} | configured | Residual cache device: "
+                f"{self._resolved_device or self.config.cache_device} | Metric state device: "
+                f"{self._metric_device or 'active compute device'} | Configuration source: {self.config.source}")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import torch
+
 
 def sample_tensor(tensor, stride: int):
     if stride <= 0:
@@ -10,8 +12,20 @@ def sample_tensor(tensor, stride: int):
     return flat[:: min(stride, max(1, flat.numel()))]
 
 
+def metric_sample(tensor, stride: int):
+    """Return a small, graph-free fp32 metric snapshot on the tensor's device."""
+    sampled = sample_tensor(tensor, stride)
+    return sampled.detach().to(device=tensor.device, dtype=torch.float32).clone()
+
+
 def relative_delta(current, previous, stride: int = 1, epsilon: float = 1e-6) -> float:
     """Sample on the existing device, compute in fp32, and synchronize only once."""
+    if current.device != previous.device:
+        raise RuntimeError(
+            "H3 cache metric history device mismatch: "
+            f"current={current.device}, previous={previous.device}. "
+            "Metric history must remain on the active compute device."
+        )
     if current.shape != previous.shape:
         return float("inf")
     current_sample = sample_tensor(current, stride).float()

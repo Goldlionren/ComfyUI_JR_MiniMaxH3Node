@@ -27,3 +27,10 @@ def test_audio_and_video_scores_are_independent():
 def test_invalid_stride_rejected():
     with pytest.raises(ValueError, match="stride"):
         relative_delta(torch.ones(2), torch.ones(2), 0)
+
+
+def test_relative_delta_reports_metric_device_mismatch_explicitly():
+    current = torch.empty(4, device="meta")
+    previous = torch.empty(4, device="cpu")
+    with pytest.raises(RuntimeError, match=r"metric history device mismatch.*current=meta.*previous=cpu"):
+        relative_delta(current, previous)

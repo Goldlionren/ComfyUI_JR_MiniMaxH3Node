@@ -49,9 +49,11 @@ The first implementation uses sampled relative delta:
 mean(abs(current - previous)) / (mean(abs(previous)) + epsilon)
 ```
 
-Sampling remains on the source device, calculation uses fp32, and only the scalar score synchronizes. BF16, FP16, FP32, non-contiguous and tiny tensors are supported. Audio and video use separate strides and scores.
+Sampling remains on the active compute device, calculation and saved metric history use fp32, and only the scalar score synchronizes. Each strided snapshot is detached and cloned so it keeps neither an autograd graph nor the backing storage of the full tensor. BF16, FP16, FP32, non-contiguous and tiny tensors are supported. Audio and video use separate strides and scores.
 
-GPU cache minimizes latency. CPU cache stores a whole full-step stream or aggregate middle residual per transfer rather than transferring each Block. Auto compares estimated cache bytes with free CUDA memory after preserving `gpu_reserve_mb`; query failure safely selects CPU.
+`cache_device` controls only large full-step and aggregate middle residuals. It never moves input, output, audio, video, or block-probe metric history to CPU. A metric-device mismatch raises an explicit internal-state error instead of silently adding a per-step transfer.
+
+GPU residual cache minimizes latency. CPU residual cache stores a whole full-step stream or aggregate middle residual per transfer rather than transferring each Block. A CPU residual is restored explicitly to the hit target's device and dtype immediately before use. Auto compares estimated cache bytes with free CUDA memory after preserving `gpu_reserve_mb`; query failure safely selects CPU. Runtime summaries report `residual_to_cpu`, `residual_to_gpu`, and `metric_migrations` separately; a normal run has zero metric migrations.
 
 ## Invalidation and forced refresh
 
