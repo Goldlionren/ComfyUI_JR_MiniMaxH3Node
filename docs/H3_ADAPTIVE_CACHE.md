@@ -37,6 +37,8 @@ Balanced has three paths:
 
 Counters distinguish full-step hits, Block hits, true full forwards, forced refreshes, and audio/video vetoes.
 
+The summary also reports count/minimum/average/maximum for input and front-Block probe deltas. Dialogue/Action veto counters refer to the actual Block probe only; they are not duplicated by the earlier input estimate.
+
 ### Auto and Off
 
 Auto first honors a valid `profile_hint`. Otherwise Speech/Singing selects Dialogue Safe; Music/Ambient/None selects Visual Fast; Auto selects Balanced. Off returns the original ModelPatcher without cloning or adding callbacks.
@@ -75,4 +77,4 @@ Diffusion timestep is not the final video's timeline. A mode applies to denoise 
 
 ## Calibration status
 
-Preset values are deterministic initial values in this implementation's relative-delta scale; they are not copied from another cache's scale. Benchmark representative seeds, prompts, reference media, resolutions, frame counts, quantization, and attention backends before production use. Conservative is the recommended starting point for quality evaluation.
+Preset values are deterministic values in this implementation's relative-delta scale; they are not copied from another cache's scale. Version 0.3.3 recalibrated the active presets with native 25-step H3 measurements after the earlier initial thresholds proved lower than the calmest observed input/probe deltas. Benchmark representative seeds, prompts, reference media, resolutions, frame counts, quantization, and attention backends before production use. Conservative remains the recommended starting point for strict quality evaluation.

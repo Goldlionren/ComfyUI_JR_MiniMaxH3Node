@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+- Recalibrated all four active cache presets against real 25-step native H3 input/probe relative-delta measurements; the original thresholds were below even the calmest observed steps and made Router-selected profiles inert.
+- Dialogue Safe now produces guarded block hits while retaining audio/video vetoes, no full-step reuse, and one-hit forced refresh protection.
+- Added per-workflow input/probe score count/min/average/max summaries so future model, quantization, and resolution calibration is evidence-based.
+- Safe profiles no longer count input deltas as block vetoes before their actual front-block probe, eliminating misleading duplicate veto statistics.
+
 ## 0.3.2
 
 - Fixed excessive cache invalidation caused by using transient conditioning/reference tensor storage addresses in the sampling signature.

@@ -40,6 +40,18 @@ def test_quality_levels_are_deterministic_and_local():
     assert conservative.max_block_hits <= balanced_a.max_block_hits < aggressive.max_block_hits
 
 
+def test_calibrated_profiles_preserve_safety_order_and_viable_h3_scale():
+    visual = build_preset_config("visual_fast")
+    dialogue = build_preset_config("dialogue_safe")
+    action = build_preset_config("action_safe")
+    balanced = build_preset_config("balanced")
+    assert action.video_threshold < dialogue.video_threshold < visual.video_threshold
+    assert action.audio_threshold < dialogue.audio_threshold < visual.audio_threshold
+    assert action.max_full_step_hits == dialogue.max_full_step_hits == 0
+    assert dialogue.video_threshold >= 0.10 and dialogue.audio_threshold >= 0.08
+    assert balanced.fast_path_threshold < balanced.probe_path_threshold
+
+
 def test_invalid_schema_and_ranges_are_rejected():
     values = build_preset_config("balanced").__dict__.copy()
     values["schema_version"] = 999

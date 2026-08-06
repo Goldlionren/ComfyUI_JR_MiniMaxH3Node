@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .h3_cache_config import H3CacheConfig
 from .h3_cache_metrics import metric_sample, relative_delta, tensor_signature
+
+
+@dataclass
+class ScoreStats:
+    count: int = 0
+    total: float = 0.0
+    minimum: float = float("inf")
+    maximum: float = 0.0
+
+    def observe(self, value: float):
+        if value == float("inf"):
+            return
+        value = float(value)
+        self.count += 1
+        self.total += value
+        self.minimum = min(self.minimum, value)
+        self.maximum = max(self.maximum, value)
+
+    @property
+    def average(self) -> float:
+        return self.total / self.count if self.count else 0.0
+
+    @property
+    def minimum_or_zero(self) -> float:
+        return self.minimum if self.count else 0.0
 
 
 @dataclass
@@ -23,6 +48,10 @@ class CacheStats:
     residual_to_cpu: int = 0
     residual_to_gpu: int = 0
     metric_migrations: int = 0
+    input_video_scores: ScoreStats = field(default_factory=ScoreStats)
+    input_audio_scores: ScoreStats = field(default_factory=ScoreStats)
+    probe_video_scores: ScoreStats = field(default_factory=ScoreStats)
+    probe_audio_scores: ScoreStats = field(default_factory=ScoreStats)
 
     @property
     def cpu_gpu_transfers(self) -> int:
@@ -110,12 +139,24 @@ class H3AdaptiveCacheRuntime:
         logging.info(
             "JR H3 Adaptive Cache summary: steps=%d full=%d full_hits=%d block_hits=%d forced=%d "
             "audio_veto=%d video_veto=%d resets=%d cache_bytes=%d residual_device=%s metric_device=%s "
-            "residual_to_cpu=%d residual_to_gpu=%d metric_migrations=%d compute_reduction=%.1f%%",
+            "residual_to_cpu=%d residual_to_gpu=%d metric_migrations=%d "
+            "input_video[n=%d min=%.5f avg=%.5f max=%.5f] "
+            "input_audio[n=%d min=%.5f avg=%.5f max=%.5f] "
+            "probe_video[n=%d min=%.5f avg=%.5f max=%.5f] "
+            "probe_audio[n=%d min=%.5f avg=%.5f max=%.5f] compute_reduction=%.1f%%",
             s.total_steps, s.full_forward_count, s.full_step_cache_hits, s.block_cache_hits,
             s.forced_refresh_count, s.audio_veto_count, s.video_veto_count, s.cache_resets,
             s.cache_bytes, self._resolved_device or self.config.cache_device,
             self._metric_device or "uninitialized", s.residual_to_cpu, s.residual_to_gpu,
-            s.metric_migrations, reduction,
+            s.metric_migrations,
+            s.input_video_scores.count, s.input_video_scores.minimum_or_zero,
+            s.input_video_scores.average, s.input_video_scores.maximum,
+            s.input_audio_scores.count, s.input_audio_scores.minimum_or_zero,
+            s.input_audio_scores.average, s.input_audio_scores.maximum,
+            s.probe_video_scores.count, s.probe_video_scores.minimum_or_zero,
+            s.probe_video_scores.average, s.probe_video_scores.maximum,
+            s.probe_audio_scores.count, s.probe_audio_scores.minimum_or_zero,
+            s.probe_audio_scores.average, s.probe_audio_scores.maximum, reduction,
         )
         self.reset("sampling cleanup", keep_stats=False)
         self.stats = CacheStats()
@@ -182,6 +223,9 @@ class H3AdaptiveCacheRuntime:
             audio_score = relative_delta(current_audio, prev_audio)
         else:
             audio_score = 0.0
+        self.stats.input_video_scores.observe(video_score)
+        if self.audio_required:
+            self.stats.input_audio_scores.observe(audio_score)
         self._video_cumulative_change += video_score if video_score != float("inf") else 0.0
         self._audio_cumulative_change += audio_score if audio_score != float("inf") else 0.0
         self.metrics.update(video_input_change=video_score, audio_input_change=audio_score,
@@ -195,18 +239,19 @@ class H3AdaptiveCacheRuntime:
         if self.stats.total_steps <= cfg.warmup_steps or not cfg.start_percent <= progress <= cfg.end_percent:
             self._path = "full"
             return self._path
+        profile = cfg.profile
+        if profile in ("dialogue_safe", "action_safe"):
+            self._path = "probe"
+            return self._path
         video_score, audio_score = self._stream_scores(video, audio)
         audio_ok = not self.audio_required or audio_score < cfg.audio_threshold
         video_ok = video_score < cfg.video_threshold
-        if not audio_ok:
-            self.stats.audio_veto_count += 1
-        if not video_ok:
-            self.stats.video_veto_count += 1
-        profile = cfg.profile
         if profile == "visual_fast":
+            if not audio_ok:
+                self.stats.audio_veto_count += 1
+            if not video_ok:
+                self.stats.video_veto_count += 1
             self._path = "fast" if video_ok and audio_ok else "full"
-        elif profile in ("dialogue_safe", "action_safe"):
-            self._path = "probe"
         elif profile == "balanced":
             score = max(video_score, audio_score if self.audio_required else 0.0)
             if score < cfg.fast_path_threshold:
@@ -215,6 +260,10 @@ class H3AdaptiveCacheRuntime:
                 self._path = "probe"
             else:
                 self._path = "full"
+                if video_score >= cfg.probe_path_threshold:
+                    self.stats.video_veto_count += 1
+                if self.audio_required and audio_score >= cfg.probe_path_threshold:
+                    self.stats.audio_veto_count += 1
         else:
             self._path = "full"
         return self._path
@@ -322,6 +371,9 @@ class H3AdaptiveCacheRuntime:
         video_score = relative_delta(current_video, self._probe_video) if self._probe_video is not None else float("inf")
         audio_score = (relative_delta(current_audio, self._probe_audio)
                        if self._probe_audio is not None and self.audio_required else 0.0)
+        self.stats.probe_video_scores.observe(video_score)
+        if self.audio_required:
+            self.stats.probe_audio_scores.observe(audio_score)
         video_ok = video_score < self.config.video_threshold
         audio_ok = not self.audio_required or audio_score < self.config.audio_threshold
         if not video_ok:

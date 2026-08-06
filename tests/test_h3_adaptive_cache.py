@@ -198,6 +198,15 @@ def test_audio_and_video_can_independently_veto_block_cache():
     assert len(executor.calls) == 50 and runtime.stats.video_veto_count > 0
 
 
+def test_safe_profiles_do_not_count_input_change_as_a_block_veto():
+    runtime = _runtime("dialogue_safe", video_threshold=0.01, audio_threshold=0.01)
+    runtime._remember_inputs(torch.ones(8), torch.ones(8))
+    runtime.stats.total_steps = 2
+    assert runtime.choose_path(torch.full((8,), 100.0), torch.full((8,), 100.0), 0.5) == "probe"
+    assert runtime.stats.video_veto_count == 0
+    assert runtime.stats.audio_veto_count == 0
+
+
 def test_state_resets_on_shape_dtype_audio_presence_and_timestep_restart():
     runtime = _runtime("visual_fast")
     executor = MockExecutor(runtime); context = torch.ones(1, 1, 4)

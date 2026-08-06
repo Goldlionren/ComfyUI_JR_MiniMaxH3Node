@@ -168,6 +168,7 @@ MiniMax H3 IMAGE frames
 - **Adaptive Cache 报告冲突：** 同一 MODEL 链中只能保留一个 Cache patch；Attention 或量化节点不需要移除。
 - **CPU/Auto Cache：** `cache_device` 只控制大型 residual。抽样后的音频、视频 metric 始终留在当前计算设备；运行摘要会分别报告 residual CPU/GPU 传输和 metric migration。
 - **命中始终为零且 resets 很高：** v0.3.2 已移除同一次采样中不稳定的 tensor 内存地址签名。正常 workflow 的首次初始化不计 reset，cleanup 后统计会重新从零开始。
+- **Router 已选档但命中为零：** v0.3.3 已按真实 H3 数值尺度重新校准预设。摘要中的 `input_video/audio` 与 `probe_video/audio` 会显示 count/min/avg/max；仍无命中时可据此区分场景确实变化剧烈还是需要针对模型继续校准。
 
 ## 开发与验证
 
