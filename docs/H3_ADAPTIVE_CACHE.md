@@ -1,0 +1,74 @@
+# JR H3 Adaptive Cache
+
+## Scope and verified H3 integration
+
+This node targets ComfyUI's native `comfy.ldm.minimax.model.MiniMaxH3Model`. The inspected implementation defaults to 50 `DiTBlock` objects and packs one sequence as text/reference rows followed by target audio and target video. Its final layer separates the target streams, then audio is unpacked and video is unpatchified.
+
+The plugin does not replace or edit that implementation. It clones the input ModelPatcher and uses:
+
+- a keyed `DIFFUSION_MODEL` wrapper for full-step decisions;
+- native `patches_replace["dit"][("double_block", index)]` callbacks for Block probing;
+- an attachment for state ownership;
+- a keyed ModelPatcher cleanup callback for reset and summary logging.
+
+The H3 core advances its Dynamic VRAM/prefetch queue before every Block callback and drains the queue after the loop. A skipped replacement therefore does not bypass the core prefetch bookkeeping. SageAttention/FlashAttention remains inside every Block that is actually executed.
+
+## Modes
+
+### Visual Fast
+
+The wrapper samples video and audio independently in fp32 and measures relative delta. Full-step output can be reused only when video and required audio are both below their thresholds, the denoise window is active, warmup is complete, and the consecutive-hit limit is not exhausted. With `audio_content=None`, only video vetoes a hit.
+
+### Dialogue Safe
+
+Default Balanced preset layout is F1-M47-B2 for a 50-Block model. Block 0 executes, the entry state of Block 1 is compared independently over target audio/video rows, Blocks 1–47 are replaced by one cached aggregate middle residual on a hit, and Blocks 48–49 execute. The default limit permits at most one consecutive Block hit.
+
+### Action Safe
+
+Default layout is F2-M46-B2: Blocks 0–1 and 48–49 execute. Its window and thresholds are more conservative than Visual Fast. Speech/Singing configurations continue to evaluate audio; choosing Action never disables voice protection.
+
+### Balanced
+
+Balanced has three paths:
+
+1. **Fast Path:** both-stream input change is below `fast_path_threshold`; reuse full-step output.
+2. **Probe Path:** change is below `probe_path_threshold`; execute front Blocks, compare target audio/video probe rows, reuse the aggregate middle residual only if both pass, then execute tail Blocks.
+3. **Full Path:** high change, a veto, missing cache, forced refresh, warmup, or an inactive window runs every Block.
+
+Counters distinguish full-step hits, Block hits, true full forwards, forced refreshes, and audio/video vetoes.
+
+### Auto and Off
+
+Auto first honors a valid `profile_hint`. Otherwise Speech/Singing selects Dialogue Safe; Music/Ambient/None selects Visual Fast; Auto selects Balanced. Off returns the original ModelPatcher without cloning or adding callbacks.
+
+## Metric and cache device
+
+The first implementation uses sampled relative delta:
+
+```text
+mean(abs(current - previous)) / (mean(abs(previous)) + epsilon)
+```
+
+Sampling remains on the source device, calculation uses fp32, and only the scalar score synchronizes. BF16, FP16, FP32, non-contiguous and tiny tensors are supported. Audio and video use separate strides and scores.
+
+GPU cache minimizes latency. CPU cache stores a whole full-step stream or aggregate middle residual per transfer rather than transferring each Block. Auto compares estimated cache bytes with free CUDA memory after preserving `gpu_reserve_mb`; query failure safely selects CPU.
+
+## Invalidation and forced refresh
+
+State belongs to one cloned ModelPatcher. It resets when model identity, seed/payload identity, conditioning storage, layout signature, tensor shape, dtype, device, batch, video/audio length or presence changes, or when timestep order restarts. Forward exceptions and ModelPatcher cleanup also reset state. Hit streak limits force a real refresh even if metrics remain low.
+
+Reference conditioning is part of the H3 payload/conditioning identity. Cache content never crosses ModelPatcher clones or sampling cleanup.
+
+## Router boundary
+
+The Router makes a second independent chat-completions request. Its LLM output contains semantic enums only. Python validates and locally reviews those fields, then selects a versioned preset. The immutable config contains no API key, full prompt, or raw response. Connected Router config replaces all manual widget values; it is never merged with them.
+
+## Conflicts and combinations
+
+Do not stack this node with EasyCache, TeaCache, First Block Cache, CacheDiT, another Block replacement cache, or a second JR H3 Adaptive Cache. It may be used with attention backends, quantization, Dynamic VRAM, CPU offload, and downstream RTX/video nodes.
+
+Diffusion timestep is not the final video's timeline. A mode applies to denoise computation, not to named seconds in the generated clip.
+
+## Calibration status
+
+Preset values are deterministic initial values in this implementation's relative-delta scale; they are not copied from another cache's scale. Benchmark representative seeds, prompts, reference media, resolutions, frame counts, quantization, and attention backends before production use. Conservative is the recommended starting point for quality evaluation.

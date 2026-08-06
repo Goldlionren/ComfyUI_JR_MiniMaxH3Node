@@ -6,3 +6,9 @@ ComfyUI-DaSiWa-Nodes and Comfyui-minimaxh3-FBcache-shendumao. No source files fr
 reference repository are distributed with this project. The MiniMax H3 prompt constraint
 strategy was reorganized and rewritten after reviewing the latter reference. Exact reference
 commits, attribution, and observed licenses are recorded in THIRD_PARTY_NOTICES.md.
+
+The JR H3 Adaptive Cache is a clean-room implementation informed by publicly described ideas
+from residual-based diffusion caching, EasyCache/TeaCache-style change estimation, block probing,
+First Block Cache, and CacheDiT. No source, comments, function names, or distinctive code structure
+from those projects were copied. The implementation was written against ComfyUI's native MiniMax H3
+wrapper and block-replacement interfaces and remains licensed under Apache-2.0.

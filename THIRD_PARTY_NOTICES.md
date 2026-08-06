@@ -19,6 +19,12 @@ The OpenAI-compatible request layer and node implementation in this project are 
 
 No top-level license file was present in the shallow checkout at the recorded commit. This notice provides attribution and does not grant rights to the upstream repository; review its current terms before reusing upstream material.
 
+## Diffusion-cache research concepts
+
+The Adaptive Cache design considered publicly documented concepts associated with EasyCache, TeaCache, First Block Cache, and CacheDiT: low-cost change estimation, residual reuse, periodic forced refresh, and partial-Block probing. These names identify research context only. No implementation source, comments, thresholds, function organization, or distinctive code structure from those projects is included.
+
+The JR implementation uses a separately defined dual-stream relative-delta metric, local presets in its own metric scale, and interfaces verified directly in the Apache-2.0 ComfyUI MiniMax H3 implementation. Users should consult the original papers and repositories for their authors, licenses, and model-specific claims before reusing those projects.
+
 ## Runtime tools
 
 FFmpeg is invoked as a separate executable and is not distributed with this project. NVIDIA Video Effects SDK and its Python binding are optional, separately installed runtime components and are not distributed here.

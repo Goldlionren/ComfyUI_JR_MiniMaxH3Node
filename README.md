@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-A focused six-node ComfyUI suite for MiniMax H3 prompt preparation and review, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
+A focused eight-node ComfyUI suite for MiniMax H3 prompt preparation, human review, scene-aware caching, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
 
 面向 MiniMax H3 视频工作流的 ComfyUI 节点套件：提示词优化、分辨率计算、RTX 放大与修复、视频合成预览，以及末帧续接。
 
@@ -10,12 +10,14 @@ A focused six-node ComfyUI suite for MiniMax H3 prompt preparation and review, r
 | --- | --- |
 | **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** | 通过 OpenAI 兼容的 `/v1/models` 与 `/v1/chat/completions` 接口，把简短创意和最多 9 路参考图整理成 H3 中文分镜提示词。 |
 | **JR MiniMax H3 Prompt Review & Continue** | 在工作流中暂停，让用户逐字审核或修改 H3 提示词，点击 Next / Continue 后才允许下游继续执行。 |
+| **JR H3 Cache Config Router** | 对最终 H3 提示词发起独立的场景分类请求，并用本地版本化 Preset 生成类型安全的 Cache 配置。 |
+| **JR H3 Adaptive Cache** | 为原生 MiniMax H3 音视频 DiT 提供 Visual Fast、Dialogue Safe、Action Safe、Balanced、Auto 和 Off 缓存路径。 |
 | **JR MiniMax H3 Resolution Scale Calculator** | 按目标像素面积、宽高比和 8/16/32 倍数计算适合视频模型的宽高。 |
 | **JR MiniMax H3 RTX Upscaler & Refiner** | 使用 NVIDIA Video Effects SDK 执行 Denoise、Deblur、VSR/High Bitrate 与尺寸调整；依赖按执行时加载。 |
 | **JR MiniMax H3 Enhanced Video Combine** | 将 IMAGE 批次编码为视频或动画，支持节点内预览、Download、首尾帧保存、音频、metadata、ping-pong 和帧透传。 |
 | **JR MiniMax H3 Last Frame** | 从 IMAGE 批次提取最后一帧，供下一段 H3 视频继续生成。 |
 
-节点位于 `JR MiniMax H3` 分类；人工审核节点位于其 `Prompt` 子分类。
+节点位于 `JR MiniMax H3` 分类；人工审核节点位于 `Prompt` 子分类，缓存节点位于 `Cache` 子分类。
 
 ## 安装
 
@@ -44,7 +46,7 @@ git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 - ComfyUI 已提供 `torch`、`numpy` 和 Pillow，本项目不会重复固定这些大型依赖。
 - 视频合成需要 FFmpeg。节点会使用系统 `ffmpeg.exe`，也会识别 `imageio-ffmpeg` 提供的可执行文件。
 - Prompt Optimizer 需要一个 OpenAI 兼容的本地或远程服务；本地服务可以不填写 API Key。
-- RTX 节点是可选功能，不影响其他五个节点加载。
+- RTX 节点是可选功能，不影响其他七个节点加载。
 
 ### 可选 RTX 支持
 
@@ -82,6 +84,41 @@ JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)
 
 See [`docs/PROMPT_REVIEW_CONTINUE.md`](docs/PROMPT_REVIEW_CONTINUE.md) for interaction, timeout, cancellation, recovery, and API-mode behavior.
 The importable example [`examples/jr_minimax_h3_prompt_review_workflow.json`](examples/jr_minimax_h3_prompt_review_workflow.json) demonstrates the complete Prompt Optimizer → review pause → downstream text preview chain. Set its API URL and model for your OpenAI-compatible service before running.
+
+## H3 Adaptive Cache 与 Cache Config Router
+
+推荐接线：
+
+```text
+Prompt Optimizer.optimized_prompt
+    -> JR H3 Cache Config Router.optimized_prompt
+
+JR H3 Cache Config Router.cache_config
+    -> JR H3 Adaptive Cache.cache_config
+
+MiniMax H3 MODEL
+    -> JR H3 Adaptive Cache.model
+    -> sampler MODEL
+```
+
+Router 会进行第二次、完全独立的 LLM 调用。它只分析已经完成的提示词，不会改写提示词，也不会调用或改变 Prompt Optimizer。LLM 只能返回受限的场景语义分类；阈值、Block 范围、窗口和连续命中限制全部来自本地、版本控制的 Preset。分类失败时默认使用 **Safe Balanced / Conservative**，不会改变 Prompt Optimizer 已生成的文本。
+
+连接 `cache_config` 后，Adaptive Cache 完全采用 Router 配置并忽略节点上的手动 widget；不连接时所有设置均由手动模式、质量预设和高级参数决定。`enable=false` 时 Router 不发请求：`Disable Cache` 返回 Off，其余模式返回本地 Balanced 配置。
+
+六种 Adaptive Cache 模式：
+
+- **Auto**：先使用有效 `profile_hint`，否则按 Speech/Singing、Music/Ambient/None 或安全默认选择。
+- **Visual Fast**：视频和音频分别判定，双方稳定才允许 Full-Step 命中并跳过整个 Transformer。
+- **Dialogue Safe**：默认 F1-M47-B2；前部探测，缓存中段，尾部刷新，音频可单独否决。
+- **Action Safe**：默认 F2-M46-B2；更低阈值、更窄窗口和最多一次连续 Block 命中。
+- **Balanced**：低变化走 Full-Step Fast Path，中间灰区走 Block Probe Path，高变化走 Full Path。
+- **Off**：不 clone、不添加 patch，原样返回 MODEL。
+
+当前 ComfyUI 原生 `MiniMaxH3Model` 默认检测为 50 个 Block，但实现会在执行时读取真实 Block 数并检查前后区间。缓存 patch 使用官方 ModelPatcher clone、`DIFFUSION_MODEL` wrapper、DiT Block replacement 与 cleanup callback；不会修改 ComfyUI 核心文件。检测到 EasyCache、TeaCache、First Block Cache、CacheDiT、其他 DiT Block replacement 或第二个 JR Cache 时会拒绝叠加。SageAttention、FlashAttention、量化、Dynamic VRAM、CPU offload 和 RTX 后处理不属于 Cache 冲突。
+
+**Diffusion timestep 不是视频时间轴。** Cache 模式控制每个 denoise step 的计算路径，不能在成片“前五秒对白、后五秒动作”之间按视频秒数切换。当前阈值来自本节点 relative-delta 量纲的保守初始校准，仍需在目标 GPU、量化和采样配置上 benchmark。完整状态机、失效条件、设备策略与限制见 [`docs/H3_ADAPTIVE_CACHE.md`](docs/H3_ADAPTIVE_CACHE.md)。
+
+可用 `tools/h3_cache_benchmark.py` 手动记录 No Cache、EasyCache 与四种 JR 策略的真实运行数据，并导出 JSON、CSV 或 Markdown；该工具不会在 pytest 中加载模型或执行长时 benchmark。
 
 ## RTX Upscaler & Refiner
 
@@ -128,6 +165,7 @@ MiniMax H3 IMAGE frames
 - **Last Frame 收到空批次：** 在 Enhanced Video Combine 中启用 `pass_frames`。
 - **RTX 执行失败：** 检查 `nvidia-vfx`、NVIDIA Video Effects SDK、驱动和当前 binding 暴露的 `QualityLevel`。
 - **Auto 选择了较低优先级编码器：** 更高优先级候选在真实运行测试中失败或没有产生进度，节点已自动继续回退。
+- **Adaptive Cache 报告冲突：** 同一 MODEL 链中只能保留一个 Cache patch；Attention 或量化节点不需要移除。
 
 ## 开发与验证
 
