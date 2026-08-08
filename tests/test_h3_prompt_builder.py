@@ -63,6 +63,9 @@ def test_system_prompt_includes_a_minimum_valid_output_skeleton(mode, first_fiel
     skeleton = prompt.split("minimum syntactic skeleton exactly", 1)[1]
     assert first_field in skeleton
     assert shot_field in skeleton
+    if mode == "Ref2VA":
+        assert "subject_definitions:\n<Subject N> is" in skeleton
+        assert "subject_definitions: <Subject N>" not in skeleton
 
 
 def test_extract_preserved_literals_keeps_multilingual_text_in_order():

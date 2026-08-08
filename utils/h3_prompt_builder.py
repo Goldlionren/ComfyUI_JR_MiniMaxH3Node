@@ -127,7 +127,8 @@ def _mode_planning(mode: str) -> str:
 
 def _output_skeleton(mode: str) -> str:
     if mode == "Ref2VA":
-        return """subject_definitions: <definitions or None>
+        return """subject_definitions:
+<Subject N> is <a concrete reusable visible-content definition, or write None when no subjects exist>
 summary: <concise audiovisual plan>
 retention_analysis: <registered label relationships or None>
 detailed_description: [Shot 1] <visible action, performance, and camera description>

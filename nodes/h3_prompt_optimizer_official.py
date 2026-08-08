@@ -6,6 +6,7 @@ import re
 
 from ..utils.h3_prompt_builder import (
     JR_DIRECTOR_PROFILES,
+    REF_SECTIONS,
     PromptBuildContext,
     build_system_prompt,
     build_user_prompt,
@@ -152,6 +153,91 @@ def _restore_preserved_literals(candidate, shields):
     return restored, tuple(errors)
 
 
+def _normalize_repaired_ref2va_sections(candidate, mode):
+    if mode != "Ref2VA":
+        return candidate
+    names = "|".join(re.escape(name) for name in REF_SECTIONS)
+    heading = re.compile(
+        rf"^[ \t]*(?:#{{1,6}}[ \t]*)?(?:\*\*|__)?(?P<name>{names}):"
+        rf"(?:\*\*|__)?(?:[ \t]*(?P<body>.*))?$",
+        re.IGNORECASE,
+    )
+    normalized = []
+    for line in candidate.splitlines():
+        match = heading.fullmatch(line)
+        if match is None:
+            normalized.append(line)
+            continue
+        canonical = next(
+            name for name in REF_SECTIONS
+            if name.casefold() == match.group("name").casefold()
+        )
+        normalized.append(f"{canonical}:")
+        body = (match.group("body") or "").strip()
+        if body:
+            normalized.append(body)
+    return "\n".join(normalized)
+
+
+def _normalize_repaired_ref2va_retention(candidate, mode):
+    if mode != "Ref2VA":
+        return candidate
+    visible_from_audio = {
+        "fully_copy": "fully_preserved",
+        "partially_copy": "partially_preserved",
+        "reference": "attribute_transfer",
+    }
+    audio_from_visible = {
+        "fully_preserved": "fully_copy",
+        "partially_preserved": "partially_copy",
+        "attribute_transfer": "reference",
+    }
+    retention = re.compile(
+        r"^(?P<prefix>[ \t]*<(?P<family>Subject|Picture|Video|Audio) [1-9]\d*>"
+        r"(?:[ \t]*\([^\r\n:]*\))?[ \t]*:[ \t]*)"
+        r"(?P<value>[A-Za-z][A-Za-z0-9_-]*)(?P<suffix>.*)$"
+    )
+    normalized = []
+    for line in candidate.splitlines():
+        match = retention.fullmatch(line)
+        if match is None:
+            normalized.append(line)
+            continue
+        mapping = (
+            audio_from_visible
+            if match.group("family") == "Audio"
+            else visible_from_audio
+        )
+        value = mapping.get(match.group("value"), match.group("value"))
+        normalized.append(f"{match.group('prefix')}{value}{match.group('suffix')}")
+    return "\n".join(normalized)
+
+
+def _normalize_repaired_ref2va_subject_definitions(candidate, mode):
+    if mode != "Ref2VA":
+        return candidate
+    normalized = []
+    in_definitions = False
+    definition = re.compile(
+        r"^(?P<label>[ \t]*<Subject [1-9]\d*>)[ \t]*:[ \t]*(?P<body>.+)$"
+    )
+    for line in candidate.splitlines():
+        if line == "subject_definitions:":
+            in_definitions = True
+            normalized.append(line)
+            continue
+        if line == "summary:":
+            in_definitions = False
+            normalized.append(line)
+            continue
+        match = definition.fullmatch(line) if in_definitions else None
+        if match is None:
+            normalized.append(line)
+        else:
+            normalized.append(f"{match.group('label')} is {match.group('body')}")
+    return "\n".join(normalized)
+
+
 def _repair_payload(*, model, context, candidate, validation, preserved_literals, max_tokens):
     protected = "\n".join(f"- {literal}" for literal in preserved_literals) or "- None"
     errors = "\n".join(f"- {error}" for error in validation.errors)
@@ -290,6 +376,15 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 )
                 repaired_prompt, shield_errors = _restore_preserved_literals(
                     parse_chat_content(repaired_response), literal_shields
+                )
+                repaired_prompt = _normalize_repaired_ref2va_sections(
+                    repaired_prompt, selected_mode.value
+                )
+                repaired_prompt = _normalize_repaired_ref2va_subject_definitions(
+                    repaired_prompt, selected_mode.value
+                )
+                repaired_prompt = _normalize_repaired_ref2va_retention(
+                    repaired_prompt, selected_mode.value
                 )
                 repaired_validation = validate_prompt(
                     repaired_prompt, mode=selected_mode.value,

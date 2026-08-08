@@ -56,6 +56,8 @@ Version 0.4.1 adds one constrained format-repair pass after initial validation f
 
 Version 0.4.2 addresses a real local-model failure where both initial and repair responses changed `介绍一下MiniMax H3` to `介绍一下 MiniMax H3`. The repair layer now locates exact or whitespace-only literal variants, replaces them with counted immutable sentinels, and restores the original text locally before the unchanged full validation pass. Sentinel removal or duplication remains a hard failure.
 
+Version 0.4.3 fixes a discovered contradiction: the clean-room minimum skeleton previously showed Ref2VA `subject_definitions:` content inline while the validator correctly required that first heading to stand alone. Real local outputs and their single repair therefore repeated the same invalid structure. The skeleton now shows the standalone heading and `<Subject N> is ...` definition form. The same one repair pass may deterministically canonicalize section wrappers/inline bodies, colon-style subject definitions, and clear visible/audio retention-taxonomy crossovers before the unchanged final validator. A real local qwen3.6-27b Ref2VA request passed the corrected initial contract with `repaired=0`.
+
 ### Agent split for this phase
 
 - Luna A — upstream resource metadata and hashes.

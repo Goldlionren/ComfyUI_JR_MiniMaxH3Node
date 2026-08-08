@@ -66,6 +66,8 @@ The node is a local H3-oriented Prompt/Context Preprocessor, not a Chinese-only 
 
 Every generated prompt is checked by the full local validator. If the first result fails only at that boundary, the node makes exactly one text-only repair request at `temperature=0.1`, instructing the model to correct H3 formatting without rewriting story/content or changing protected user literals, and then runs the same full validator again. During repair, protected literals found exactly or with whitespace-only mutations are temporarily replaced by counted immutable sentinels and restored locally before validation; removed or duplicated sentinels are rejected. Success status reports `repaired=0` or `repaired=1`. If the repaired result still fails, **Return Original** returns the unchanged user prompt with a concise final reason, while **Stop Workflow** raises a descriptive `ValueError`.
 
+For Ref2VA, `subject_definitions:` is an exact standalone heading; each reusable subject definition uses `<Subject N> is ...`. The single repair pass can canonicalize inline/Markdown-wrapped section headings, colon-style subject definitions, and unambiguous retention taxonomy mix-ups such as `<Video N>: fully_copy` to `fully_preserved`. The unchanged validator still performs the final decision.
+
 ### Input modes
 
 The `h3_input_mode` widget supports `Auto`, `T2VA`, `I2VA`, `FL2VA`, `L2VA`, and `Ref2VA`. In Auto, routing is deterministic:

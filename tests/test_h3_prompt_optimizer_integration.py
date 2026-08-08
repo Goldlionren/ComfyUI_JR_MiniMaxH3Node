@@ -204,6 +204,113 @@ def test_repair_shields_and_restores_a_literal_with_inserted_whitespace(monkeypa
     assert "介绍一下 MiniMax H3" not in candidate
 
 
+def test_ref2va_repair_canonicalizes_inline_section_headings(monkeypatch):
+    inline = (
+        "subject_definitions: <Subject 1> is a woman drinking tea.\n"
+        "summary: <Subject 1> introduces MiniMax H3 and then stands.\n"
+        "retention_analysis: <Video 1>: fully_preserved - retain composition and motion.\n"
+        "detailed_description: [Shot 1] <Subject 1> speaks and then stands.\n"
+        "overall_soundscape: Clear speech and quiet room tone.\n"
+        "non_diegetic_music: None."
+    )
+    calls = []
+
+    def fake_request(url, payload, *args):
+        calls.append(payload)
+        return {"choices": [{"message": {"content": inline}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    optimized, _, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(
+            h3_input_mode="Ref2VA",
+            reference_instructions=(
+                "<Video 1> supplies the overall composition and motion reference."
+            ),
+        )
+    )
+    assert optimized.startswith("subject_definitions:\n<Subject 1> is")
+    assert "summary:\n<Subject 1> introduces" in optimized
+    assert "retention_analysis:\n<Video 1>: fully_preserved" in optimized
+    assert "detailed_description:\n[Shot 1]" in optimized
+    assert status == "Success: model=test-model, mode=Ref2VA, repaired=1"
+    assert len(calls) == 2
+
+
+def test_ref2va_repair_canonicalizes_colon_subject_definition(monkeypatch):
+    response = (
+        "subject_definitions:\n<Subject 1>: a woman drinking tea.\n"
+        "summary: <Subject 1> introduces MiniMax H3.\n"
+        "retention_analysis:\n<Video 1>: fully_preserved - retain composition.\n"
+        "detailed_description: [Shot 1] <Subject 1> speaks to camera.\n"
+        "overall_soundscape: Clear speech and quiet room tone.\n"
+        "non_diegetic_music: None."
+    )
+    calls = []
+
+    def fake_request(url, payload, *args):
+        calls.append(payload)
+        return {"choices": [{"message": {"content": response}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    optimized, _, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(
+            h3_input_mode="Ref2VA",
+            reference_instructions="<Video 1> supplies composition.",
+        )
+    )
+    assert "<Subject 1> is a woman drinking tea." in optimized
+    assert "<Subject 1>: a woman" not in optimized
+    assert status == "Success: model=test-model, mode=Ref2VA, repaired=1"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("label", "invalid_value", "expected_value"),
+    [
+        ("<Video 1>", "fully_copy", "fully_preserved"),
+        ("<Audio 1>", "fully_preserved", "fully_copy"),
+    ],
+)
+def test_ref2va_repair_canonicalizes_cross_taxonomy_retention_values(
+    monkeypatch, label, invalid_value, expected_value
+):
+    response = (
+        "subject_definitions:\n<Subject 1> is a woman drinking tea.\n"
+        "summary: <Subject 1> introduces MiniMax H3.\n"
+        f"retention_analysis:\n{label}: {invalid_value} - retain the source.\n"
+        "detailed_description: [Shot 1] <Subject 1> speaks to camera.\n"
+        "overall_soundscape: Clear speech and quiet room tone.\n"
+        "non_diegetic_music: None."
+    )
+    calls = []
+
+    def fake_request(url, payload, *args):
+        calls.append(payload)
+        return {"choices": [{"message": {"content": response}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    family = label[1:].split(" ", 1)[0]
+    optimized, _, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(
+            h3_input_mode="Ref2VA",
+            reference_instructions=f"{label} supplies the {family.lower()} reference.",
+        )
+    )
+    assert f"{label}: {expected_value}" in optimized
+    assert f"{label}: {invalid_value}" not in optimized
+    assert status == "Success: model=test-model, mode=Ref2VA, repaired=1"
+    assert len(calls) == 2
+
+
 @pytest.mark.parametrize("fail_mode", ["Return Original", "Stop Workflow"])
 def test_repair_failure_obeys_final_fail_mode_and_never_retries_more_than_once(
     monkeypatch, fail_mode

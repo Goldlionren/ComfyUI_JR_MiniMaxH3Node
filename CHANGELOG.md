@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+- Fixed a builder/validator contract conflict by requiring the Ref2VA `subject_definitions:` heading to occupy its own line in the minimum output skeleton.
+- Canonicalize common section-heading wrappers/inline bodies, `<Subject N>: ...` definitions, and unambiguous visible/audio cross-taxonomy retention values inside the existing single repair pass.
+- Verified a real local `qwen3.6-27b-abliterated-Q4_K_M.gguf` Ref2VA request succeeds with the corrected initial contract.
+
 ## 0.4.2
 
 - Shield protected literals with immutable local sentinels during the single format-repair request, then restore the exact original text before full validation.
