@@ -67,7 +67,7 @@ non_diegetic_music: N/A"""
     content = captured["payload"]["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "text", "image_url", "text", "image_url"]
     assert "<Picture 1>:" in content[0]["text"] and "<Picture 2>:" in content[0]["text"]
-    assert output[2].endswith("mode=Ref2VA, images=2")
+    assert output[2] == "Success: model=x, mode=Ref2VA, repaired=0"
 
 
 def test_system_prompt_contains_h3_timeline_and_hard_constraints():

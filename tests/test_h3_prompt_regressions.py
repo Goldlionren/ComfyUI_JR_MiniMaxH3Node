@@ -165,9 +165,9 @@ def test_validation_error_obeys_fail_mode(
     if fail_mode == "Return Original":
         fallback = call()
         assert fallback[:2] == (_legacy_args()["prompt"], _legacy_args()["prompt"])
-        assert "H3 prompt validation failed" in fallback[2]
+        assert fallback[2].startswith("Fallback: missing required section")
     else:
-        with pytest.raises(RuntimeError, match="H3 prompt validation failed"):
+        with pytest.raises(ValueError, match="after one format-repair attempt"):
             call()
 
 

@@ -64,6 +64,8 @@ The node is a local H3-oriented Prompt/Context Preprocessor, not a Chinese-only 
 
 `api_base_url` accepts a service root, `/v1`, or a full `/v1/models` or `/v1/chat/completions` URL; the node normalizes all of them without producing `/v1/v1`. If `model` is blank, `/v1/models` is queried at execution time. `max_tokens` defaults to **1800**; complex Ref2VA descriptions may need a larger value.
 
+Every generated prompt is checked by the full local validator. If the first result fails only at that boundary, the node makes exactly one text-only repair request at `temperature=0.1`, instructing the model to correct H3 formatting without rewriting story/content or changing protected user literals, and then runs the same full validator again. Success status reports `repaired=0` or `repaired=1`. If the repaired result still fails, **Return Original** returns the unchanged user prompt with a concise final reason, while **Stop Workflow** raises a descriptive `ValueError`.
+
 ### Input modes
 
 The `h3_input_mode` widget supports `Auto`, `T2VA`, `I2VA`, `FL2VA`, `L2VA`, and `Ref2VA`. In Auto, routing is deterministic:

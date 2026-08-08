@@ -52,6 +52,8 @@ The node is not MiniMax's hosted proprietary H3-Context-IR and does not reproduc
 
 The optional local-LLM integration smoke reached the configured local service at `http://127.0.0.1:10000`, selected `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0.gguf`, generated a 952-character T2VA prompt, and passed strict validation. An initial response omitted `[Shot 1]`; adding a clean-room minimum syntax skeleton to the system contract made the repeat deterministic smoke pass without weakening validation. The default pytest suite remains offline and uses mocked HTTP where network behavior is tested.
 
+Version 0.4.1 adds one constrained format-repair pass after initial validation failure. The repair payload uses temperature 0.1, contains the candidate, exact validation errors, authoritative contract, and protected literals, but no images or optional reasoning fields. It is validated by the unchanged full validator and cannot recursively repair. Final Return Original and Stop Workflow semantics remain unchanged.
+
 ### Agent split for this phase
 
 - Luna A — upstream resource metadata and hashes.

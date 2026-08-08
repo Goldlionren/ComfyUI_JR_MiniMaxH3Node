@@ -42,6 +42,7 @@ def _install_response(monkeypatch, text, captured):
     def fake_request(url, payload, *args):
         captured["url"] = url
         captured["payload"] = payload
+        captured.setdefault("calls", []).append(payload)
         return {"choices": [{"message": {"content": text}}]}
 
     monkeypatch.setattr(
@@ -93,7 +94,7 @@ def test_auto_mode_end_to_end(monkeypatch, expected_mode, inputs, response, expe
     optimized, original, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(**inputs))
     assert optimized == response
     assert original == _args()["prompt"]
-    assert f"mode={expected_mode}" in status
+    assert status == f"Success: model=test-model, mode={expected_mode}, repaired=0"
     content = captured["payload"]["messages"][1]["content"]
     assert [item["text"] for item in content if item["type"] == "text" and item["text"].startswith("[Picture")] == expected_labels
     assert f"Resolved mode: {expected_mode}" in captured["payload"]["messages"][0]["content"]
@@ -113,7 +114,7 @@ def test_reference_instruction_registers_downstream_video_without_upload(monkeyp
         **_args(reference_instructions="<Video 1> supplies the motion and ending state.")
     )
     assert result[0] == response
-    assert "mode=Ref2VA, images=0" in result[2]
+    assert result[2] == "Success: model=test-model, mode=Ref2VA, repaired=0"
 
 
 def test_dialogue_must_survive_static_validation(monkeypatch):
@@ -123,7 +124,98 @@ def test_dialogue_must_survive_static_validation(monkeypatch):
         **_args(prompt='女孩说：“介绍一下MiniMax H3”', fail_mode="Return Original")
     )
     assert result[0] == result[1]
-    assert result[2].startswith("Fallback:") and "H3 prompt validation failed" in result[2]
+    assert result[2].startswith("Fallback:")
+    assert len(captured["calls"]) == 2
+
+
+def test_one_low_temperature_format_repair_can_recover(monkeypatch):
+    original = '女孩说：“介绍一下MiniMax H3”'
+    initial = (
+        "integrated_multimodal_description: The girl says <d>[Chinese] 介绍一下MiniMax H3</d>\n"
+        "overall_soundscape: Quiet room tone.\nnon_diegetic_music: N/A"
+    )
+    repaired = _base("[Shot 1] The girl says <d>[Chinese] 介绍一下MiniMax H3</d>")
+    responses = iter((initial, repaired))
+    calls = []
+    retry_flags = []
+
+    def fake_request(url, payload, *args):
+        calls.append(payload)
+        retry_flags.append(args[-1])
+        return {"choices": [{"message": {"content": next(responses)}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(prompt=original, fail_mode="Stop Workflow")
+    )
+    assert result == (
+        repaired,
+        original,
+        "Success: model=test-model, mode=T2VA, repaired=1",
+    )
+    assert len(calls) == 2
+    repair = calls[1]
+    assert repair["temperature"] == 0.1
+    assert repair["top_p"] == 1.0
+    assert "reasoning_effort" not in repair
+    assert "chat_template_kwargs" not in repair
+    assert "Do not rewrite" in repair["messages"][0]["content"]
+    assert "介绍一下MiniMax H3" in repair["messages"][1]["content"]
+    assert "prompt must contain at least one shot" in repair["messages"][1]["content"]
+    assert retry_flags == [True, False]
+
+
+@pytest.mark.parametrize("fail_mode", ["Return Original", "Stop Workflow"])
+def test_repair_failure_obeys_final_fail_mode_and_never_retries_more_than_once(
+    monkeypatch, fail_mode
+):
+    calls = []
+
+    def invalid_response(url, payload, *args):
+        calls.append(payload)
+        return {"choices": [{"message": {"content": "not an H3 prompt"}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        invalid_response,
+    )
+    call = lambda: JR_H3_OpenAICompatiblePromptOptimizer().optimize(  # noqa: E731
+        **_args(fail_mode=fail_mode)
+    )
+    if fail_mode == "Return Original":
+        result = call()
+        assert result[:2] == (_args()["prompt"], _args()["prompt"])
+        assert result[2].startswith("Fallback: missing required section")
+    else:
+        with pytest.raises(ValueError, match="after one format-repair attempt"):
+            call()
+    assert len(calls) == 2
+
+
+def test_repair_cannot_drop_a_preserved_literal(monkeypatch):
+    original = '女孩说：“介绍一下MiniMax H3”'
+    initial = "not an H3 prompt but 介绍一下MiniMax H3 remains"
+    repaired_without_literal = _base("[Shot 1] A girl speaks to camera.")
+    responses = iter((initial, repaired_without_literal))
+    calls = []
+
+    def fake_request(url, payload, *args):
+        calls.append(payload)
+        return {"choices": [{"message": {"content": next(responses)}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(prompt=original, fail_mode="Return Original")
+    )
+    assert result[:2] == (original, original)
+    assert "preserved literal missing" in result[2]
+    assert len(calls) == 2
 
 
 def test_explicit_mode_conflict_obeys_stop_workflow():

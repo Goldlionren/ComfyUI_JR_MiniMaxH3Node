@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Added exactly one low-temperature, format-only repair request after an initial H3 validation failure, followed by the unchanged full validator.
+- Repair prompts preserve user literals and content, omit reasoning extensions, and cannot trigger more than one repair attempt.
+- Added `repaired=0`/`repaired=1` success status while preserving final Return Original and Stop Workflow behavior.
+
 ## 0.4.0
 
 - Rebuilt Prompt Optimizer as a local H3-oriented prompt/context preprocessor with separate JR Director and clean-room MiniMax H3 interoperability layers.

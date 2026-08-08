@@ -25,6 +25,18 @@ from ..utils.safe_logging import safe_error
 
 _PROFILES = JR_DIRECTOR_PROFILES
 _H3_INPUT_MODES = [mode.value for mode in H3InputMode]
+_REPAIR_TEMPERATURE = 0.1
+
+
+class _FinalPromptValidationError(ValueError):
+    """A candidate still violates the H3 contract after one repair attempt."""
+
+    def __init__(self, validation):
+        self.concise_reason = validation.errors[0] if validation.errors else "unknown validation error"
+        super().__init__(
+            "H3 prompt validation failed after one format-repair attempt: "
+            f"{_validation_summary(validation)}"
+        )
 
 
 def _context(prompt, profile, duration, width, height, mode="T2VA", registry_text="No reference media is registered.", reference_instructions=""):
@@ -99,6 +111,44 @@ def _register_instruction_only_references(registry, instructions):
             "reference_instructions", "subject" if family == "Subject" else "source",
             source_key=f"reference_instructions:{token}", identifier=token,
         )
+
+
+def _validation_summary(validation):
+    summary = "; ".join(validation.errors[:5])
+    if len(validation.errors) > 5:
+        summary += f"; plus {len(validation.errors) - 5} more error(s)"
+    return summary
+
+
+def _repair_payload(*, model, context, candidate, validation, preserved_literals, max_tokens):
+    protected = "\n".join(f"- {literal}" for literal in preserved_literals) or "- None"
+    errors = "\n".join(f"- {error}" for error in validation.errors)
+    repair_system = f"""You perform one constrained MiniMax H3 format repair.
+Output only the repaired prompt. Repair syntax and structure only: field names, field order, shot markers, timestamps, alignment syntax, reference syntax, and other deterministic format violations. Do not rewrite, expand, summarize, embellish, translate, or otherwise change the story, actions, camera intent, sounds, dialogue, lyrics, visible text, names, or technical terms. Preserve every protected literal exactly. If content is already valid, leave it unchanged.
+
+Authoritative format contract:
+{build_system_prompt(context)}"""
+    repair_user = f"""Repair the candidate only for the listed validation errors.
+
+Validation errors:
+{errors}
+
+Protected user literals (must remain byte-for-byte present):
+{protected}
+
+Candidate prompt:
+{candidate}"""
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": repair_system},
+            {"role": "user", "content": repair_user},
+        ],
+        "temperature": _REPAIR_TEMPERATURE,
+        "top_p": 1.0,
+        "max_tokens": int(max_tokens),
+        "stream": False,
+    }
 
 
 class JR_H3_OpenAICompatiblePromptOptimizer:
@@ -193,14 +243,36 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 allowed_labels=registry.labels(), preserved_literals=preserved_literals,
             )
             if not validation.valid:
-                summary = "; ".join(validation.errors[:5])
-                if len(validation.errors) > 5:
-                    summary += f"; plus {len(validation.errors) - 5} more error(s)"
-                raise ValueError(f"H3 prompt validation failed: {summary}")
+                repair = _repair_payload(
+                    model=selected_model, context=context, candidate=raw_prompt,
+                    validation=validation, preserved_literals=preserved_literals,
+                    max_tokens=max_tokens,
+                )
+                # No reasoning extensions are sent here, so request_chat cannot perform
+                # its compatibility retry. This is exactly one format-repair request.
+                repaired_response = request_chat(
+                    chat_url, repair, timeout_seconds, api_key, False,
+                )
+                repaired_prompt = parse_chat_content(repaired_response)
+                repaired_validation = validate_prompt(
+                    repaired_prompt, mode=selected_mode.value,
+                    duration_seconds=duration_seconds, allowed_labels=registry.labels(),
+                    preserved_literals=preserved_literals,
+                )
+                if not repaired_validation.valid:
+                    raise _FinalPromptValidationError(repaired_validation)
+                return (
+                    repaired_validation.cleaned_prompt, original,
+                    f"Success: model={selected_model}, mode={selected_mode.value}, repaired=1",
+                )
             return (
                 validation.cleaned_prompt, original,
-                f"Success: model={selected_model}, mode={selected_mode.value}, images={len(encoded_images)}",
+                f"Success: model={selected_model}, mode={selected_mode.value}, repaired=0",
             )
+        except _FinalPromptValidationError as error:
+            if fail_mode == "Stop Workflow":
+                raise ValueError(str(error)) from error
+            return original, original, f"Fallback: {error.concise_reason}"
         except Exception as error:
             message = safe_error(error, api_key)
             if fail_mode == "Stop Workflow":
