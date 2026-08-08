@@ -50,7 +50,7 @@ def _user_prompt(prompt: str, profile: str, duration: int, width: int, height: i
     )
 
 
-class JR_H3_OpenAICompatiblePromptOptimizer:
+class _LegacyJR_H3_OpenAICompatiblePromptOptimizer:
     CATEGORY = "JR MiniMax H3/Prompt"
     FUNCTION = "optimize"
     RETURN_TYPES = ("STRING", "STRING", "STRING")
@@ -127,3 +127,13 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
             if fail_mode == "Stop Workflow":
                 raise RuntimeError(message) from error
             return original, original, f"Fallback: {message}"
+
+
+# Keep the historical module path and node ID stable while the implementation
+# lives in a focused module.  These names intentionally replace the legacy
+# definitions above for saved workflows and existing imports.
+from .h3_prompt_optimizer_official import (  # noqa: E402,F401
+    JR_H3_OpenAICompatiblePromptOptimizer,
+    _system_prompt,
+    _user_prompt,
+)

@@ -1,0 +1,211 @@
+"""OpenAI-compatible H3 prompt optimizer with clean-room official formatting."""
+
+from __future__ import annotations
+
+from ..utils.h3_prompt_builder import (
+    JR_DIRECTOR_PROFILES,
+    PromptBuildContext,
+    build_system_prompt,
+    build_user_prompt,
+    extract_preserved_literals,
+    registry_as_text,
+)
+from ..utils.h3_prompt_modes import H3InputMode, find_reference_label_tokens, route_h3_mode
+from ..utils.h3_prompt_validator import validate_prompt
+from ..utils.h3_reference_registry import ReferenceRegistry
+from ..utils.image_conversion import image_batch_to_jpeg_data_urls
+from ..utils.openai_compat import (
+    discover_model,
+    normalize_api_urls,
+    normalize_picture_markers,
+    parse_chat_content,
+    request_chat,
+)
+from ..utils.safe_logging import safe_error
+
+_PROFILES = JR_DIRECTOR_PROFILES
+_H3_INPUT_MODES = [mode.value for mode in H3InputMode]
+
+
+def _context(prompt, profile, duration, width, height, mode="T2VA", registry_text="No reference media is registered.", reference_instructions=""):
+    return PromptBuildContext(
+        original_prompt=str(prompt), profile=profile, mode=mode,
+        duration_seconds=int(duration), target_width=int(width), target_height=int(height),
+        registry_text=registry_text, reference_instructions=reference_instructions,
+    )
+
+
+def _system_prompt(profile, duration, width, height, h3_input_mode="T2VA", registry_text="No reference media is registered.", reference_instructions=""):
+    """Compatibility wrapper for the previous private helper."""
+    return build_system_prompt(_context("", profile, duration, width, height, h3_input_mode, registry_text, reference_instructions))
+
+
+def _user_prompt(prompt, profile, duration, width, height, image_count, h3_input_mode="T2VA"):
+    """Compatibility wrapper for the previous private helper."""
+    labels = "\n".join(
+        f"<Picture {index}>: source_input=legacy_ref_image; role=reference"
+        for index in range(1, int(image_count) + 1)
+    ) or "No reference media is registered."
+    normalized = normalize_picture_markers(str(prompt))
+    context = _context(normalized, profile, duration, width, height, h3_input_mode, labels)
+    return build_user_prompt(context, extract_preserved_literals(normalized))
+
+
+def _reference_slot_count(kwargs):
+    return sum(kwargs.get(f"ref_image_{index}") is not None for index in range(1, 10))
+
+
+def _encode_and_register_images(registry, *, first_frame, last_frame, image_send_size, kwargs):
+    encoded = []
+
+    def add_anchor(value, source_input, role):
+        if value is None:
+            return
+        urls = image_batch_to_jpeg_data_urls(value, image_send_size)
+        if len(urls) != 1:
+            raise ValueError(f"{source_input} must contain exactly one IMAGE, got batch size {len(urls)}.")
+        entry = registry.register_picture(source_input, role, source_key=source_input)
+        encoded.append((entry.label, urls[0]))
+
+    add_anchor(first_frame, "first_frame", "first_frame")
+    add_anchor(last_frame, "last_frame", "last_frame")
+    for slot_index in range(1, 10):
+        source_input = f"ref_image_{slot_index}"
+        value = kwargs.get(source_input)
+        if value is None:
+            continue
+        for batch_index, data_url in enumerate(image_batch_to_jpeg_data_urls(value, image_send_size), 1):
+            entry = registry.register_picture(
+                source_input, "reference", source_key=f"{source_input}#{batch_index}"
+            )
+            encoded.append((entry.label, data_url))
+    return encoded
+
+
+def _register_instruction_only_references(registry, instructions):
+    """Track downstream Video/Audio/Subject labels declared by user instructions."""
+    for token in dict.fromkeys(find_reference_label_tokens(instructions)):
+        if registry.resolve(token) is not None:
+            continue
+        family = token[1:].split(" ", 1)[0]
+        if family == "Picture":
+            raise ValueError(f"reference_instructions uses {token}, but no matching image is connected.")
+        register = {
+            "Subject": registry.register_subject,
+            "Video": registry.register_video,
+            "Audio": registry.register_audio,
+        }[family]
+        register(
+            "reference_instructions", "subject" if family == "Subject" else "source",
+            source_key=f"reference_instructions:{token}", identifier=token,
+        )
+
+
+class JR_H3_OpenAICompatiblePromptOptimizer:
+    CATEGORY = "JR MiniMax H3/Prompt"
+    FUNCTION = "optimize"
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("optimized_prompt", "original_prompt", "status")
+    DESCRIPTION = "Builds and validates mode-aware MiniMax H3 prompts through an OpenAI-compatible endpoint."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        required = {
+            "prompt": ("STRING", {"multiline": True, "default": ""}),
+            "enable": ("BOOLEAN", {"default": True}),
+            "api_base_url": ("STRING", {"default": "http://127.0.0.1:10000"}),
+            "model": ("STRING", {"default": ""}),
+            "prompt_profile": (list(_PROFILES), {"default": "Standard"}),
+            "duration_seconds": ("INT", {"default": 10, "min": 1, "max": 60}),
+            "target_width": ("INT", {"default": 768, "min": 64, "max": 8192}),
+            "target_height": ("INT", {"default": 1152, "min": 64, "max": 8192}),
+            "temperature": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 2.0, "step": 0.05}),
+            "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.05}),
+            "max_tokens": ("INT", {"default": 1800, "min": 32, "max": 32768}),
+            "timeout_seconds": ("INT", {"default": 180, "min": 1, "max": 1800}),
+            "image_send_size": ("INT", {"default": 768, "min": 64, "max": 4096}),
+            "fail_mode": (["Return Original", "Stop Workflow"], {"default": "Return Original"}),
+            "disable_reasoning": ("BOOLEAN", {"default": True}),
+            # Appended after every legacy widget to preserve saved workflow positions.
+            "h3_input_mode": (_H3_INPUT_MODES, {"default": "Auto"}),
+            "reference_instructions": ("STRING", {"multiline": True, "default": ""}),
+        }
+        optional = {"api_key": ("STRING", {"default": ""})}
+        optional.update({f"ref_image_{index}": ("IMAGE",) for index in range(1, 10)})
+        optional["first_frame"] = ("IMAGE",)
+        optional["last_frame"] = ("IMAGE",)
+        return {"required": required, "optional": optional}
+
+    def optimize(
+        self, prompt, enable, api_base_url, model, prompt_profile, duration_seconds,
+        target_width, target_height, temperature, top_p, max_tokens, timeout_seconds,
+        image_send_size, fail_mode, disable_reasoning, h3_input_mode="Auto",
+        reference_instructions="", api_key="", first_frame=None, last_frame=None, **kwargs,
+    ):
+        original = str(prompt)
+        if not enable:
+            return original, original, "Disabled: original prompt returned"
+        try:
+            instructions = normalize_picture_markers(str(reference_instructions or ""))
+            selected_mode = route_h3_mode(
+                h3_input_mode,
+                has_first_frame=first_frame is not None,
+                has_last_frame=last_frame is not None,
+                reference_image_count=_reference_slot_count(kwargs),
+                reference_instructions=instructions,
+            )
+            registry = ReferenceRegistry()
+            encoded_images = _encode_and_register_images(
+                registry, first_frame=first_frame, last_frame=last_frame,
+                image_send_size=int(image_send_size), kwargs=kwargs,
+            )
+            _register_instruction_only_references(registry, instructions)
+            registry.validate_references(instructions)
+
+            normalized_original = normalize_picture_markers(original)
+            preserved_literals = extract_preserved_literals(normalized_original)
+            context = _context(
+                normalized_original, prompt_profile, duration_seconds, target_width, target_height,
+                selected_mode.value, registry_as_text(registry.entries()), instructions,
+            )
+            models_url, chat_url = normalize_api_urls(api_base_url)
+            selected_model = model.strip() or discover_model(models_url, timeout_seconds, api_key)
+            user_content = [{"type": "text", "text": build_user_prompt(context, preserved_literals)}]
+            for label, data_url in encoded_images:
+                user_content.append({"type": "text", "text": f"[{label[1:-1]}]"})
+                user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+            payload = {
+                "model": selected_model,
+                "messages": [
+                    {"role": "system", "content": build_system_prompt(context)},
+                    {"role": "user", "content": user_content},
+                ],
+                "temperature": float(temperature), "top_p": float(top_p),
+                "max_tokens": int(max_tokens), "stream": False,
+            }
+            if disable_reasoning:
+                payload["reasoning_effort"] = "none"
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
+            response = request_chat(chat_url, payload, timeout_seconds, api_key, disable_reasoning)
+            raw_prompt = parse_chat_content(response)
+            validation = validate_prompt(
+                raw_prompt, mode=selected_mode.value, duration_seconds=duration_seconds,
+                allowed_labels=registry.labels(), preserved_literals=preserved_literals,
+            )
+            if not validation.valid:
+                summary = "; ".join(validation.errors[:5])
+                if len(validation.errors) > 5:
+                    summary += f"; plus {len(validation.errors) - 5} more error(s)"
+                raise ValueError(f"H3 prompt validation failed: {summary}")
+            return (
+                validation.cleaned_prompt, original,
+                f"Success: model={selected_model}, mode={selected_mode.value}, images={len(encoded_images)}",
+            )
+        except Exception as error:
+            message = safe_error(error, api_key)
+            if fail_mode == "Stop Workflow":
+                raise RuntimeError(message) from error
+            return original, original, f"Fallback: {message}"
+
+
+__all__ = ["JR_H3_OpenAICompatiblePromptOptimizer", "_system_prompt", "_user_prompt"]

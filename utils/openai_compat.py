@@ -75,7 +75,12 @@ def request_chat(chat_url: str, payload: dict, timeout: float, api_key: str = ""
     try:
         return _request_json(chat_url, timeout, method="POST", payload=payload, api_key=api_key)
     except OpenAICompatError as error:
-        if error.status != 400 or not retry_reasoning_400:
+        compatibility_error = re.search(
+            r"unknown\s+(?:field|parameter)|unsupported\s+(?:field|parameter)|unrecognized\s+(?:field|parameter)",
+            str(error),
+            re.IGNORECASE,
+        )
+        if error.status != 400 or not retry_reasoning_400 or compatibility_error is None:
             raise
         fallback = dict(payload)
         fallback.pop("reasoning_effort", None)

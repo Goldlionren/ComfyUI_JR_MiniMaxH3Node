@@ -1,0 +1,5 @@
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 2) aligns with the 5.00-second mark of the target video.
+
+integrated_multimodal_description: [Shot 1] A folded map rests on a wooden desk. [Shot 2] At 00:02.000, a hand opens the map toward the window.
+overall_soundscape: Paper movement and a low room hum.
+non_diegetic_music: Sparse instrumental pad, fading before the final frame.

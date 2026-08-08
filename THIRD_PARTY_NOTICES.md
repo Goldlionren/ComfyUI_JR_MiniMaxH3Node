@@ -1,5 +1,16 @@
 # Third-party notices
 
+## MiniMax-AI/MiniMax-H3 prompt-writing specification
+
+- Repository: https://github.com/MiniMax-AI/MiniMax-H3
+- Audited branch and commit: `main` at `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea`
+- Audited paths: `skills/h3-prompt-writing/SKILL.md`, `skills/h3-prompt-writing/references/base-en.txt`, and `skills/h3-prompt-writing/references/ref-en.txt`
+- License linked by the upstream README: [MiniMax H3 Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)
+
+The audited GitHub commit did not contain a `LICENSE` or `NOTICE` file. The linked Community License grants rights only within its defined Applicable Territory and expressly excludes the European Union, United Kingdom, Republic of Korea, and United States. A public GitHub repository cannot enforce that downstream territorial restriction. Consequently, this project does **not** redistribute the official Skill, guide prose, or examples.
+
+The implementation is independently written from public interoperability requirements. It retains only necessary format facts such as field names, label tokens, mode names, ordering, and fixed relationship markers, plus factual upstream URLs, paths, commit and file hashes. [`resources/minimax_h3_spec/UPSTREAM.json`](resources/minimax_h3_spec/UPSTREAM.json) records the audited sources. This notice is attribution and provenance documentation, not a sublicense for MiniMax H3 model weights or documentation.
+
 ## ComfyUI-DaSiWa-Nodes
 
 - Repository: https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes

@@ -29,3 +29,33 @@ The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills
 The task described DaSiWa as Apache-2.0, but the required shallow clone resolved to commit `a297af20318dfb7d8bdd2295a920172437551036`, whose root `LICENSE` is GPL-3.0. No DaSiWa source was copied or ported into this Apache-2.0 project. The three corresponding nodes were independently written from the task's functional specification, with upstream names/docs consulted only to understand expected behavior. See `THIRD_PARTY_NOTICES.md`.
 
 The OpenAI request layer is independent. The H3 prompt constraint strategy was reorganized and rewritten after reviewing the signerzwb reference, as recorded in `THIRD_PARTY_NOTICES.md`.
+
+## MiniMax H3 official-prompt integration (2026-08-08)
+
+### Task background and provenance
+
+This phase adds a local MiniMax H3-oriented Prompt/Context Preprocessor while keeping the historical node ID, three outputs, and saved-workflow widget positions stable. The audited upstream is [MiniMax-AI/MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3), branch `main`, pinned to commit `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea` (retrieved 2026-08-08). The source paths and hashes are recorded in [`resources/minimax_h3_spec/UPSTREAM.json`](resources/minimax_h3_spec/UPSTREAM.json); the local directory contains metadata only.
+
+The upstream GitHub repository had no root `LICENSE` file. Its README links to the [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE), whose territory limits/exclusions cover the US, EU, UK, and Korea. The fixed project decision is therefore to redistribute no official guide prose or examples and to ship only clean-room metadata and interoperability facts. This is not an endorsement and does not grant rights beyond that license.
+
+### Architecture and compatibility
+
+The old implementation was a single Chinese image-to-video prompt template. The new path separates a JR Creative Director layer (`JR_DIRECTOR_PROFILES`) from a clean-room official-format layer. The Director supplies profile direction and continuity priorities; the official layer supplies published section names, label syntax, ordering, timing/alignment facts, and retention taxonomies. JR profile names are local names, not MiniMax format names.
+
+`utils/h3_prompt_modes.py` resolves Auto and validates the five generation modes; `utils/h3_reference_registry.py` assigns deterministic labels; `utils/h3_prompt_validator.py` validates section order, shots, references, timing, and preserved literals; and `utils/h3_prompt_builder.py` composes the system/context and user prompts. The node in `nodes/h3_prompt_optimizer_official.py` registers first/last anchors and reference slots, sends IMAGE payloads, validates the returned text, and keeps Return Original/Stop Workflow failure behavior. `nodes/h3_openai_prompt_optimizer.py` remains the historical import path.
+
+Legacy required widgets remain the exact prefix and `h3_input_mode` plus `reference_instructions` are appended. Legacy optional `api_key` and `ref_image_1` through `ref_image_9` remain the exact prefix; `first_frame` and `last_frame` are appended. Existing callers may omit all new optimize arguments. API roots, `/v1`, and full endpoint paths normalize to one `/v1` segment. A 400 caused by optional reasoning fields retries once without those fields; other HTTP failures are not retried.
+
+### Boundaries and limitations
+
+The node is not MiniMax's hosted proprietary H3-Context-IR and does not reproduce or replace it. It uploads connected IMAGE inputs to the configured OpenAI-compatible service. Video and Audio labels may be declared in `reference_instructions` for downstream context, but this node does not upload or universally understand binary video/audio; backend and downstream support decide whether those references are usable. Ref2VA prompts may require a `max_tokens` value above the default 1800 for complex descriptions.
+
+The optional local-LLM integration smoke reached the configured local service at `http://127.0.0.1:10000`, selected `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0.gguf`, generated a 952-character T2VA prompt, and passed strict validation. An initial response omitted `[Shot 1]`; adding a clean-room minimum syntax skeleton to the system contract made the repeat deterministic smoke pass without weakening validation. The default pytest suite remains offline and uses mocked HTTP where network behavior is tested.
+
+### Agent split for this phase
+
+- Luna A — upstream resource metadata and hashes.
+- Luna B — input modes and reference registry.
+- Luna C — validator and prompt fixtures.
+- Luna D — regression coverage and user/developer documentation (this section).
+- Main — audit, license decision, architecture, builder/node integration, and deployment.

@@ -1,0 +1,5 @@
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] A cyclist waits at a red crossing. [Shot 2] At 00:01.200, the signal changes and the cyclist rolls forward.
+overall_soundscape: Bicycle chain clicks and a distant crossing bell remain natural.
+non_diegetic_music: No added score.

@@ -1,0 +1,2 @@
+integrated_multimodal_description: [Shot 1] A quiet room holds a single chair.
+overall_soundscape: A low indoor hum.

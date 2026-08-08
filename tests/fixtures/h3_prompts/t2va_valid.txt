@@ -1,0 +1,3 @@
+integrated_multimodal_description: [Shot 1] A paper lantern glows beside a closed window.
+overall_soundscape: Quiet room tone with a soft rustle from the paper shade.
+non_diegetic_music: No non-diegetic music; leave the ending still.

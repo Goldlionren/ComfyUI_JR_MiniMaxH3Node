@@ -1,0 +1,3 @@
+integrated_multimodal_description: [Shot 1] A figure studies <Picture 2>.
+overall_soundscape: Quiet.
+non_diegetic_music: None.

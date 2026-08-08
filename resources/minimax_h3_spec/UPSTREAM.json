@@ -1,0 +1,31 @@
+{
+  "repository": "https://github.com/MiniMax-AI/MiniMax-H3",
+  "branch": "main",
+  "commit": "8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea",
+  "retrieved_at": "2026-08-08",
+  "official_sources": [
+    {
+      "id": "skill",
+      "path": "skills/h3-prompt-writing/SKILL.md",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3/blob/8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea/skills/h3-prompt-writing/SKILL.md",
+      "sha256": "3C0D6E13F8F608E0EC4E0AD566521EA0DC64E80D16B5F5DF3DEA28E0D56A0697"
+    },
+    {
+      "id": "base",
+      "path": "skills/h3-prompt-writing/references/base-en.txt",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3/blob/8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea/skills/h3-prompt-writing/references/base-en.txt",
+      "sha256": "088FB632FA3CBB18C9821024FB689E6F0F356F824C8F2E6B8E43A33239B137C7"
+    },
+    {
+      "id": "ref",
+      "path": "skills/h3-prompt-writing/references/ref-en.txt",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3/blob/8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea/skills/h3-prompt-writing/references/ref-en.txt",
+      "sha256": "B621067B41988C4D92BE715B7A98BA48338F4076AB6041D95FCF463EA7C8CCDD"
+    }
+  ],
+  "license": {
+    "name": "MiniMax H3 Community License",
+    "link": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"
+  },
+  "redistribution_strategy": "clean-room-metadata-only"
+}

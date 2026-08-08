@@ -8,7 +8,7 @@ A focused eight-node ComfyUI suite for MiniMax H3 prompt preparation, human revi
 
 | 节点 | 用途 |
 | --- | --- |
-| **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** | 通过 OpenAI 兼容的 `/v1/models` 与 `/v1/chat/completions` 接口，把简短创意和最多 9 路参考图整理成 H3 中文分镜提示词。 |
+| **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** | Uses an OpenAI-compatible `/v1/models` and `/v1/chat/completions` service to prepare local H3 Prompt/Context Preprocessor output from text, IMAGE references, and optional first/last anchors. |
 | **JR MiniMax H3 Prompt Review & Continue** | 在工作流中暂停，让用户逐字审核或修改 H3 提示词，点击 Next / Continue 后才允许下游继续执行。 |
 | **JR H3 Cache Config Router** | 对最终 H3 提示词发起独立的场景分类请求，并用本地版本化 Preset 生成类型安全的 Cache 配置。 |
 | **JR H3 Adaptive Cache** | 为原生 MiniMax H3 音视频 DiT 提供 Visual Fast、Dialogue Safe、Action Safe、Balanced、Auto 和 Off 缓存路径。 |
@@ -60,11 +60,39 @@ git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 
 ## Prompt Optimizer
 
-`api_base_url` 可填写服务根地址、`/v1` 或完整的 `/v1/chat/completions` 地址，节点会统一规范化。`model` 留空时才会在执行阶段调用 `/v1/models` 自动选择模型。
+The node is a local H3-oriented Prompt/Context Preprocessor, not a Chinese-only image-to-video prompt template. It has two deliberate layers: a **JR Creative Director** layer (the selectable JR profiles and continuity choices), followed by a clean-room implementation of the current published MiniMax H3 prompt-format guidance (section names, labels, ordering, timing, and retention taxonomies).
 
-支持四种优化档位：Standard、Cinematic Drama、Action、Character Consistency。内置 H3 中文导演提示词会处理 `<Picture N>` 映射、镜头时间轴、人物与场景连续性、硬约束和清晰的结束状态。
+`api_base_url` accepts a service root, `/v1`, or a full `/v1/models` or `/v1/chat/completions` URL; the node normalizes all of them without producing `/v1/v1`. If `model` is blank, `/v1/models` is queried at execution time. `max_tokens` defaults to **1800**; complex Ref2VA descriptions may need a larger value.
 
-节点可连接最多 9 路参考 IMAGE。图片会经过 RGB/RGBA 校验、透明区域白底合成、限边缩放和 JPEG 编码，再按顺序发送。API Key、Authorization header、完整 base64 图片和完整用户提示词不会写入普通日志。
+### Input modes
+
+The `h3_input_mode` widget supports `Auto`, `T2VA`, `I2VA`, `FL2VA`, `L2VA`, and `Ref2VA`. In Auto, routing is deterministic:
+
+| Inputs present | Resolved mode |
+| --- | --- |
+| Any reference IMAGE, or a labelled reference instruction | Ref2VA |
+| No references; `first_frame` and `last_frame` absent | T2VA |
+| `first_frame` only | I2VA |
+| `first_frame` and `last_frame` | FL2VA |
+| `last_frame` only | L2VA |
+
+`first_frame` and `last_frame` are single-image anchors. `ref_image_1` through `ref_image_9` are reference images and can contain batches. The registry numbers media in this order—`first_frame`, `last_frame`, then reference-image slots and their batch items—so labels are stable (`<Picture 1>`, `<Picture 2>`, ...). `reference_instructions` may declare downstream `<Video N>`, `<Audio N>`, or `<Subject N>` labels; a `<Picture N>` declaration must resolve to a connected image. Explicit modes reject conflicting inputs instead of silently changing mode.
+
+The profiles **Standard**, **Cinematic Drama**, **Action**, and **Character Consistency** are JR names for the Creative Director layer. They are not official MiniMax format names or an endorsement by MiniMax.
+
+Typical prompts are concise and mode-specific:
+
+```text
+T2VA:  text-only scene description -> integrated_multimodal_description
+I2VA:  first_frame -> image-anchored opening at 0.00 seconds
+FL2VA: first_frame + last_frame -> opening and ending alignment
+L2VA:  last_frame -> final-state alignment at the target duration
+Ref2VA: ref_image_1..9 and/or labelled instructions -> subject/retention sections
+```
+
+The local node is **not** MiniMax's hosted proprietary **H3-Context-IR**, and it does not reproduce, replace, or claim compatibility with that internal system. It sends IMAGE inputs to the configured OpenAI-compatible prompt service. Video and Audio labels can be registered for downstream context, but this node does not upload or universally understand binary video/audio; backend and downstream support determine what those references mean.
+
+Official guide prose and examples are not redistributed. The clean-room metadata records format facts and source hashes in [`resources/minimax_h3_spec`](resources/minimax_h3_spec/), pinned to [MiniMax-AI/MiniMax-H3 commit `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea`](https://github.com/MiniMax-AI/MiniMax-H3/tree/8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea); see [`UPSTREAM.json`](resources/minimax_h3_spec/UPSTREAM.json) for the source paths and license link.
 
 ## Prompt Review & Continue
 

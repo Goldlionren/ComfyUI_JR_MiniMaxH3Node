@@ -67,6 +67,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.__class__.requests.append(("POST", self.path, dict(self.headers), payload))
         if self.__class__.mode == "retry" and "reasoning_effort" in payload:
             self._json(400, {"error": "unknown field"}); return
+        if self.__class__.mode == "generic400": self._json(400, {"error": "invalid prompt"}); return
         if self.__class__.mode == "401": self._json(401, {"error": "denied"}); return
         if self.__class__.mode == "slow": time.sleep(0.2)
         self._json(200, {"choices": [{"message": {"content": "final"}}]})
@@ -98,6 +99,14 @@ def test_reasoning_400_retries_once_without_extensions(server):
     request_chat(server + "/v1/chat/completions", payload, 2, retry_reasoning_400=True)
     posts = [x for x in _Handler.requests if x[0] == "POST"]
     assert len(posts) == 2 and "reasoning_effort" in posts[0][3] and "reasoning_effort" not in posts[1][3]
+
+
+def test_unrelated_400_is_not_retried(server):
+    _Handler.mode = "generic400"
+    with pytest.raises(OpenAICompatError):
+        request_chat(server + "/v1/chat/completions", {"reasoning_effort": "none"}, 2, retry_reasoning_400=True)
+    posts = [request for request in _Handler.requests if request[0] == "POST"]
+    assert len(posts) == 1
 
 
 def test_http_error_is_bounded_and_has_no_authorization(server):

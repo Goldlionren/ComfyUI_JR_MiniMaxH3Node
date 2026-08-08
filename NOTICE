@@ -12,3 +12,10 @@ from residual-based diffusion caching, EasyCache/TeaCache-style change estimatio
 First Block Cache, and CacheDiT. No source, comments, function names, or distinctive code structure
 from those projects were copied. The implementation was written against ComfyUI's native MiniMax H3
 wrapper and block-replacement interfaces and remains licensed under Apache-2.0.
+
+The H3 prompt-writing integration is independently implemented against public interoperability
+facts observed in MiniMax-AI/MiniMax-H3 at commit
+8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea. The official Prompt Skill, guide prose, and examples
+are not distributed in this project because the linked MiniMax H3 Community License contains
+territorial redistribution restrictions. Source provenance and the license audit are recorded in
+THIRD_PARTY_NOTICES.md and resources/minimax_h3_spec/UPSTREAM.json.

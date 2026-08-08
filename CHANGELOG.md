@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Rebuilt Prompt Optimizer as a local H3-oriented prompt/context preprocessor with separate JR Director and clean-room MiniMax H3 interoperability layers.
+- Added deterministic Auto, T2VA, I2VA, FL2VA, L2VA, and Ref2VA routing; explicit first/last-frame semantics; and a collision-free Reference Registry.
+- Added current base/ref section contracts, keyframe alignment rules, reference/retention validation, exact multilingual dialogue/text preservation, and golden prompt fixtures.
+- Preserved the node ID, three outputs, legacy widget prefix, OpenAI-compatible URL/model behavior, one-time reasoning compatibility retry, image processing, and fail modes.
+- Recorded upstream SHA, file hashes, license decision, and metadata-only clean-room distribution strategy without bundling official guide prose.
+
 ## 0.3.3
 
 - Recalibrated all four active cache presets against real 25-step native H3 input/probe relative-delta measurements; the original thresholds were below even the calmest observed steps and made Router-selected profiles inert.

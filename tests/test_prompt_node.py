@@ -11,7 +11,8 @@ def _args(**overrides):
     values = dict(prompt="rough", enable=False, api_base_url="http://127.0.0.1:9", model="x",
                   prompt_profile="Standard", duration_seconds=10, target_width=768, target_height=1152,
                   temperature=0.6, top_p=0.9, max_tokens=100, timeout_seconds=1, image_send_size=768,
-                  fail_mode="Return Original", disable_reasoning=True, api_key="")
+                  fail_mode="Return Original", disable_reasoning=True, h3_input_mode="Auto",
+                  reference_instructions="", api_key="")
     values.update(overrides); return values
 
 
@@ -35,38 +36,57 @@ def test_stop_workflow_raises():
 
 
 def test_input_types_have_nine_optional_images():
-    optional = JR_H3_OpenAICompatiblePromptOptimizer.INPUT_TYPES()["optional"]
+    inputs = JR_H3_OpenAICompatiblePromptOptimizer.INPUT_TYPES()
+    optional = inputs["optional"]
     assert all(f"ref_image_{i}" in optional for i in range(1, 10))
+    assert list(inputs["required"])[-2:] == ["h3_input_mode", "reference_instructions"]
+    assert list(optional)[-2:] == ["first_frame", "last_frame"]
+    assert inputs["required"]["h3_input_mode"][0] == ["Auto", "T2VA", "I2VA", "FL2VA", "L2VA", "Ref2VA"]
 
 
 def test_multimodal_structure_has_separators(monkeypatch):
     captured = {}
-    monkeypatch.setattr("ComfyUI_JR_MiniMaxH3Node.nodes.h3_openai_prompt_optimizer.request_chat", lambda url, payload, *a: captured.setdefault("payload", payload) or {})
-    monkeypatch.setattr("ComfyUI_JR_MiniMaxH3Node.nodes.h3_openai_prompt_optimizer.parse_chat_content", lambda data: "done")
+    response = """subject_definitions:
+<Subject 1> is a referenced person defined by <Picture 1> and <Picture 2>.
+summary: [reference generation] <Subject 1> performs the requested action.
+retention_analysis:
+<Picture 1>: fully_preserved - appearance source.
+<Picture 2>: fully_preserved - appearance source.
+detailed_description: [Shot 1] <Subject 1> remains visible.
+overall_soundscape: Quiet room tone.
+non_diegetic_music: N/A"""
+    def fake_request(url, payload, *args):
+        captured["payload"] = payload
+        return {"choices": [{"message": {"content": response}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
     output = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(enable=True, ref_image_1=torch.zeros(2, 8, 8, 3)))
     content = captured["payload"]["messages"][1]["content"]
     assert [item["type"] for item in content] == ["text", "text", "image_url", "text", "image_url"]
-    assert "<Picture 1>、<Picture 2>" in content[0]["text"]
-    assert output[2].endswith("images=2")
+    assert "<Picture 1>:" in content[0]["text"] and "<Picture 2>:" in content[0]["text"]
+    assert output[2].endswith("mode=Ref2VA, images=2")
 
 
 def test_system_prompt_contains_h3_timeline_and_hard_constraints():
     prompt = _system_prompt("Standard", 6, 768, 1152)
     assert "MiniMax H3" in prompt
-    assert "【镜头N｜起始秒—结束秒】" in prompt
-    assert "0.0 秒" in prompt and "恰好结束于 6 秒" in prompt
-    assert "768×1152" in prompt
-    assert "<Picture N>" in prompt
-    assert "硬约束" in prompt and "最终状态" in prompt
+    assert "[Shot 1] has no timestamp" in prompt
+    assert "[Shot N] At MM:SS.mmm," in prompt
+    assert "Duration: 6 seconds" in prompt and "768x1152" in prompt
+    assert "user's explicit intent has highest priority" in prompt
+    assert "must never override field names" in prompt
 
 
 @pytest.mark.parametrize(
     ("profile", "expected"),
     [
-        ("Standard", "主体、环境、动作"),
-        ("Cinematic Drama", "微表情、情绪转折"),
-        ("Action", "起手、发力、移动、接触"),
-        ("Character Consistency", "人物身份、脸部、年龄"),
+        ("Standard", "natural motion, physical continuity"),
+        ("Cinematic Drama", "micro-expressions"),
+        ("Action", "weight transfer"),
+        ("Character Consistency", "stable identity"),
     ],
 )
 def test_each_profile_contributes_h3_specific_direction(profile, expected):
@@ -75,9 +95,8 @@ def test_each_profile_contributes_h3_specific_direction(profile, expected):
 
 def test_user_prompt_normalizes_reference_tags_and_supplies_context():
     prompt = _user_prompt("让<image1>向<image 2>转身", "Action", 8, 1280, 720, 2)
-    assert "目标时长：8 秒" in prompt
-    assert "画布参考：1280×720" in prompt
-    assert "优化档位：Action" in prompt
-    assert "<Picture 1>、<Picture 2>" in prompt
+    assert "Target duration: 8 seconds" in prompt
+    assert "Canvas reference: 1280x720" in prompt
+    assert "<Picture 1>:" in prompt and "<Picture 2>:" in prompt
     assert "让<Picture 1>向<Picture 2>转身" in prompt
     assert "<image" not in prompt

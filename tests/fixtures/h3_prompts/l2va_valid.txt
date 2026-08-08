@@ -1,0 +1,5 @@
+How the reference pictures align with the target video — <Picture 1> (from [Shot 2]) aligns with the 5.00-second mark of the target video.
+
+integrated_multimodal_description: [Shot 1] A small boat holds steady on a glassy inlet. [Shot 2] At 00:01.500, it turns toward the near shore.
+overall_soundscape: Water laps against the hull; no artificial effects.
+non_diegetic_music: A single sustained note under the movement.
