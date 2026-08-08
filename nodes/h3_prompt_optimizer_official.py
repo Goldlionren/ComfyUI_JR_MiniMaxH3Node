@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ..utils.h3_prompt_builder import (
     JR_DIRECTOR_PROFILES,
     PromptBuildContext,
@@ -11,7 +13,7 @@ from ..utils.h3_prompt_builder import (
     registry_as_text,
 )
 from ..utils.h3_prompt_modes import H3InputMode, find_reference_label_tokens, route_h3_mode
-from ..utils.h3_prompt_validator import validate_prompt
+from ..utils.h3_prompt_validator import ValidationResult, validate_prompt
 from ..utils.h3_reference_registry import ReferenceRegistry
 from ..utils.image_conversion import image_batch_to_jpeg_data_urls
 from ..utils.openai_compat import (
@@ -120,11 +122,41 @@ def _validation_summary(validation):
     return summary
 
 
+def _shield_preserved_literals(candidate, preserved_literals):
+    shielded = candidate
+    shields = []
+    for index, literal in enumerate(preserved_literals, 1):
+        token = f"__JR_H3_PRESERVED_LITERAL_{index:02d}__"
+        count = shielded.count(literal)
+        if count:
+            shielded = shielded.replace(literal, token)
+        else:
+            characters = [re.escape(character) for character in literal if not character.isspace()]
+            if characters:
+                whitespace_tolerant = r"[ \t]*".join(characters)
+                shielded, count = re.subn(whitespace_tolerant, token, shielded)
+        if count:
+            shields.append((token, literal, count))
+    return shielded, tuple(shields)
+
+
+def _restore_preserved_literals(candidate, shields):
+    restored = candidate
+    errors = []
+    for token, literal, expected_count in shields:
+        token_count = restored.count(token)
+        literal_count = restored.count(literal)
+        if token_count + literal_count != expected_count:
+            errors.append(f"repair changed protected literal sentinel for {literal!r}")
+        restored = restored.replace(token, literal)
+    return restored, tuple(errors)
+
+
 def _repair_payload(*, model, context, candidate, validation, preserved_literals, max_tokens):
     protected = "\n".join(f"- {literal}" for literal in preserved_literals) or "- None"
     errors = "\n".join(f"- {error}" for error in validation.errors)
     repair_system = f"""You perform one constrained MiniMax H3 format repair.
-Output only the repaired prompt. Repair syntax and structure only: field names, field order, shot markers, timestamps, alignment syntax, reference syntax, and other deterministic format violations. Do not rewrite, expand, summarize, embellish, translate, or otherwise change the story, actions, camera intent, sounds, dialogue, lyrics, visible text, names, or technical terms. Preserve every protected literal exactly. If content is already valid, leave it unchanged.
+Output only the repaired prompt. Repair syntax and structure only: field names, field order, shot markers, timestamps, alignment syntax, reference syntax, and other deterministic format violations. Do not rewrite, expand, summarize, embellish, translate, or otherwise change the story, actions, camera intent, sounds, dialogue, lyrics, visible text, names, or technical terms. Preserve every protected literal exactly. Any __JR_H3_PRESERVED_LITERAL_NN__ token is immutable: copy it exactly once at its existing location and never expand, remove, rename, or interpret it. If content is already valid, leave it unchanged.
 
 Authoritative format contract:
 {build_system_prompt(context)}"""
@@ -243,8 +275,11 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 allowed_labels=registry.labels(), preserved_literals=preserved_literals,
             )
             if not validation.valid:
+                shielded_prompt, literal_shields = _shield_preserved_literals(
+                    raw_prompt, preserved_literals
+                )
                 repair = _repair_payload(
-                    model=selected_model, context=context, candidate=raw_prompt,
+                    model=selected_model, context=context, candidate=shielded_prompt,
                     validation=validation, preserved_literals=preserved_literals,
                     max_tokens=max_tokens,
                 )
@@ -253,12 +288,20 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 repaired_response = request_chat(
                     chat_url, repair, timeout_seconds, api_key, False,
                 )
-                repaired_prompt = parse_chat_content(repaired_response)
+                repaired_prompt, shield_errors = _restore_preserved_literals(
+                    parse_chat_content(repaired_response), literal_shields
+                )
                 repaired_validation = validate_prompt(
                     repaired_prompt, mode=selected_mode.value,
                     duration_seconds=duration_seconds, allowed_labels=registry.labels(),
                     preserved_literals=preserved_literals,
                 )
+                if shield_errors:
+                    repaired_validation = ValidationResult(
+                        cleaned_prompt=repaired_validation.cleaned_prompt,
+                        valid=False,
+                        errors=shield_errors + repaired_validation.errors,
+                    )
                 if not repaired_validation.valid:
                     raise _FinalPromptValidationError(repaired_validation)
                 return (

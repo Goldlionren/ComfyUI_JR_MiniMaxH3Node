@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Shield protected literals with immutable local sentinels during the single format-repair request, then restore the exact original text before full validation.
+- Recognize whitespace-only mutations such as `介绍一下 MiniMax H3` as the location of the protected `介绍一下MiniMax H3` literal without weakening validator equality.
+- Reject repaired output when a sentinel is removed, duplicated, or returned with an inconsistent count.
+
 ## 0.4.1
 
 - Added exactly one low-temperature, format-only repair request after an initial H3 validation failure, followed by the unchanged full validator.

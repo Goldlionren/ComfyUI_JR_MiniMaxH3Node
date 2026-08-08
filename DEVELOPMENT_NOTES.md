@@ -54,6 +54,8 @@ The optional local-LLM integration smoke reached the configured local service at
 
 Version 0.4.1 adds one constrained format-repair pass after initial validation failure. The repair payload uses temperature 0.1, contains the candidate, exact validation errors, authoritative contract, and protected literals, but no images or optional reasoning fields. It is validated by the unchanged full validator and cannot recursively repair. Final Return Original and Stop Workflow semantics remain unchanged.
 
+Version 0.4.2 addresses a real local-model failure where both initial and repair responses changed `介绍一下MiniMax H3` to `介绍一下 MiniMax H3`. The repair layer now locates exact or whitespace-only literal variants, replaces them with counted immutable sentinels, and restores the original text locally before the unchanged full validation pass. Sentinel removal or duplication remains a hard failure.
+
 ### Agent split for this phase
 
 - Luna A — upstream resource metadata and hashes.

@@ -13,7 +13,7 @@ def test_root_import_and_exact_registration(package_name):
     assert set(package.NODE_CLASS_MAPPINGS) == EXPECTED
     assert set(package.NODE_DISPLAY_NAME_MAPPINGS) == EXPECTED
     assert all(name.startswith(("JR MiniMax H3", "JR H3")) for name in package.NODE_DISPLAY_NAME_MAPPINGS.values())
-    assert package.__version__ == "0.4.1"
+    assert package.__version__ == "0.4.2"
     assert package.WEB_DIRECTORY == "./js"
 
 

@@ -165,7 +165,43 @@ def test_one_low_temperature_format_repair_can_recover(monkeypatch):
     assert "Do not rewrite" in repair["messages"][0]["content"]
     assert "介绍一下MiniMax H3" in repair["messages"][1]["content"]
     assert "prompt must contain at least one shot" in repair["messages"][1]["content"]
+    assert "__JR_H3_PRESERVED_LITERAL_01__" in repair["messages"][1]["content"]
     assert retry_flags == [True, False]
+
+
+def test_repair_shields_and_restores_a_literal_with_inserted_whitespace(monkeypatch):
+    original = '女孩说：“介绍一下MiniMax H3”'
+    initial = _base(
+        "[Shot 1] The girl says <d>[Chinese] 介绍一下 MiniMax H3</d>"
+    )
+    repaired_with_sentinel = _base(
+        "[Shot 1] The girl says <d>[Chinese] __JR_H3_PRESERVED_LITERAL_01__</d>"
+    )
+    calls = []
+
+    def fake_request(url, payload, *args):
+        calls.append(payload)
+        response = initial if len(calls) == 1 else repaired_with_sentinel
+        return {"choices": [{"message": {"content": response}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    optimized, returned_original, status = (
+        JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+            **_args(prompt=original, fail_mode="Stop Workflow")
+        )
+    )
+    assert returned_original == original
+    assert "介绍一下MiniMax H3" in optimized
+    assert "介绍一下 MiniMax H3" not in optimized
+    assert "__JR_H3_PRESERVED_LITERAL" not in optimized
+    assert status == "Success: model=test-model, mode=T2VA, repaired=1"
+    assert len(calls) == 2
+    candidate = calls[1]["messages"][1]["content"].split("Candidate prompt:\n", 1)[1]
+    assert "__JR_H3_PRESERVED_LITERAL_01__" in candidate
+    assert "介绍一下 MiniMax H3" not in candidate
 
 
 @pytest.mark.parametrize("fail_mode", ["Return Original", "Stop Workflow"])
@@ -214,8 +250,31 @@ def test_repair_cannot_drop_a_preserved_literal(monkeypatch):
         **_args(prompt=original, fail_mode="Return Original")
     )
     assert result[:2] == (original, original)
-    assert "preserved literal missing" in result[2]
+    assert "repair changed protected literal sentinel" in result[2]
     assert len(calls) == 2
+
+
+def test_repair_cannot_duplicate_a_preserved_literal_sentinel(monkeypatch):
+    original = '女孩说：“介绍一下MiniMax H3”'
+    initial = "not an H3 prompt but 介绍一下MiniMax H3 remains"
+    duplicated = _base(
+        "[Shot 1] The girl repeats __JR_H3_PRESERVED_LITERAL_01__ and "
+        "__JR_H3_PRESERVED_LITERAL_01__."
+    )
+    responses = iter((initial, duplicated))
+
+    def fake_request(url, payload, *args):
+        return {"choices": [{"message": {"content": next(responses)}}]}
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        fake_request,
+    )
+    result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(prompt=original, fail_mode="Return Original")
+    )
+    assert result[:2] == (original, original)
+    assert "repair changed protected literal sentinel" in result[2]
 
 
 def test_explicit_mode_conflict_obeys_stop_workflow():
