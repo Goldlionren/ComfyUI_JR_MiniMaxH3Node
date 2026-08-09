@@ -1,5 +1,17 @@
 # Third-party notices
 
+## MiniMax-H3 Turbo LoRA and ComfyUI nodes
+
+- Weights/model repository: https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora
+- ComfyUI node repository: https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo
+- Author/project owner: Larryvrh
+- License displayed by both audited project pages on 2026-08-09: Apache-2.0
+- Upstream source or weights vendored by this repository: **NO**
+
+The `MiniMax H3 Turbo LoRA` shown in recommended workflows is an external component from Larryvrh, not an original JR node or model. This JR repository contributes its own workflow integration, compatibility/orchestration layer, Unified Acceleration node, testing, RTX post-processing, and other H3 workflow utilities.
+
+`Goldlionren/ComfyUI_JR_MiniMaxH3Node` is this project. The separate `Goldlionren/ComfyUI-MiniMax-H3-Turbo` repository is a fork of `Larryvrh/ComfyUI-MiniMax-H3-Turbo`; these repositories and their authorship must not be conflated.
+
 ## ComfyUI-KJNodes (Unified Acceleration runtime dependency)
 
 - Repository: https://github.com/kijai/ComfyUI-KJNodes

@@ -49,6 +49,16 @@ git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 - Prompt Optimizer 需要一个 OpenAI 兼容的本地或远程服务；本地服务可以不填写 API Key。
 - RTX、KJNodes、SageAttention、Sol-Attn 和 Triton 都是按功能启用的运行时依赖；缺少它们不会阻止其余节点加载。
 
+### Unified Acceleration 依赖
+
+使用 **H3 Unified Acceleration** 前，需要分别安装并保持更新：
+
+- [kijai/ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes)：提供 Sage、MiniMax H3 Low VRAM Attention 和 Chunk FeedForward 节点。
+- KJNodes 所选 Sage mode 对应的 `sageattention` 或 `sageattn3` Python/CUDA 运行环境。
+- [kijai/ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton)：提供实验性 Sol-Attn 与 Triton kernels。
+
+本 JR 仓库不会自动复制或重新发布这些第三方实现。缺失依赖只会在启用对应加速层并执行节点时产生明确错误，不影响其他 JR 节点启动。
+
 ## H3 Unified Acceleration
 
 **H3 Unified Acceleration** 是 MiniMax H3 专用的 `MODEL → MODEL` 编排节点。它不复制第三方 kernel，也不修改 ComfyUI、KJNodes、Sol-Attn 或 SageAttention；执行时从 ComfyUI 已注册节点中解析并调用已安装的上游实现：
@@ -62,26 +72,43 @@ Sage Attention
 
 四层解决不同问题：
 
-- Sage：dense attention kernel acceleration。
-- MiniMax H3 Low VRAM Attention：QKV/输入生命周期优化与 head chunking。
-- MiniMax H3 Chunk FeedForward：按 packed token 维度分块执行 FFN/SwiGLU。
-- Sol-Attn：对适用的 self-attention 动态稀疏化。
+- **SageAttention**：dense attention kernel acceleration；Sage 不是 sparse attention。
+- **MiniMax H3 Low VRAM Attention**：MiniMax-H3 专用 attention memory optimization，包括缩短中间 QKV tensor 生命周期、提前释放已消费 tensor、按 head group 分块，以及降低 kernel transient peak VRAM。
+- **MiniMax H3 Chunk FeedForward**：按 token 分块执行 MiniMax H3 SwiGLU/FeedForward，降低 FFN peak VRAM。
+- **Sol-Attn**：sparse self-attention acceleration，仅接管适用的 self-attention 调用。
 
-顺序是固定兼容契约。Sage 先安装 dense backend；Sol 最后读取它作为 `previous`。因此 Sol-Attn 不会在 SageAttention 之后再完整计算一遍 attention：Sol eligible 时走 sparse attention，Sol 拒绝或不适用时回到 previous backend，也就是 Sage。KJ Low VRAM 的 `optimized_attention`/`sol_take_forward` 组合行为由上游节点保留。
+顺序是固定兼容契约，**Sol-Attn MUST remain after Sage**。Sage 先安装 dense backend；Sol 最后读取它作为 `previous`。因此 Sol-Attn 不会在 SageAttention 之后再完整计算一遍 attention：Sol eligible 时走 sparse path；Sol 拒绝或不适用时委托给 previous dense backend，也就是 Sage。KJ Low VRAM 的 `optimized_attention`/`sol_take_forward` 组合行为由上游节点保留。
 
 `enable=false` 原样返回输入 MODEL，且不解析任何上游依赖。`sage_attention=disabled`、`enable_low_vram_attention=false`、`enable_low_vram_ffn=false` 与 `enable_sol_attn=false` 都是真正 bypass；不会用 `head_chunks=1` 或 `ffn_chunks=1` 模拟关闭。非 MiniMax H3 MODEL 会收到明确错误。
 
-默认值称为 **Validated default profile**，不是所有 GPU/分辨率/时长上的“最佳参数”：
+默认值称为 **Validated H3 Acceleration Profile**，不是所有 GPU、分辨率和时长上的“Best Settings”。这些值有意保持相对保守，优先保证画质和稳定性：
 
 ```text
-sage_attention=sageattn_qk_int8_pv_fp8_cuda++  allow_compile=false
+enable=true
+sage_attention=sageattn_qk_int8_pv_fp8_cuda++
+allow_compile=false
+enable_low_vram_attention=true
 head_chunks=4
-ffn_chunks=4  ffn_seq_threshold=4096
-tau=1.3  start_percent=0.2  end_percent=0.9  min_tokens=4096
-int8_qk=true  int8_pv=true  sink_conditioning=exact_kv_and_rows
-morton=false  morton_curve=2d_frame  verbose=false  use_tma=false
-dense_blocks=""  tau_profile=unconnected
+enable_low_vram_ffn=true
+ffn_chunks=4
+ffn_seq_threshold=4096
+enable_sol_attn=true
+tau=1.3
+start_percent=0.2
+end_percent=0.9
+min_tokens=4096
+int8_qk=true
+int8_pv=true
+sink_conditioning=exact_kv_and_rows
+morton=false
+morton_curve=2d_frame
+verbose=false
+use_tma=false
+dense_blocks=""
+tau_profile=optional / unconnected
 ```
+
+Advanced users can tune Sol sparsity, head chunking, FFN chunking and sampling windows further for their own GPU, resolution and content.
 
 推荐 MODEL 接线：
 
@@ -97,14 +124,36 @@ Load Diffusion Model
 
 Turbo LoRA、Reserved VRAM、Sigma Shift、EasyCache/Adaptive Cache、Sampler、VAE 与 RTX 后处理均保持独立。后处理仍建议 `Sampler → VAE Decode → JR H3 RTX Upscaler & Refiner → JR H3 Enhanced Video Combine`。
 
+### Turbo LoRA attribution 与仓库边界
+
+工作流中的 **MiniMax H3 Turbo LoRA** 来自 Larryvrh 的 [MiniMax-H3-Turbo-Lora 权重仓库](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) 与 [Larryvrh/ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) 节点项目，不是 JR 项目的原创组件。
+
+`JR_H3_UnifiedAcceleration` 属于 [Goldlionren/ComfyUI_JR_MiniMaxH3Node](https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node)。另一个 [Goldlionren/ComfyUI-MiniMax-H3-Turbo](https://github.com/Goldlionren/ComfyUI-MiniMax-H3-Turbo) 是 Larryvrh 节点仓库的 fork，两者不是同一个项目。JR 本仓库的贡献范围是工作流架构、集成、兼容层、Unified Acceleration 编排与测试、RTX 后处理及其他 H3 workflow tools。
+
+### Resolution 与后处理策略
+
+用户实测表明，当需要大幅后期放大时，低于约 **0.6MP** 的 H3 原生生成不推荐作为主要高画质工作流起点。这是用户 workflow 经验，不是 MiniMax 官方限制。当前验证工作点是 RTX 4080 SUPER 16GB 约 0.8MP、RTX 5090 32GB 约 1.5MP，然后使用 JR RTX 节点得到约 2.4MP 输出；这些不是最大支持分辨率。
+
+```text
+MiniMax H3 native generation
+    → VAE Decode
+    → JR H3 Resolution Scale Calculator
+    → JR H3 RTX Upscaler & Refiner
+    → JR H3 Enhanced Video Combine
+```
+
+核心思路不是无限压低 H3 原始分辨率，而是先生成具有足够细节的原生视频，使用 acceleration/VRAM optimization 让该 workload 能够运行，再通过 RTX enhancement 得到最终高分辨率输出。用户观察到在使用当前 Turbo + Unified Acceleration + VRAM optimization 流程之前，相同目标的高分辨率/长视频配置曾发生 OOM；当前两个验证工作点均完成，但这不构成所有系统都不会 OOM 的保证。
+
 ### Validated Hardware
 
-| GPU | VRAM | Native H3 Test | Duration | RTX Post Target | Status |
-| --- | ---: | ---: | ---: | ---: | --- |
-| RTX 4080 SUPER | 16GB | ~0.8MP | 15s | ~2.4MP | Previously validated workflow |
-| RTX 5090 | 32GB | 1.5MP | validated workflow | ~2.4MP | Previously validated workflow |
+| GPU | VRAM | Native H3 | Duration | Final RTX Output | Approx. Workflow Time | Status |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| RTX 4080 SUPER | 16GB | ~0.8MP | 15s | ~2.4MP | ~8 min | USER-VALIDATED PASS |
+| RTX 5090 | 32GB | 1.5MP | 15s | ~2.4MP | ~11 min | USER-VALIDATED PASS |
 
-These are validation points, not hard limits. 本次节点开发不会把型号、显存或 SM 架构写死。Sol-Attn 上游将其标记为 experimental；首次使用会编译 Triton kernels，因此 cold run 不应作为稳定性能基线，性能比较应优先记录 warm run。
+These are validated working configurations, not theoretical or hardware maximums. Timing is workload-dependent and should not be used as a cross-GPU apples-to-apples benchmark because the RTX 5090 validation uses substantially higher native H3 resolution. 本次节点开发不会把型号、显存或 SM 架构写死。
+
+用户对比原四节点 KJNodes/Sol-Attn chain 与 Unified wrapper 后，实际生成时间基本一致，未观察到有意义的 wrapper runtime regression。由于没有严格 A/B benchmark 数据，本项目不宣称精确百分比差异。Sol-Attn 上游将其标记为 experimental；首次使用会编译 Triton kernels，因此 cold run 不应作为稳定性能基线。
 
 完整参数、依赖错误和验收边界见 [`docs/H3_UNIFIED_ACCELERATION.md`](docs/H3_UNIFIED_ACCELERATION.md)。
 

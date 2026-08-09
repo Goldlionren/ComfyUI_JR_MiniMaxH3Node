@@ -6,6 +6,8 @@
 - Added true per-layer bypass switches, complete current Sol controls, optional `tau_profile`, explicit non-H3/dependency/API-drift errors, and lazy runtime dependency resolution.
 - Added CPU/mock coverage for patch order, switches, parameter forwarding, return normalization, missing dependencies, import safety, and existing-node registration.
 - Documented the validated default profile, prior hardware validation points, upstream commit audit, and no-vendoring license strategy.
+- Documented user-performed GPU acceptance: RTX 4080 SUPER 16GB at ~0.8MP/15s to ~2.4MP in ~8 minutes, and RTX 5090 32GB at 1.5MP/15s to ~2.4MP in ~11 minutes.
+- Recorded user-observed runtime equivalence with the original four-node chain, resolution strategy, OOM improvement, and explicit Turbo LoRA attribution without claiming strict benchmark percentages or hardware maxima.
 
 ## 0.4.3
 

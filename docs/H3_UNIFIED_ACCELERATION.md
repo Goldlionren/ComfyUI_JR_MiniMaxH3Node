@@ -13,6 +13,8 @@
 
 上游 Node ID 中 `Pathch` 的拼写来自 KJNodes 注册表，兼容层必须按此真实 ID 解析。Sol 必须最后执行，以便把 Sage override 保存为 previous backend，并与 KJ Low VRAM 的 `optimized_attention`/`sol_take_forward` 路径组合。
 
+Sol-Attn 不会在 SageAttention 之后再次执行完整 attention。适用调用由 Sol sparse path 接管；不适用或 fallback 调用交给 previous dense backend，也就是此配置中的 SageAttention。
+
 ## 参数
 
 | 参数 | 默认值 | 范围/选项 |
@@ -40,6 +42,8 @@
 | `dense_blocks` | empty | block selection string |
 | `tau_profile` | unconnected / `None` | optional force-input STRING; empty and multiline text remain distinct |
 
+这一组值称为 **Validated H3 Acceleration Profile**。它们有意相对保守，优先保证画质和稳定性，不应宣传为所有硬件上的最佳设置。高级用户可以针对自己的 GPU、分辨率和内容调整 Sol sparsity、head/FFN chunking 与 sampling window。
+
 ## 依赖与失败行为
 
 - KJNodes 提供 Sage、MiniMax H3 Low VRAM Attention 和 Chunk FeedForward。
@@ -53,6 +57,31 @@
 ## 不包含的功能
 
 Turbo LoRA、ReservedVRAMSetter、MiniMaxH3SigmaShift、EasyCache/JR Adaptive Cache、Sampler、VAE、RTX Upscaler 与视频合成都不属于此节点。
+
+工作流中使用的 Turbo LoRA 来自 [larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) 和 [Larryvrh/ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo)，不是 JR Unified 节点的一部分。
+
+## 用户 GPU 验收
+
+| GPU | VRAM | Native H3 | Duration | Final RTX Output | Approx. Workflow Time | Status |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| RTX 4080 SUPER | 16GB | ~0.8MP | 15s | ~2.4MP | ~8 min | USER-VALIDATED PASS |
+| RTX 5090 | 32GB | 1.5MP | 15s | ~2.4MP | ~11 min | USER-VALIDATED PASS |
+
+这些是用户完成的真实验收，不是 Codex 自动测试。两次 workload 不同：5090 使用了明显更高的 1.5MP 原生分辨率，因此 11 分钟与 4080S 的 8 分钟不能作为跨 GPU 同负载速度比较。两个配置是 validated working points，不是最大分辨率。
+
+用户还确认 Unified wrapper 与等价的四节点 KJNodes/Sol-Attn chain 生成时间基本一致，未观察到有意义的 runtime regression；没有严格 benchmark，因此不提供百分比结论。用户观察到采用 Turbo + Unified Acceleration + VRAM optimization 前，相同目标的高分辨率/长视频配置曾 OOM，而上述两个配置完成运行；这不是对其他系统的无 OOM 保证。
+
+## Resolution 与 post-processing
+
+用户 workflow 经验是不把低于约 0.6MP 的原生 H3 输出作为需要大幅放大时的主要高画质起点；这不是 MiniMax 官方硬限制。推荐从已验证的约 0.8MP（4080S）或 1.5MP（5090）工作点开始：
+
+```text
+MiniMax H3 native generation
+    → VAE Decode
+    → JR H3 Resolution Scale Calculator
+    → JR H3 RTX Upscaler & Refiner
+    → JR H3 Enhanced Video Combine
+```
 
 ## 性能记录
 
