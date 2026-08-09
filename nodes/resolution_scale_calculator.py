@@ -47,8 +47,19 @@ class JR_H3_ResolutionScaleCalculator:
             "aspect": (list(_ASPECTS), {"default": "Source"}),
             "custom_aspect_width": ("INT", {"default": 16, "min": 1, "max": 8192}),
             "custom_aspect_height": ("INT", {"default": 9, "min": 1, "max": 8192}),
-            "divisor": ([8, 16, 32], {"default": 32}),
+            "divisor": (["8", "16", "32"], {"default": "32"}),
         }}
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, divisor):
+        """Accept string combo values and numeric values saved by older workflows."""
+        try:
+            normalized = int(divisor)
+        except (TypeError, ValueError):
+            return "divisor must be 8, 16, or 32."
+        if normalized not in (8, 16, 32):
+            return "divisor must be 8, 16, or 32."
+        return True
 
     def calculate(self, source_width, source_height, target_megapixels, aspect, custom_aspect_width, custom_aspect_height, divisor):
         return calculate_resolution(source_width, source_height, target_megapixels, divisor, aspect, custom_aspect_width, custom_aspect_height)
