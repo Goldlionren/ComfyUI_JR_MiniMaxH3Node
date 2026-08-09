@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-A focused eight-node ComfyUI suite for MiniMax H3 prompt preparation, human review, scene-aware caching, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
+A focused nine-node ComfyUI suite for MiniMax H3 prompt preparation, human review, model acceleration, scene-aware caching, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
 
 面向 MiniMax H3 视频工作流的 ComfyUI 节点套件：提示词优化、分辨率计算、RTX 放大与修复、视频合成预览，以及末帧续接。
 
@@ -12,6 +12,7 @@ A focused eight-node ComfyUI suite for MiniMax H3 prompt preparation, human revi
 | **JR MiniMax H3 Prompt Review & Continue** | 在工作流中暂停，让用户逐字审核或修改 H3 提示词，点击 Next / Continue 后才允许下游继续执行。 |
 | **JR H3 Cache Config Router** | 对最终 H3 提示词发起独立的场景分类请求，并用本地版本化 Preset 生成类型安全的 Cache 配置。 |
 | **JR H3 Adaptive Cache** | 为原生 MiniMax H3 音视频 DiT 提供 Visual Fast、Dialogue Safe、Action Safe、Balanced、Auto 和 Off 缓存路径。 |
+| **H3 Unified Acceleration** | 按固定顺序组合 KJNodes Sage、H3 Low VRAM Attention、H3 Chunk FFN 与实验性 Sol-Attn，输出已 patch 的 MODEL。 |
 | **JR MiniMax H3 Resolution Scale Calculator** | 按目标像素面积、宽高比和 8/16/32 倍数计算适合视频模型的宽高。 |
 | **JR MiniMax H3 RTX Upscaler & Refiner** | 使用 NVIDIA Video Effects SDK 执行 Denoise、Deblur、VSR/High Bitrate 与尺寸调整；依赖按执行时加载。 |
 | **JR MiniMax H3 Enhanced Video Combine** | 将 IMAGE 批次编码为视频或动画，支持节点内预览、Download、首尾帧保存、音频、metadata、ping-pong 和帧透传。 |
@@ -46,7 +47,66 @@ git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
 - ComfyUI 已提供 `torch`、`numpy` 和 Pillow，本项目不会重复固定这些大型依赖。
 - 视频合成需要 FFmpeg。节点会使用系统 `ffmpeg.exe`，也会识别 `imageio-ffmpeg` 提供的可执行文件。
 - Prompt Optimizer 需要一个 OpenAI 兼容的本地或远程服务；本地服务可以不填写 API Key。
-- RTX 节点是可选功能，不影响其他七个节点加载。
+- RTX、KJNodes、SageAttention、Sol-Attn 和 Triton 都是按功能启用的运行时依赖；缺少它们不会阻止其余节点加载。
+
+## H3 Unified Acceleration
+
+**H3 Unified Acceleration** 是 MiniMax H3 专用的 `MODEL → MODEL` 编排节点。它不复制第三方 kernel，也不修改 ComfyUI、KJNodes、Sol-Attn 或 SageAttention；执行时从 ComfyUI 已注册节点中解析并调用已安装的上游实现：
+
+```text
+Sage Attention
+    → MiniMax H3 Low VRAM Attention
+    → MiniMax H3 Chunk FeedForward
+    → Sol-Attn
+```
+
+四层解决不同问题：
+
+- Sage：dense attention kernel acceleration。
+- MiniMax H3 Low VRAM Attention：QKV/输入生命周期优化与 head chunking。
+- MiniMax H3 Chunk FeedForward：按 packed token 维度分块执行 FFN/SwiGLU。
+- Sol-Attn：对适用的 self-attention 动态稀疏化。
+
+顺序是固定兼容契约。Sage 先安装 dense backend；Sol 最后读取它作为 `previous`。因此 Sol-Attn 不会在 SageAttention 之后再完整计算一遍 attention：Sol eligible 时走 sparse attention，Sol 拒绝或不适用时回到 previous backend，也就是 Sage。KJ Low VRAM 的 `optimized_attention`/`sol_take_forward` 组合行为由上游节点保留。
+
+`enable=false` 原样返回输入 MODEL，且不解析任何上游依赖。`sage_attention=disabled`、`enable_low_vram_attention=false`、`enable_low_vram_ffn=false` 与 `enable_sol_attn=false` 都是真正 bypass；不会用 `head_chunks=1` 或 `ffn_chunks=1` 模拟关闭。非 MiniMax H3 MODEL 会收到明确错误。
+
+默认值称为 **Validated default profile**，不是所有 GPU/分辨率/时长上的“最佳参数”：
+
+```text
+sage_attention=sageattn_qk_int8_pv_fp8_cuda++  allow_compile=false
+head_chunks=4
+ffn_chunks=4  ffn_seq_threshold=4096
+tau=1.3  start_percent=0.2  end_percent=0.9  min_tokens=4096
+int8_qk=true  int8_pv=true  sink_conditioning=exact_kv_and_rows
+morton=false  morton_curve=2d_frame  verbose=false  use_tma=false
+dense_blocks=""  tau_profile=unconnected
+```
+
+推荐 MODEL 接线：
+
+```text
+Load Diffusion Model
+    → MiniMax H3 Turbo LoRA
+    → Reserved VRAM Setter
+    → JR H3 Unified Acceleration
+    → MiniMax H3 Sigma Shift
+    → Basic Guider / Basic Scheduler
+    → SamplerCustomAdvanced
+```
+
+Turbo LoRA、Reserved VRAM、Sigma Shift、EasyCache/Adaptive Cache、Sampler、VAE 与 RTX 后处理均保持独立。后处理仍建议 `Sampler → VAE Decode → JR H3 RTX Upscaler & Refiner → JR H3 Enhanced Video Combine`。
+
+### Validated Hardware
+
+| GPU | VRAM | Native H3 Test | Duration | RTX Post Target | Status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| RTX 4080 SUPER | 16GB | ~0.8MP | 15s | ~2.4MP | Previously validated workflow |
+| RTX 5090 | 32GB | 1.5MP | validated workflow | ~2.4MP | Previously validated workflow |
+
+These are validation points, not hard limits. 本次节点开发不会把型号、显存或 SM 架构写死。Sol-Attn 上游将其标记为 experimental；首次使用会编译 Triton kernels，因此 cold run 不应作为稳定性能基线，性能比较应优先记录 warm run。
+
+完整参数、依赖错误和验收边界见 [`docs/H3_UNIFIED_ACCELERATION.md`](docs/H3_UNIFIED_ACCELERATION.md)。
 
 ### 可选 RTX 支持
 

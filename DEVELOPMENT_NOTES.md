@@ -1,5 +1,45 @@
 # Development notes
 
+## H3 Unified Acceleration (2026-08-09)
+
+### Goal and source audit
+
+Added `JR_H3_UnifiedAcceleration`, a V1 Python `MODEL → MODEL` orchestration node for the fixed Sage → MiniMax H3 Low VRAM Attention → MiniMax H3 Chunk FeedForward → Sol-Attn topology. It does not integrate Turbo LoRA, ReservedVRAMSetter, SigmaShift, cache, sampler, VAE, RTX, or video output.
+
+The requested `JR_MiniMax_H3_T2VA_FL2VA加速放大 (ver4.1).json` was not present after recursive searches of the available local workflow locations. The closest source-of-truth artifact audited read-only was `F:\ComfyUI-aki-v3\ComfyUI\user\default\workflows\JR_MiniMax_H3_T2VA加速放大 (ver4.0) .json`. Its MODEL links confirm `88 → 89 → 90 → 86`; commits are KJ `60cd6bc1870db94c6eeb05fbe455147a8e91c4e9` and Sol `0e334dc981cfe3b0ed926ee13ad43f64914b7f5b`. The ver4.0 outer subgraph uses `chunks=3` (overriding the internal widget value 2), while this task explicitly requires the validated Unified-node default `ffn_chunks=4`; the task default is implemented and the discrepancy is recorded rather than hidden. Exact ver4.1 replacement/GPU testing remains NOT RUN until that artifact is available.
+
+Installed/current upstream audit:
+
+- ComfyUI-KJNodes installed `60cd6bc1870db94c6eeb05fbe455147a8e91c4e9`; official main returned the same SHA on 2026-08-09. Its working tree had a pre-existing untracked `config.json`, which was not modified.
+- ComfyUI-SolAttn_triton installed `842c4eaa7d91dbaef3fee3ccdbf36a39521e82fc`; official main returned the same SHA. Its reference-to-current changes are in kernel files; the node API is unchanged.
+
+### Skills applied
+
+Read the local basics, inputs, outputs, datatypes, lifecycle, packaging, and migration Skill files. This phase uses V1 `INPUT_TYPES`/`FUNCTION`/`RETURN_TYPES`, stable global node IDs, exact MODEL output arity, an optional `forceInput` STRING, root registration, and import-safe execution-time dependency validation. No frontend Skill was needed because the node has no custom JavaScript or UI output.
+
+### Architecture and compatibility decisions
+
+`nodes/h3_unified_acceleration.py` contains only the V1 panel/orchestration and one compact success log. `utils/h3_acceleration_adapters.py` centralizes the upstream node IDs, Sage modes, runtime registry lookup, keyword-signature validation, error context, H3 structure check, and normalization of direct MODEL, `(MODEL,)`, and `io.NodeOutput(MODEL)` results.
+
+All upstream resolution is lazy. Global disable returns the exact original model before model/dependency validation. Each subsystem switch is a true bypass, so disabled Sage/Sol never resolves that dependency. No CUDA, Triton, Sage, KJNodes, Sol, or ComfyUI registry import occurs when the JR package is imported.
+
+Sage precedes Sol because Sage installs `optimized_attention_override`; Sol clones afterward and captures it as `previous`, so ineligible/dense fallback delegates to Sage. KJ Low VRAM publishes `sol_take_forward` and marks its optimized-attention forward for composition. The wrapper calls the real upstream nodes in the verified order and does not recreate these details. FFN has an explicit enable because calling upstream with `chunks=1` is not equivalent to a true disabled layer and would still bind the dependency/API.
+
+No upstream source is vendored. KJ's audited root license is GPL-3.0. Sol has no explicit license file, packaging metadata, or source header in either audited commit, so its status is recorded as “No explicit license confirmed” and its source is not redistributed.
+
+### Luna Max work
+
+- Task A independently audited installed/reference/current KJ and Sol APIs, clone/object-patch/model-options behavior, return styles, composition, commits, and licenses.
+- Task B searched for and audited the available workflow JSON, verified the link topology and parameters, and identified the missing ver4.1 artifact plus ver4.0 value/order discrepancies.
+- Task C independently designed the CPU/mock test matrix for ordering, switches, forwarding, normalization, dependency errors, drift, non-H3 handling, lazy imports, and registration regression.
+- Task D independently reviewed the finished implementation and reported Critical 0 / High 0 / Medium 3 / Low 3. Medium M1 was handled by strengthening the H3 preflight to require the real attention and FFN block structure; M3 was handled by reserving “API drift” for signature binding and reporting execution-time TypeError with the normal upstream failure context. M2 was reduced with a full-chain clone/composition mock that preserves the Sage previous marker, LowVRAM `sol_take_forward`/attention object patch, and FFN object patch through Sol. Its remaining real-kernel/GPU aspect is honestly NOT RUN. Low findings concern future NodeOutput shapes and additional end-to-end dependency/GPU breadth; they do not change the current audited APIs.
+
+### Validation and limitations
+
+Targeted CPU/mock tests cover exact order, true bypasses, all Sol parameters, Sage/LowVRAM/FFN forwarding and bounds, `tau_profile` None/empty/multiline states, MODEL/tuple/NodeOutput normalization, missing dependencies, import errors, API drift, non-H3 models, and root registration. Full-suite, lint, compile, production import, and GPU statuses are recorded from their final commands rather than inferred.
+
+Prior user validation points are RTX 4080 SUPER 16GB at about 0.8MP/15s followed by RTX post-processing to about 2.4MP, and RTX 5090 32GB at 1.5MP followed by about 2.4MP. These are not hard limits and are not current-run PASS results. Current-session 4080S/5090 GPU A/B, FFN-off, LowVRAM-off, Sol-off, peak-VRAM, cold/warm timing, and exact ver4.1 workflow replacement remain NOT RUN unless actually executed later in this phase.
+
 ## Local ComfyUI skill rules applied
 
 The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills` were read before implementation: basics, inputs, outputs, datatypes, lifecycle, packaging, migration, and frontend. The frontend skill is used by Enhanced Video Combine and Prompt Review & Continue.

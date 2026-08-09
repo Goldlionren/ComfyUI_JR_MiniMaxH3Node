@@ -1,5 +1,29 @@
 # Third-party notices
 
+## ComfyUI-KJNodes (Unified Acceleration runtime dependency)
+
+- Repository: https://github.com/kijai/ComfyUI-KJNodes
+- Reference workflow commit: `60cd6bc1870db94c6eeb05fbe455147a8e91c4e9`
+- Installed commit audited 2026-08-09: `60cd6bc1870db94c6eeb05fbe455147a8e91c4e9`
+- Current upstream `main` audited 2026-08-09: `60cd6bc1870db94c6eeb05fbe455147a8e91c4e9`
+- License observed: GNU General Public License v3.0 (`LICENSE`; `pyproject.toml` points to that file)
+- Runtime behavior used: `PathchSageAttentionKJ`, `MiniMaxLowVRAMAttention`, and `MiniMaxChunkFeedForward`.
+- Upstream source vendored: **NO**
+
+The JR compatibility layer resolves the installed node classes from ComfyUI's runtime registry and invokes their public node interfaces. No KJNodes source, assets, CUDA code, comments, or object-patch implementation is redistributed in this repository.
+
+## ComfyUI-SolAttn_triton (Unified Acceleration runtime dependency)
+
+- Repository: https://github.com/kijai/ComfyUI-SolAttn_triton
+- Reference workflow commit: `0e334dc981cfe3b0ed926ee13ad43f64914b7f5b`
+- Installed commit audited 2026-08-09: `842c4eaa7d91dbaef3fee3ccdbf36a39521e82fc`
+- Current upstream `main` audited 2026-08-09: `842c4eaa7d91dbaef3fee3ccdbf36a39521e82fc`
+- License audit result: **No explicit license confirmed**. Neither audited commit contained a LICENSE/COPYING/NOTICE, packaging license metadata, or source license header.
+- Runtime behavior used: `SolAttnPatch`.
+- Upstream source vendored: **NO**
+
+The installed/current commit changes Triton/kernel internals relative to the workflow reference while retaining the same node API. Because no explicit license grant was confirmed, this project does not copy or redistribute any Sol-Attn Python/Triton source. Users install and review that external dependency separately.
+
 ## MiniMax-AI/MiniMax-H3 prompt-writing specification
 
 - Repository: https://github.com/MiniMax-AI/MiniMax-H3

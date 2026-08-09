@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Added `JR_H3_UnifiedAcceleration`, a V1 MODEL orchestration node that applies installed KJNodes Sage, H3 Low VRAM Attention, H3 Chunk FeedForward, and Sol-Attn in the fixed verified order.
+- Added true per-layer bypass switches, complete current Sol controls, optional `tau_profile`, explicit non-H3/dependency/API-drift errors, and lazy runtime dependency resolution.
+- Added CPU/mock coverage for patch order, switches, parameter forwarding, return normalization, missing dependencies, import safety, and existing-node registration.
+- Documented the validated default profile, prior hardware validation points, upstream commit audit, and no-vendoring license strategy.
+
 ## 0.4.3
 
 - Fixed a builder/validator contract conflict by requiring the Ref2VA `subject_definitions:` heading to occupy its own line in the minimum output skeleton.
