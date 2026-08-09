@@ -34,10 +34,21 @@ function stateColor(state) {
     }[state] || "#94a3b8";
 }
 
-function resizeNode(node) {
-    const size = node.computeSize([Math.max(460, node.size[0]), node.size[1]]);
-    node.setSize([Math.max(460, node.size[0]), Math.max(size[1], 360)]);
+function ensureMinimumNodeSize(node) {
+    const currentWidth = Number(node.size?.[0]) || 0;
+    const currentHeight = Number(node.size?.[1]) || 0;
+    const width = Math.max(460, currentWidth);
+    const computed = node.computeSize([width, currentHeight]);
+    const height = Math.max(360, currentHeight, Number(computed?.[1]) || 0);
+    if (width !== currentWidth || height !== currentHeight) node.setSize([width, height]);
     node.graph?.setDirtyCanvas(true, true);
+}
+
+function normalizeTimeoutWidget(node) {
+    const widget = node.widgets?.find((item) => item.name === "timeout_seconds");
+    if (!widget) return;
+    const timeout = Number(widget.value);
+    if (!Number.isFinite(timeout) || timeout < 60) widget.value = 3600;
 }
 
 function setReviewState(node, state, message = "") {
@@ -119,7 +130,7 @@ function beginReview(node, payload) {
     review.textarea.value = typeof payload.text === "string" ? payload.text : "";
     review.textarea.placeholder = "Review or edit the prompt, then click Next.";
     setReviewState(node, "Waiting for review");
-    resizeNode(node);
+    ensureMinimumNodeSize(node);
     return true;
 }
 
@@ -199,7 +210,8 @@ function buildReviewWidget(node) {
     });
     widget.serializeValue = () => undefined;
     node.jrH3PromptReview = { panel, status, textarea, button, widget, reviewId: null, state: "Idle" };
-    resizeNode(node);
+    normalizeTimeoutWidget(node);
+    ensureMinimumNodeSize(node);
 }
 
 app.registerExtension({
@@ -224,6 +236,8 @@ app.registerExtension({
     },
     loadedGraphNode(node) {
         if (node.comfyClass !== NODE_ID && node.type !== NODE_ID) return;
+        normalizeTimeoutWidget(node);
+        ensureMinimumNodeSize(node);
         const payload = pendingByNode.get(String(node.id));
         if (payload && beginReview(node, payload)) pendingByNode.delete(String(node.id));
     },

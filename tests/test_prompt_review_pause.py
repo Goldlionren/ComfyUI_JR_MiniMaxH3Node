@@ -1,5 +1,7 @@
 import concurrent.futures
+import json
 import time
+from pathlib import Path
 
 import pytest
 from ComfyUI_JR_MiniMaxH3Node.nodes import prompt_review_pause as node_module
@@ -162,7 +164,16 @@ def test_frontend_contract_exists_and_does_not_log_prompt():
     for marker in (
         "jr_h3_prompt_review_requested", "/jr_h3/prompt-review/continue", "review_text",
         "Next / Continue", "Waiting for review", "Timed out", "Cancelled", "serialize: false",
-        "api.clientId", "/jr_h3/prompt-review/pending",
+        "api.clientId", "/jr_h3/prompt-review/pending", "normalizeTimeoutWidget",
+        "widget.value = 3600", "Math.max(360, currentHeight",
     ):
         assert marker in text
     assert "console.log" not in text
+
+
+def test_v5_workflow_uses_valid_review_timeout():
+    workflow_path = Path(__file__).parents[1] / "examples" / "JR_MiniMax_H3_T2VA加速放大 (ver5.0).json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    review_nodes = [node for node in workflow["nodes"] if node["type"] == "JR_H3_PromptReviewPause"]
+    assert len(review_nodes) == 1
+    assert review_nodes[0]["widgets_values"] == [3600]
