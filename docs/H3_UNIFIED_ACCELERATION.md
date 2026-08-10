@@ -1,5 +1,17 @@
 # H3 Unified Acceleration
 
+> 本页以当前 `JR_H3_UnifiedAcceleration` 和运行时适配器为准。该节点是外部 KJ/Sol 节点的编排层，不包含或复制其 kernels。
+
+## 当前兼容性摘要
+
+- Node ID：`JR_H3_UnifiedAcceleration`；显示名称：`H3 Unified Acceleration`。
+- V1 Python API，输入/输出均为 `MODEL`。
+- 模型检查基于已加载的 MiniMax H3 结构（`rope_freqs`、`_forward`、Blocks 的 attention/FFN 字段），不按 safetensors 文件名白名单判断。
+- `enable=false` 在任何模型或依赖检查前原样返回输入 MODEL。
+- 每个子系统开关是真 bypass；关闭层不会解析相应外部依赖。
+- 上游节点返回的直接 MODEL、`(MODEL,)` 和单输出 `io.NodeOutput` 会统一归一化。
+- 依赖缺失、签名漂移、非 H3 模型和异常返回都会明确报错，不做静默 fallback。
+
 `JR_H3_UnifiedAcceleration`（显示名 `H3 Unified Acceleration`）是 V1 Python ComfyUI 节点，分类为 `JR MiniMax H3/Optimization`，输入和输出均为 `MODEL`。
 
 ## 固定 Patch 顺序

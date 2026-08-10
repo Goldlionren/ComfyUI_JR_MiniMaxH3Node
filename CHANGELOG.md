@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- Reconciled the root README and focused guides with the current nine-node implementation.
+- Added `docs/NODE_REFERENCE.md` as the canonical input/default/range/output reference.
+- Clarified Router-to-Cache wiring, model-structure compatibility, cache hit expectations, optional dependency boundaries and example-workflow limitations.
+- Documented current Prompt Review timeout/size behavior and current Enhanced Video Combine preview/output contracts.
+
+### Fixes already present on `main` after package version 0.5.0
+
+- Resolution Scale Calculator now exposes divisor values as string combo options while accepting numeric values saved by older workflows.
+- Prompt Review defaults to 3600 seconds, normalizes invalid legacy values, and no longer shrinks a user-resized node after new inference output.
+- Enhanced Video Combine publishes video assets through the ComfyUI `gifs` UI payload for Node 2.0 compatibility, so MP4 files are not routed through Pillow image decoding.
+- Enhanced Video Combine treats Windows FFmpeg stdin `EPIPE/EINVAL` as an encoder failure and continues fallback; exact 4352×2880 H.264 fallback to `libx264` was locally verified.
+
 ## 0.5.0
 
 - Added `JR_H3_UnifiedAcceleration`, a V1 MODEL orchestration node that applies installed KJNodes Sage, H3 Low VRAM Attention, H3 Chunk FeedForward, and Sol-Attn in the fixed verified order.

@@ -2,7 +2,7 @@
 
 ## Scope and verified H3 integration
 
-This node targets ComfyUI's native `comfy.ldm.minimax.model.MiniMaxH3Model`. The inspected implementation defaults to 50 `DiTBlock` objects and packs one sequence as text/reference rows followed by target audio and target video. Its final layer separates the target streams, then audio is unpacked and video is unpatchified.
+This node targets ComfyUI's native `comfy.ldm.minimax.model.MiniMaxH3Model`. Compatibility is checked from the loaded model class and runtime Block structure, not from the checkpoint filename. BF16, INT8, FL2VA or Ref2VA checkpoint names are therefore not individually hard-coded; they are accepted when ComfyUI loads them as the compatible native H3 model. The inspected implementation defaults to 50 `DiTBlock` objects and packs one sequence as text/reference rows followed by target audio and target video.
 
 The plugin does not replace or edit that implementation. It clones the input ModelPatcher and uses:
 
@@ -45,7 +45,7 @@ Auto first honors a valid `profile_hint`. Otherwise Speech/Singing selects Dialo
 
 ## Metric and cache device
 
-The first implementation uses sampled relative delta:
+The current implementation uses sampled relative delta:
 
 ```text
 mean(abs(current - previous)) / (mean(abs(previous)) + epsilon)
@@ -69,6 +69,8 @@ Runtime summary statistics are per sampling workflow. Initial state creation is 
 
 The Router makes a second independent chat-completions request. Its LLM output contains semantic enums only. Python validates and locally reviews those fields, then selects a versioned preset. The immutable config contains no API key, full prompt, or raw response. Connected Router config replaces all manual widget values; it is never merged with them.
 
+Only connect `Cache Config Router.cache_config` to `Adaptive Cache.cache_config`. The Router's `selected_profile` and `analysis` outputs are diagnostic STRING values; they are not required Adaptive Cache inputs. If `cache_config` is connected, `mode`, `profile_hint`, thresholds, hit limits and device widgets on the Adaptive Cache node are all ignored.
+
 ## Conflicts and combinations
 
 Do not stack this node with EasyCache, TeaCache, First Block Cache, CacheDiT, another Block replacement cache, or a second JR H3 Adaptive Cache. It may be used with attention backends, quantization, Dynamic VRAM, CPU offload, and downstream RTX/video nodes.
@@ -78,3 +80,7 @@ Diffusion timestep is not the final video's timeline. A mode applies to denoise 
 ## Calibration status
 
 Preset values are deterministic values in this implementation's relative-delta scale; they are not copied from another cache's scale. Version 0.3.3 recalibrated the active presets with native 25-step H3 measurements after the earlier initial thresholds proved lower than the calmest observed input/probe deltas. Benchmark representative seeds, prompts, reference media, resolutions, frame counts, quantization, and attention backends before production use. Conservative remains the recommended starting point for strict quality evaluation.
+
+Profile selection is not a cache-hit guarantee. A valid `dialogue_safe`, `balanced` or other result may still produce `full_hits=0` and `block_hits=0` when sampled audio/video changes exceed the preset thresholds. The node reports measured hits and `compute_reduction`; use those runtime values, not the selected profile name, to decide whether a workload benefits.
+
+The manual Custom widgets expose historical defaults such as `video_threshold=0.020`. When `quality_level` is Conservative, Balanced or Aggressive, the node uses the current versioned values in `utils/h3_cache_config.py` instead. Do not read the visible inactive Custom widgets as the active preset.

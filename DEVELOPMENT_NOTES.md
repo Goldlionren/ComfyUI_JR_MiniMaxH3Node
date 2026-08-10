@@ -1,5 +1,25 @@
 # Development notes
 
+## Documentation reconciliation (2026-08-10)
+
+This pass changes documentation only. No Python, JavaScript, JSON workflow, test, dependency or package-metadata file is modified.
+
+The public documentation was reconciled against the current `main` implementation and now treats these facts as authoritative:
+
+- Nine stable V1 node IDs are registered by root `__init__.py`; package version remains `0.5.0`.
+- Prompt Optimizer defaults to `max_tokens=1800` and `timeout_seconds=180`, performs at most one `temperature=0.1` format-only repair, and preserves the existing Return Original/Stop Workflow semantics.
+- Prompt Review defaults to 3600 seconds, validates 60..86400, normalizes invalid legacy UI values to 3600, and preserves user-enlarged node dimensions.
+- Router connects to Adaptive Cache through `cache_config` only. `selected_profile`/`analysis` are diagnostic outputs, and connected config replaces all manual cache widgets.
+- Adaptive Cache checks the loaded native MiniMax H3 model class/structure rather than safetensors filenames. Profile selection is not a hit or speedup guarantee.
+- Adaptive metric history stays on the active compute device; only large residuals obey CPU/GPU/Auto.
+- Unified Acceleration order remains Sage -> Low VRAM Attention -> Chunk FFN -> Sol, with true bypass switches and lazy optional dependencies.
+- Resolution divisor is a string combo `"8"/"16"/"32"` with numeric legacy-workflow validation compatibility.
+- RTX uses `nvvfx.VideoSuperRes` plus the binding's `QualityLevel` values; VSR availability does not guarantee Denoise/Deblur enum availability.
+- Enhanced Video Combine returns video UI assets in `gifs` for Node 2.0 compatibility, returns PNG exports in `images`, increments filenames across repeated runs, cache-busts previews, and falls back after Windows FFmpeg pipe `EPIPE/EINVAL`. Exact `4352×2880` H.264 fallback to `libx264` was locally smoke-tested.
+- The complete current input/default/range contract is centralized in `docs/NODE_REFERENCE.md` to reduce duplication drift.
+
+Historical sections below describe the development phases at their recorded dates. When a historical value conflicts with `README.md` or `docs/NODE_REFERENCE.md`, the current reference documents take precedence.
+
 ## H3 Unified Acceleration (2026-08-09)
 
 ### Goal and source audit

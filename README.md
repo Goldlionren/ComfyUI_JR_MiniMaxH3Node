@@ -1,317 +1,260 @@
 # ComfyUI JR MiniMax H3 Node
 
-A focused nine-node ComfyUI suite for MiniMax H3 prompt preparation, human review, model acceleration, scene-aware caching, resolution planning, RTX enhancement, video encoding, preview, and multi-segment continuity.
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 9 个 V1 Python 节点，覆盖 H3 提示词生成与校验、人工审核、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-面向 MiniMax H3 视频工作流的 ComfyUI 节点套件：提示词优化、分辨率计算、RTX 放大与修复、视频合成预览，以及末帧续接。
+当前包版本：`0.5.0`。版本号尚未因后续兼容性修复单独递增；请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 的 **Unreleased** 段为准。
 
-## 功能概览
+## 节点一览
 
-| 节点 | 用途 |
-| --- | --- |
-| **JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)** | Uses an OpenAI-compatible `/v1/models` and `/v1/chat/completions` service to prepare local H3 Prompt/Context Preprocessor output from text, IMAGE references, and optional first/last anchors. |
-| **JR MiniMax H3 Prompt Review & Continue** | 在工作流中暂停，让用户逐字审核或修改 H3 提示词，点击 Next / Continue 后才允许下游继续执行。 |
-| **JR H3 Cache Config Router** | 对最终 H3 提示词发起独立的场景分类请求，并用本地版本化 Preset 生成类型安全的 Cache 配置。 |
-| **JR H3 Adaptive Cache** | 为原生 MiniMax H3 音视频 DiT 提供 Visual Fast、Dialogue Safe、Action Safe、Balanced、Auto 和 Off 缓存路径。 |
-| **H3 Unified Acceleration** | 按固定顺序组合 KJNodes Sage、H3 Low VRAM Attention、H3 Chunk FFN 与实验性 Sol-Attn，输出已 patch 的 MODEL。 |
-| **JR MiniMax H3 Resolution Scale Calculator** | 按目标像素面积、宽高比和 8/16/32 倍数计算适合视频模型的宽高。 |
-| **JR MiniMax H3 RTX Upscaler & Refiner** | 使用 NVIDIA Video Effects SDK 执行 Denoise、Deblur、VSR/High Bitrate 与尺寸调整；依赖按执行时加载。 |
-| **JR MiniMax H3 Enhanced Video Combine** | 将 IMAGE 批次编码为视频或动画，支持节点内预览、Download、首尾帧保存、音频、metadata、ping-pong 和帧透传。 |
-| **JR MiniMax H3 Last Frame** | 从 IMAGE 批次提取最后一帧，供下一段 H3 视频继续生成。 |
+| 显示名称 | 稳定 Node ID | 分类 | 主要输出 |
+| --- | --- | --- | --- |
+| JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态 |
+| JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词 |
+| JR H3 Cache Config Router | `JR_H3_CacheConfigRouter` | Cache | 缓存配置、建议档位、分析 |
+| JR H3 Adaptive Cache | `JR_H3_AdaptiveCache` | Cache | 已 patch 的 MODEL、实际档位、状态 |
+| H3 Unified Acceleration | `JR_H3_UnifiedAcceleration` | Optimization | 已 patch 的 MODEL |
+| JR MiniMax H3 Resolution Scale Calculator | `JR_H3_ResolutionScaleCalculator` | Scaling | 宽、高、缩放倍数、实际 MP |
+| JR MiniMax H3 RTX Upscaler & Refiner | `JR_H3_RTXUpscalerRefiner` | Video | 后处理 IMAGE |
+| JR MiniMax H3 Enhanced Video Combine | `JR_H3_EnhancedVideoCombine` | Video | IMAGE 帧、保存路径 |
+| JR MiniMax H3 Last Frame | `JR_H3_LastFrame` | Utility | 最后一帧 IMAGE |
 
-节点位于 `JR MiniMax H3` 分类；人工审核节点位于 `Prompt` 子分类，缓存节点位于 `Cache` 子分类。
+完整输入、默认值、范围和输出见 [节点参数参考](docs/NODE_REFERENCE.md)。
 
-## 安装
+## 安装与更新
 
-在 ComfyUI 停止运行时，进入它的 `custom_nodes` 目录：
+停止 ComfyUI 后，在它的 `custom_nodes` 目录执行：
 
 ```powershell
 git clone https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node.git
-```
-
-然后使用 **ComfyUI 自己的 Python** 安装普通依赖：
-
-```powershell
 <ComfyUI-Python> -m pip install -r .\ComfyUI_JR_MiniMaxH3Node\requirements.txt
 ```
 
-例如，Windows Portable 通常可以在 `ComfyUI\custom_nodes` 下执行：
+必须使用 **运行 ComfyUI 的同一个 Python**。便携版、整合包和 Launcher 的 Python 路径可能不同，不要默认使用系统 Python。
+
+如果目录本来就是从 GitHub 克隆的：
 
 ```powershell
-..\..\python_embeded\python.exe -m pip install -r .\ComfyUI_JR_MiniMaxH3Node\requirements.txt
+cd ComfyUI_JR_MiniMaxH3Node
+git pull origin main
+<ComfyUI-Python> -m pip install -r .\requirements.txt
 ```
 
-重启 ComfyUI。升级插件时进入插件目录执行 `git pull`；如果前端预览控件没有立即更新，请重启 ComfyUI 并对浏览器执行一次强制刷新。
+如果 `git pull` 提示没有 `origin`，说明这个目录不是正常克隆得到的仓库，或远程配置已丢失。最稳妥的做法是保留旧目录备份，然后重新 `git clone`；不要在没有确认来源的目录中强行合并。
 
-## 运行依赖
+更新后重启 ComfyUI，并对浏览器做一次强制刷新，以加载最新的预览和审核界面 JavaScript。
 
-- ComfyUI 已提供 `torch`、`numpy` 和 Pillow，本项目不会重复固定这些大型依赖。
-- 视频合成需要 FFmpeg。节点会使用系统 `ffmpeg.exe`，也会识别 `imageio-ffmpeg` 提供的可执行文件。
-- Prompt Optimizer 需要一个 OpenAI 兼容的本地或远程服务；本地服务可以不填写 API Key。
-- RTX、KJNodes、SageAttention、Sol-Attn 和 Triton 都是按功能启用的运行时依赖；缺少它们不会阻止其余节点加载。
+## 依赖
 
-### Unified Acceleration 依赖
+普通依赖：
 
-使用 **H3 Unified Acceleration** 前，需要分别安装并保持更新：
+- ComfyUI 自带 `torch`、`numpy` 和 Pillow。
+- `imageio-ffmpeg>=0.5`，用于在系统 PATH 没有 FFmpeg 时提供可执行文件。
+- Prompt Optimizer 和 Cache Config Router 需要 OpenAI 兼容的 `/v1/models` 与 `/v1/chat/completions` 服务。
 
-- [kijai/ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes)：提供 Sage、MiniMax H3 Low VRAM Attention 和 Chunk FeedForward 节点。
-- KJNodes 所选 Sage mode 对应的 `sageattention` 或 `sageattn3` Python/CUDA 运行环境。
-- [kijai/ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton)：提供实验性 Sol-Attn 与 Triton kernels。
-
-本 JR 仓库不会自动复制或重新发布这些第三方实现。缺失依赖只会在启用对应加速层并执行节点时产生明确错误，不影响其他 JR 节点启动。
-
-## H3 Unified Acceleration
-
-**H3 Unified Acceleration** 是 MiniMax H3 专用的 `MODEL → MODEL` 编排节点。它不复制第三方 kernel，也不修改 ComfyUI、KJNodes、Sol-Attn 或 SageAttention；执行时从 ComfyUI 已注册节点中解析并调用已安装的上游实现：
-
-```text
-Sage Attention
-    → MiniMax H3 Low VRAM Attention
-    → MiniMax H3 Chunk FeedForward
-    → Sol-Attn
-```
-
-四层解决不同问题：
-
-- **SageAttention**：dense attention kernel acceleration；Sage 不是 sparse attention。
-- **MiniMax H3 Low VRAM Attention**：MiniMax-H3 专用 attention memory optimization，包括缩短中间 QKV tensor 生命周期、提前释放已消费 tensor、按 head group 分块，以及降低 kernel transient peak VRAM。
-- **MiniMax H3 Chunk FeedForward**：按 token 分块执行 MiniMax H3 SwiGLU/FeedForward，降低 FFN peak VRAM。
-- **Sol-Attn**：sparse self-attention acceleration，仅接管适用的 self-attention 调用。
-
-顺序是固定兼容契约，**Sol-Attn MUST remain after Sage**。Sage 先安装 dense backend；Sol 最后读取它作为 `previous`。因此 Sol-Attn 不会在 SageAttention 之后再完整计算一遍 attention：Sol eligible 时走 sparse path；Sol 拒绝或不适用时委托给 previous dense backend，也就是 Sage。KJ Low VRAM 的 `optimized_attention`/`sol_take_forward` 组合行为由上游节点保留。
-
-`enable=false` 原样返回输入 MODEL，且不解析任何上游依赖。`sage_attention=disabled`、`enable_low_vram_attention=false`、`enable_low_vram_ffn=false` 与 `enable_sol_attn=false` 都是真正 bypass；不会用 `head_chunks=1` 或 `ffn_chunks=1` 模拟关闭。非 MiniMax H3 MODEL 会收到明确错误。
-
-默认值称为 **Validated H3 Acceleration Profile**，不是所有 GPU、分辨率和时长上的“Best Settings”。这些值有意保持相对保守，优先保证画质和稳定性：
-
-```text
-enable=true
-sage_attention=sageattn_qk_int8_pv_fp8_cuda++
-allow_compile=false
-enable_low_vram_attention=true
-head_chunks=4
-enable_low_vram_ffn=true
-ffn_chunks=4
-ffn_seq_threshold=4096
-enable_sol_attn=true
-tau=1.3
-start_percent=0.2
-end_percent=0.9
-min_tokens=4096
-int8_qk=true
-int8_pv=true
-sink_conditioning=exact_kv_and_rows
-morton=false
-morton_curve=2d_frame
-verbose=false
-use_tma=false
-dense_blocks=""
-tau_profile=optional / unconnected
-```
-
-Advanced users can tune Sol sparsity, head chunking, FFN chunking and sampling windows further for their own GPU, resolution and content.
-
-推荐 MODEL 接线：
-
-```text
-Load Diffusion Model
-    → MiniMax H3 Turbo LoRA
-    → Reserved VRAM Setter
-    → JR H3 Unified Acceleration
-    → MiniMax H3 Sigma Shift
-    → Basic Guider / Basic Scheduler
-    → SamplerCustomAdvanced
-```
-
-Turbo LoRA、Reserved VRAM、Sigma Shift、EasyCache/Adaptive Cache、Sampler、VAE 与 RTX 后处理均保持独立。后处理仍建议 `Sampler → VAE Decode → JR H3 RTX Upscaler & Refiner → JR H3 Enhanced Video Combine`。
-
-### Turbo LoRA attribution 与仓库边界
-
-工作流中的 **MiniMax H3 Turbo LoRA** 来自 Larryvrh 的 [MiniMax-H3-Turbo-Lora 权重仓库](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) 与 [Larryvrh/ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo) 节点项目，不是 JR 项目的原创组件。
-
-`JR_H3_UnifiedAcceleration` 属于 [Goldlionren/ComfyUI_JR_MiniMaxH3Node](https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node)。另一个 [Goldlionren/ComfyUI-MiniMax-H3-Turbo](https://github.com/Goldlionren/ComfyUI-MiniMax-H3-Turbo) 是 Larryvrh 节点仓库的 fork，两者不是同一个项目。JR 本仓库的贡献范围是工作流架构、集成、兼容层、Unified Acceleration 编排与测试、RTX 后处理及其他 H3 workflow tools。
-
-### Resolution 与后处理策略
-
-用户实测表明，当需要大幅后期放大时，低于约 **0.6MP** 的 H3 原生生成不推荐作为主要高画质工作流起点。这是用户 workflow 经验，不是 MiniMax 官方限制。当前验证工作点是 RTX 4080 SUPER 16GB 约 0.8MP、RTX 5090 32GB 约 1.5MP，然后使用 JR RTX 节点得到约 2.4MP 输出；这些不是最大支持分辨率。
-
-```text
-MiniMax H3 native generation
-    → VAE Decode
-    → JR H3 Resolution Scale Calculator
-    → JR H3 RTX Upscaler & Refiner
-    → JR H3 Enhanced Video Combine
-```
-
-核心思路不是无限压低 H3 原始分辨率，而是先生成具有足够细节的原生视频，使用 acceleration/VRAM optimization 让该 workload 能够运行，再通过 RTX enhancement 得到最终高分辨率输出。用户观察到在使用当前 Turbo + Unified Acceleration + VRAM optimization 流程之前，相同目标的高分辨率/长视频配置曾发生 OOM；当前两个验证工作点均完成，但这不构成所有系统都不会 OOM 的保证。
-
-### Validated Hardware
-
-| GPU | VRAM | Native H3 | Duration | Final RTX Output | Approx. Workflow Time | Status |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| RTX 4080 SUPER | 16GB | ~0.8MP | 15s | ~2.4MP | ~8 min | USER-VALIDATED PASS |
-| RTX 5090 | 32GB | 1.5MP | 15s | ~2.4MP | ~11 min | USER-VALIDATED PASS |
-
-These are validated working configurations, not theoretical or hardware maximums. Timing is workload-dependent and should not be used as a cross-GPU apples-to-apples benchmark because the RTX 5090 validation uses substantially higher native H3 resolution. 本次节点开发不会把型号、显存或 SM 架构写死。
-
-用户对比原四节点 KJNodes/Sol-Attn chain 与 Unified wrapper 后，实际生成时间基本一致，未观察到有意义的 wrapper runtime regression。由于没有严格 A/B benchmark 数据，本项目不宣称精确百分比差异。Sol-Attn 上游将其标记为 experimental；首次使用会编译 Triton kernels，因此 cold run 不应作为稳定性能基线。
-
-完整参数、依赖错误和验收边界见 [`docs/H3_UNIFIED_ACCELERATION.md`](docs/H3_UNIFIED_ACCELERATION.md)。
-
-### 可选 RTX 支持
-
-需要 Windows、兼容的 NVIDIA RTX GPU/驱动，以及能够导入 `nvvfx` 的 NVIDIA Video Effects SDK Python binding：
+可选 RTX 依赖仅支持合适的 Windows/NVIDIA 环境：
 
 ```powershell
-<ComfyUI-Python> -m pip install -r .\ComfyUI_JR_MiniMaxH3Node\requirements-rtx.txt
+<ComfyUI-Python> -m pip install -r .\requirements-rtx.txt
 ```
 
-当前可安装发行包名为 `nvidia-vfx`，Python 导入名为 `nvvfx`。不同 SDK/binding 版本暴露的效果和枚举可能不同；节点会在执行时给出明确错误，不会在 ComfyUI 启动阶段初始化 CUDA 或 SDK。
+发行包名称是 `nvidia-vfx`，Python 导入名是 `nvvfx`。不同 binding 暴露的 `QualityLevel` 不完全一致：VSR 可用不代表 Denoise/Deblur 一定可用；节点会在执行相应效果时给出明确错误。
 
-## Prompt Optimizer
+Unified Acceleration 的外部依赖不会由本仓库自动安装：
 
-The node is a local H3-oriented Prompt/Context Preprocessor, not a Chinese-only image-to-video prompt template. It has two deliberate layers: a **JR Creative Director** layer (the selectable JR profiles and continuity choices), followed by a clean-room implementation of the current published MiniMax H3 prompt-format guidance (section names, labels, ordering, timing, and retention taxonomies).
+- [kijai/ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes)
+- KJNodes 所选 Sage 模式需要的 `sageattention` 或 `sageattn3`
+- [kijai/ComfyUI-SolAttn_triton](https://github.com/kijai/ComfyUI-SolAttn_triton) 及其 Triton 运行环境
 
-`api_base_url` accepts a service root, `/v1`, or a full `/v1/models` or `/v1/chat/completions` URL; the node normalizes all of them without producing `/v1/v1`. If `model` is blank, `/v1/models` is queried at execution time. `max_tokens` defaults to **1800**; complex Ref2VA descriptions may need a larger value.
+这些依赖均在节点执行时才解析；缺少它们不会阻止其他 JR 节点加载。本仓库不复制 KJNodes、Sol-Attn、SageAttention、Triton 或 NVIDIA SDK 源码。
 
-Every generated prompt is checked by the full local validator. If the first result fails only at that boundary, the node makes exactly one text-only repair request at `temperature=0.1`, instructing the model to correct H3 formatting without rewriting story/content or changing protected user literals, and then runs the same full validator again. During repair, protected literals found exactly or with whitespace-only mutations are temporarily replaced by counted immutable sentinels and restored locally before validation; removed or duplicated sentinels are rejected. Success status reports `repaired=0` or `repaired=1`. If the repaired result still fails, **Return Original** returns the unchanged user prompt with a concise final reason, while **Stop Workflow** raises a descriptive `ValueError`.
+## 推荐接线
 
-For Ref2VA, `subject_definitions:` is an exact standalone heading; each reusable subject definition uses `<Subject N> is ...`. The single repair pass can canonicalize inline/Markdown-wrapped section headings, colon-style subject definitions, and unambiguous retention taxonomy mix-ups such as `<Video N>: fully_copy` to `fully_preserved`. The unchanged validator still performs the final decision.
-
-### Input modes
-
-The `h3_input_mode` widget supports `Auto`, `T2VA`, `I2VA`, `FL2VA`, `L2VA`, and `Ref2VA`. In Auto, routing is deterministic:
-
-| Inputs present | Resolved mode |
-| --- | --- |
-| Any reference IMAGE, or a labelled reference instruction | Ref2VA |
-| No references; `first_frame` and `last_frame` absent | T2VA |
-| `first_frame` only | I2VA |
-| `first_frame` and `last_frame` | FL2VA |
-| `last_frame` only | L2VA |
-
-`first_frame` and `last_frame` are single-image anchors. `ref_image_1` through `ref_image_9` are reference images and can contain batches. The registry numbers media in this order—`first_frame`, `last_frame`, then reference-image slots and their batch items—so labels are stable (`<Picture 1>`, `<Picture 2>`, ...). `reference_instructions` may declare downstream `<Video N>`, `<Audio N>`, or `<Subject N>` labels; a `<Picture N>` declaration must resolve to a connected image. Explicit modes reject conflicting inputs instead of silently changing mode.
-
-The profiles **Standard**, **Cinematic Drama**, **Action**, and **Character Consistency** are JR names for the Creative Director layer. They are not official MiniMax format names or an endorsement by MiniMax.
-
-Typical prompts are concise and mode-specific:
+### 提示词与人工审核
 
 ```text
-T2VA:  text-only scene description -> integrated_multimodal_description
-I2VA:  first_frame -> image-anchored opening at 0.00 seconds
-FL2VA: first_frame + last_frame -> opening and ending alignment
-L2VA:  last_frame -> final-state alignment at the target duration
-Ref2VA: ref_image_1..9 and/or labelled instructions -> subject/retention sections
+用户提示词
+  -> Prompt Optimizer.prompt
+       optimized_prompt
+         -> Prompt Review & Continue.prompt
+              reviewed_prompt
+                -> MiniMax H3 文本输入
 ```
 
-The local node is **not** MiniMax's hosted proprietary **H3-Context-IR**, and it does not reproduce, replace, or claim compatibility with that internal system. It sends IMAGE inputs to the configured OpenAI-compatible prompt service. Video and Audio labels can be registered for downstream context, but this node does not upload or universally understand binary video/audio; backend and downstream support determine what those references mean.
+审核节点默认等待 `3600` 秒。每次排队都会再次审核；它需要发起任务的浏览器保持在线，不适合无人值守 API 队列。
 
-Official guide prose and examples are not redistributed. The clean-room metadata records format facts and source hashes in [`resources/minimax_h3_spec`](resources/minimax_h3_spec/), pinned to [MiniMax-AI/MiniMax-H3 commit `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea`](https://github.com/MiniMax-AI/MiniMax-H3/tree/8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea); see [`UPSTREAM.json`](resources/minimax_h3_spec/UPSTREAM.json) for the source paths and license link.
-
-## Prompt Review & Continue
-
-**JR MiniMax H3 Prompt Review & Continue** is the sixth node and provides a mandatory human-review checkpoint. Connect the Prompt Optimizer's `optimized_prompt` output to its `prompt` socket. When execution reaches this node, the workflow pauses and the incoming text appears in a large editor inside the node.
-
-Edit the text as needed, then click **Next / Continue**. Only the approved text is emitted from `reviewed_prompt`; downstream MiniMax H3 nodes do not execute before approval. Unicode, line breaks, punctuation, and `<Picture N>` tags are preserved exactly.
-
-The review runs again on every queue, even when the input is unchanged. **Stop** cancels the wait, and the configured timeout stops the workflow instead of silently returning the original prompt. This interactive node requires an active ComfyUI browser client and is intentionally unsupported in unattended/headless API workflows. Do not place it in automatic queues or unattended batch jobs. Browser refresh uses the same ComfyUI client ID to recover a still-pending review; closing the browser permanently leaves the workflow waiting until reconnect, Stop, or timeout.
-
-```text
-JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)
-    optimized_prompt
-        -> JR MiniMax H3 Prompt Review & Continue
-             reviewed_prompt
-                 -> MiniMax H3 text prompt input
-```
-
-See [`docs/PROMPT_REVIEW_CONTINUE.md`](docs/PROMPT_REVIEW_CONTINUE.md) for interaction, timeout, cancellation, recovery, and API-mode behavior.
-The importable example [`examples/jr_minimax_h3_prompt_review_workflow.json`](examples/jr_minimax_h3_prompt_review_workflow.json) demonstrates the complete Prompt Optimizer → review pause → downstream text preview chain. Set its API URL and model for your OpenAI-compatible service before running.
-
-## H3 Adaptive Cache 与 Cache Config Router
-
-推荐接线：
+### Router 与 Adaptive Cache
 
 ```text
 Prompt Optimizer.optimized_prompt
-    -> JR H3 Cache Config Router.optimized_prompt
+  -> Cache Config Router.optimized_prompt
 
-JR H3 Cache Config Router.cache_config
-    -> JR H3 Adaptive Cache.cache_config
+Cache Config Router.cache_config
+  -> Adaptive Cache.cache_config
 
 MiniMax H3 MODEL
-    -> JR H3 Adaptive Cache.model
-    -> sampler MODEL
+  -> Adaptive Cache.model
+       MODEL -> sampler
 ```
 
-Router 会进行第二次、完全独立的 LLM 调用。它只分析已经完成的提示词，不会改写提示词，也不会调用或改变 Prompt Optimizer。LLM 只能返回受限的场景语义分类；阈值、Block 范围、窗口和连续命中限制全部来自本地、版本控制的 Preset。分类失败时默认使用 **Safe Balanced / Conservative**，不会改变 Prompt Optimizer 已生成的文本。
+只需要把 Router 的 `cache_config` 接到 Adaptive Cache 的同名输入。Router 的 `selected_profile` 和 `analysis` 是供显示、记录或调试的 STRING 输出，**不需要**连接到 Adaptive Cache。连接 `cache_config` 后，Adaptive Cache 的手动 widgets 会被整组忽略。
 
-连接 `cache_config` 后，Adaptive Cache 完全采用 Router 配置并忽略节点上的手动 widget；不连接时所有设置均由手动模式、质量预设和高级参数决定。`enable=false` 时 Router 不发请求：`Disable Cache` 返回 Off，其余模式返回本地 Balanced 配置。
+Adaptive Cache 是实验性、内容相关的优化：档位被选中不等于必然命中，日志中的 `full_hits=0` 或 `block_hits=0` 可能只是当前采样变化超过阈值。不要把“选择了 dialogue_safe”误解为“保证加速”。
 
-六种 Adaptive Cache 模式：
+### 模型加速链
 
-- **Auto**：先使用有效 `profile_hint`，否则按 Speech/Singing、Music/Ambient/None 或安全默认选择。
-- **Visual Fast**：视频和音频分别判定，双方稳定才允许 Full-Step 命中并跳过整个 Transformer。
-- **Dialogue Safe**：默认 F1-M47-B2；前部探测，缓存中段，尾部刷新，音频可单独否决。
-- **Action Safe**：默认 F2-M46-B2；更低阈值、更窄窗口和最多一次连续 Block 命中。
-- **Balanced**：低变化走 Full-Step Fast Path，中间灰区走 Block Probe Path，高变化走 Full Path。
-- **Off**：不 clone、不添加 patch，原样返回 MODEL。
+```text
+Load Diffusion Model
+  -> MiniMax H3 Turbo LoRA（外部）
+  -> Reserved VRAM Setter（外部，可选）
+  -> H3 Unified Acceleration
+  -> JR H3 Adaptive Cache（可选且实验性）
+  -> MiniMax H3 Sigma Shift（外部）
+  -> Basic Guider / Basic Scheduler
+```
 
-当前 ComfyUI 原生 `MiniMaxH3Model` 默认检测为 50 个 Block，但实现会在执行时读取真实 Block 数并检查前后区间。缓存 patch 使用官方 ModelPatcher clone、`DIFFUSION_MODEL` wrapper、DiT Block replacement 与 cleanup callback；不会修改 ComfyUI 核心文件。检测到 EasyCache、TeaCache、First Block Cache、CacheDiT、其他 DiT Block replacement 或第二个 JR Cache 时会拒绝叠加。SageAttention、FlashAttention、量化、Dynamic VRAM、CPU offload 和 RTX 后处理不属于 Cache 冲突。
+Unified 节点内部顺序固定为：
 
-**Diffusion timestep 不是视频时间轴。** Cache 模式控制每个 denoise step 的计算路径，不能在成片“前五秒对白、后五秒动作”之间按视频秒数切换。当前阈值来自本节点 relative-delta 量纲的保守初始校准，仍需在目标 GPU、量化和采样配置上 benchmark。完整状态机、失效条件、设备策略与限制见 [`docs/H3_ADAPTIVE_CACHE.md`](docs/H3_ADAPTIVE_CACHE.md)。
+```text
+KJ Sage
+  -> MiniMax H3 Low VRAM Attention
+  -> MiniMax H3 Chunk FeedForward
+  -> Sol-Attn
+```
 
-可用 `tools/h3_cache_benchmark.py` 手动记录 No Cache、EasyCache 与四种 JR 策略的真实运行数据，并导出 JSON、CSV 或 Markdown；该工具不会在 pytest 中加载模型或执行长时 benchmark。
+Sol 必须最后安装，才能把 Sage 保留为不适用场景的 previous dense backend。每个 enable 开关都是真正 bypass，而不是用 chunk 值模拟关闭。详情见 [H3 Unified Acceleration](docs/H3_UNIFIED_ACCELERATION.md)。
 
-## RTX Upscaler & Refiner
+### 解码、放大和保存
 
-可组合 Denoise、Deblur 与 VSR/High Bitrate 放大。当前 `nvidia-vfx` binding 通过 `nvvfx.VideoSuperRes` 和不同的 `QualityLevel` 枚举选择相应处理模式；节点会复用批次内效果对象，并在执行结束后释放 SDK context。
+```text
+VAE Decode IMAGE
+  -> Resolution Scale Calculator
+  -> RTX Upscaler & Refiner
+  -> Enhanced Video Combine
+       frames（pass_frames=true）
+         -> Last Frame
+```
 
-所有效果关闭时，节点安全地执行 RGB 透传。建议先用较小的 IMAGE 批次验证当前 GPU、驱动、SDK 和 binding 组合。
+Resolution Calculator 的 `divisor` 是字符串下拉选项 `"8"`、`"16"`、`"32"`，同时兼容旧工作流保存的数值 `8/16/32`。
+
+## Prompt Optimizer
+
+Prompt Optimizer 是本地 H3 Prompt/Context 预处理器，不是 MiniMax 托管的 H3-Context-IR。它：
+
+- 支持 `Auto`、`T2VA`、`I2VA`、`FL2VA`、`L2VA`、`Ref2VA`。
+- 支持 `first_frame`、`last_frame` 和 `ref_image_1..9`；每个 reference slot 可以携带 IMAGE batch。
+- 接受服务根地址、`/v1`、`/v1/models` 或完整 `/v1/chat/completions` 地址。
+- `model` 留空时，仅在执行阶段查询 `/v1/models`。
+- 初次完整校验失败时最多进行 **一次** `temperature=0.1` 的格式修复，再运行同一个 validator。
+
+成功状态：
+
+```text
+Success: model=<id>, mode=<mode>, repaired=0
+Success: model=<id>, mode=<mode>, repaired=1
+```
+
+最终仍失败时：
+
+- `Return Original`：返回原始用户提示词，状态为 `Fallback: <原因>`。
+- `Stop Workflow`：抛出描述性错误并停止工作流。
+
+修复不会无限重试，也不会为了减少失败而放宽 validator。Ref2VA 的 `subject_definitions:` 必须是独立行标题，subject 定义采用 `<Subject N> is ...`。
+
+Auto 模式优先级：
+
+| 已连接输入 | Auto 结果 |
+| --- | --- |
+| 任意 reference IMAGE，或 `reference_instructions` 中出现有效引用标签 | Ref2VA |
+| 仅 `first_frame` | I2VA |
+| `first_frame` + `last_frame` | FL2VA |
+| 仅 `last_frame` | L2VA |
+| 均无 | T2VA |
+
+显式模式会拒绝冲突输入，不会偷偷切换模式。clean-room 格式来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [resources/minimax_h3_spec](resources/minimax_h3_spec/)。
+
+## Prompt Review & Continue
+
+审核节点把 incoming STRING 显示在节点内的可编辑文本区，点击 **Next / Continue** 后才释放下游。
+
+- 默认超时 `3600` 秒，范围 `60..86400`。
+- 最小节点尺寸约为 `460×360`；前端不会把用户手动放大的节点缩回默认值。
+- 刷新浏览器后会按 ComfyUI client ID 恢复仍在等待的审核。
+- Stop、超时或关闭浏览器且不重连都会阻止下游继续。
+- 提示词只保存在有限的内存状态中，不写入普通日志。
+
+详见 [Prompt Review & Continue](docs/PROMPT_REVIEW_CONTINUE.md)。
+
+## H3 Adaptive Cache
+
+该节点面向 ComfyUI 原生 `comfy.ldm.minimax.model.MiniMaxH3Model`，并在运行时读取真实 Block 数量。它没有按模型文件名锁死，所以 bf16、int8、Ref2VA 等权重文件只要最终加载成兼容的原生 H3 模型结构即可；`strict_model_check=true` 时不兼容模型会明确报错。
+
+`cache_device` 只控制大型 residual：
+
+- Metric history 始终留在当前计算设备，使用 detached fp32 抽样。
+- CPU residual 命中时才恢复到目标 tensor 的 device/dtype。
+- `Auto` 只决定 residual 放 CPU 还是 GPU。
+- 日志分别报告 `residual_to_cpu`、`residual_to_gpu` 和 `metric_migrations`；正常情况下 `metric_migrations=0`。
+
+不要与 EasyCache、TeaCache、First Block Cache、CacheDiT、其他 DiT Block replacement cache 或第二个 JR Cache 叠加。Sage/Flash Attention、量化、Dynamic VRAM、CPU offload 和下游 RTX/视频节点不在该冲突列表中。
+
+详见 [H3 Adaptive Cache](docs/H3_ADAPTIVE_CACHE.md)。
+
+## Resolution 与 RTX
+
+Resolution Calculator 按目标像素面积和宽高比计算最接近指定倍数的宽高；输出 `scale` 是面积等效的线性缩放比。
+
+RTX 节点：
+
+- 所有效果关闭时直接返回 RGB。
+- Denoise、Deblur、VSR/High Bitrate 通过当前 `nvvfx.VideoSuperRes` binding 的 `QualityLevel` 枚举选择。
+- 放大开启时才应用 `Same Size / Scale / Keep Ratio / Preset Ratio / Manual` 目标尺寸逻辑。
+- `Center Crop (Fill)` 会裁切以填满目标比例；`Letterbox (Fit)` 会补边。
+- 不在 import 阶段加载 `nvvfx` 或初始化 CUDA。
+
+不同 SDK/binding 并不保证支持全部 Denoise/Deblur 枚举；可用功能以运行时检查结果为准。
 
 ## Enhanced Video Combine
 
-主要能力：
+该输出节点编码 IMAGE batch，并在节点内提供视频预览、Autoplay、Download、保存首帧和保存末帧控制。
 
-- 节点内视频播放器、Autoplay、Download，以及分辨率、时长和 FPS 信息
-- AV1、VP9、H.265、H.264；MP4、WebM、MKV；Animated WebP、Animated AVIF
-- NVIDIA NVENC、Intel QSV、AMD AMF、VAAPI 到软件编码器的逐级回退
-- 8/10-bit 输出、质量控制、ping-pong、metadata 和安全的日期/子目录文件名
-- 可选 AUDIO、AAC/Opus/MP3、64k–320k bitrate 和 `crop_to_audio`
-- 保存原生分辨率首帧/末帧，并将视频和图片发布到 ComfyUI Assets
-- 按块向 FFmpeg 输送帧、ComfyUI 进度反馈、超时、卡死检测和失败文件清理
+- 视频：AV1、VP9、H.265、H.264。
+- 容器：WebM、MKV、MP4、Animated WebP、Animated AVIF。
+- 编码器顺序：NVENC → QSV → AMF → VAAPI → 软件编码器。
+- 音频：Auto、AAC、Opus、MP3，码率 `64k..320k`。
+- 支持 8/10-bit、ping-pong、metadata、日期/子目录文件名和 `crop_to_audio`。
+- 输出计数扫描同一 basename 的全部扩展名与附加标记，重复运行不会覆盖旧视频。
+- 每次执行返回新的 `preview_id`，防止浏览器继续显示上一轮缓存的视频。
+- 后端使用 ComfyUI `gifs` 视频 UI payload，同时以 `images` 发布可选 PNG，兼容当前 Node 2.0 前端路径。
 
-`codec=Auto` 会依次实际尝试 AV1/WebM、VP9/WebM、H.264/MP4。浏览器不支持直接播放的 AV1、HEVC、10-bit 或 MKV 文件会通过临时 H.264 兼容流预览，但 Download 始终下载原始输出文件。
+H.264 NVENC 常见最大宽度为 4096。横向拼接后出现 `4352×2880` 等超宽画面时，节点会把 Windows 的 `EPIPE/EINVAL (Errno 22)` 识别为当前编码器失败并继续回退到 `libx264`。软件回退能保存，但速度明显更慢。
 
-完整参数和回退逻辑见 [`docs/ENHANCED_VIDEO_COMBINE.md`](docs/ENHANCED_VIDEO_COMBINE.md)。
+浏览器不能直接播放的 HEVC、10-bit、MKV 等输出会通过临时 H.264 流预览，Download 始终指向原始保存文件。详见 [Enhanced Video Combine](docs/ENHANCED_VIDEO_COMBINE.md)。
 
-## 末帧续接
+## Last Frame
 
-如果要把合成节点的 `frames` 输出连接到 **JR MiniMax H3 Last Frame**，必须启用 `pass_frames`：
+`Last Frame` 要求非空 `[B,H,W,C]` IMAGE batch，并保持 batch 轴返回最后一帧。若输入来自 Enhanced Video Combine，必须启用 `pass_frames=true`；`save_last_frame=true` 只负责写 PNG，不等同于图中的 IMAGE 输出。
 
-```text
-MiniMax H3 IMAGE frames
-  -> JR MiniMax H3 Enhanced Video Combine (images)
-       pass_frames = true
-       frames -> JR MiniMax H3 Last Frame (frames)
-                    image -> Preview Image / 下一段 H3 的首帧输入
-```
+## 示例
 
-`save_last_frame=true` 保存的是磁盘 PNG，不等同于节点图中的 IMAGE 输出。更多说明见 [`examples/WORKFLOW_WIRING.md`](examples/WORKFLOW_WIRING.md)。
+`examples/` 当前包含：
 
-## 常见问题
+- `JR_MiniMax_H3_T2VA加速放大 (ver5.0).json`
+- `JR_MiniMax_H3_文生视频&首尾帧生视频_加速放大.json`
+- `JR_MiniMax_H3_ref加速放大.json`
+- `jr_minimax_h3_prompt_review_workflow.json`
+- [WORKFLOW_WIRING.md](examples/WORKFLOW_WIRING.md)
 
-- **找不到 FFmpeg：** 确认已安装 `requirements.txt`，或者把 `ffmpeg.exe` 加入 ComfyUI 进程的 PATH，然后重启 ComfyUI。
-- **没有视频预览或 Download：** 确认整个 `js` 目录和根目录 `__init__.py` 已更新，并强制刷新浏览器。
-- **Prompt Optimizer 连接失败：** 检查服务地址和端口；模型发现只在节点执行时发生。
-- **HTTP 401：** 检查 API Key；错误消息不会回显密钥。
-- **Last Frame 收到空批次：** 在 Enhanced Video Combine 中启用 `pass_frames`。
-- **RTX 执行失败：** 检查 `nvidia-vfx`、NVIDIA Video Effects SDK、驱动和当前 binding 暴露的 `QualityLevel`。
-- **Auto 选择了较低优先级编码器：** 更高优先级候选在真实运行测试中失败或没有产生进度，节点已自动继续回退。
-- **Adaptive Cache 报告冲突：** 同一 MODEL 链中只能保留一个 Cache patch；Attention 或量化节点不需要移除。
-- **CPU/Auto Cache：** `cache_device` 只控制大型 residual。抽样后的音频、视频 metric 始终留在当前计算设备；运行摘要会分别报告 residual CPU/GPU 传输和 metric migration。
-- **命中始终为零且 resets 很高：** v0.3.2 已移除同一次采样中不稳定的 tensor 内存地址签名。正常 workflow 的首次初始化不计 reset，cleanup 后统计会重新从零开始。
-- **Router 已选档但命中为零：** v0.3.3 已按真实 H3 数值尺度重新校准预设。摘要中的 `input_video/audio` 与 `probe_video/audio` 会显示 count/min/avg/max；仍无命中时可据此区分场景确实变化剧烈还是需要针对模型继续校准。
+示例可能引用外部 custom nodes、模型和本地资源；导入后请更换缺失节点、模型路径、API 地址和媒体输入。示例参数是工作点，不是硬件上限或普适最佳值。
 
-## 开发与验证
+## 已知边界
+
+- Adaptive Cache 和 Sol-Attn 都是实验性路径，不能承诺每个 prompt 都加速或画质无差异。
+- 用户曾完成 RTX 4080 SUPER 16GB（约 0.8MP、15 秒）和 RTX 5090 32GB（1.5MP、15 秒）的工作流验证；两次 workload 不同，不能用总耗时直接比较 GPU。
+- 低于约 0.6MP 不适合作为大幅后期放大的高质量起点，是用户经验，不是 MiniMax 官方限制。
+- 超宽 H.264 软件回退可能很慢；若交付允许，可改用 H.265/AV1，或让单边宽度保持在硬件编码器限制内。
+- Prompt Review 节点要求活动浏览器，不支持无人值守 API。
+
+## 开发验证
 
 ```powershell
 python -m pytest -q
@@ -319,10 +262,10 @@ python -m compileall -q .
 python -m ruff check . --exclude .reference
 ```
 
-开发过程遵循延迟加载原则：import 阶段不会访问网络、加载模型、初始化 CUDA/RTX SDK 或启动 FFmpeg。网络请求、文件操作和 FFmpeg 子进程均包含异常处理、超时与资源清理。
+import 阶段不会访问网络、加载模型、初始化 CUDA/RTX SDK 或运行 FFmpeg。真实 GPU、真实 H3、网络服务和编码器能力仍需在目标 ComfyUI 环境中单独验证。
 
-## 许可证与来源
+## 许可证与归属
 
-本项目源代码采用 [Apache License 2.0](LICENSE)。FFmpeg、NVIDIA SDK/binding、ComfyUI 和参考仓库保留各自的许可证与使用条款。
+本项目代码使用 [Apache License 2.0](LICENSE)。FFmpeg、ComfyUI、NVIDIA SDK/binding、KJNodes、SageAttention、Sol-Attn、Turbo LoRA、MiniMax H3 模型与提示词资料保留各自许可与使用条款。
 
-功能设计参考了 ComfyUI-DaSiWa-Nodes 与 Comfyui-minimaxh3-FBcache-shendumao。DaSiWa 的实现未被复制到本项目；H3 提示词约束策略根据参考实现重新组织和改写。具体参考 commit、观察到的许可证和归属说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 与 [`NOTICE`](NOTICE)。
+参考仓库、commit、许可审计、clean-room 边界和未 vendoring 声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [NOTICE](NOTICE)。
