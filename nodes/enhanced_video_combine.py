@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import errno
 import json
 import os
 import re
@@ -356,19 +357,30 @@ def _run_streaming_ffmpeg(command: list[str], chunks, progress=None) -> subproce
     watchdog = threading.Thread(target=watch_process, name="jr-h3-ffmpeg-watchdog", daemon=True)
     reader.start()
     watchdog.start()
+
+    def pipe_was_closed(error: OSError) -> bool:
+        return isinstance(error, BrokenPipeError) or error.errno in {errno.EPIPE, errno.EINVAL}
+
+    def close_stdin() -> None:
+        if process.stdin is None:
+            return
+        try:
+            process.stdin.close()
+        except OSError as error:
+            if not pipe_was_closed(error):
+                raise
+
     try:
         if process.stdin is None:
             raise RuntimeError("FFmpeg stdin could not be opened.")
         for chunk in chunks():
-            process.stdin.write(chunk)
-        process.stdin.close()
-        return_code = process.wait(timeout=_ENCODE_TIMEOUT_SECONDS)
-    except BrokenPipeError:
-        if process.stdin is not None:
             try:
-                process.stdin.close()
-            except BrokenPipeError:
-                pass
+                process.stdin.write(chunk)
+            except OSError as error:
+                if not pipe_was_closed(error):
+                    raise
+                break
+        close_stdin()
         return_code = process.wait(timeout=_ENCODE_TIMEOUT_SECONDS)
     except BaseException:
         process.kill()
@@ -425,7 +437,10 @@ def _encode_video(
                 return encoder
             output_path.unlink(missing_ok=True)
             lines = result.stderr.decode("utf-8", errors="replace").splitlines()
-            failures.append(f"{encoder}/{selected_audio or 'no-audio'}: {(lines[0] if lines else 'unknown error')[:180]}")
+            failures.append(
+                f"{encoder}/{selected_audio or 'no-audio'} at {width}x{height}: "
+                f"{(lines[0] if lines else 'unknown error')[:180]}"
+            )
     detail = " | ".join(failures) if failures else "no listed encoder is installed"
     raise RuntimeError(f"No usable {codec}/{container} encoder: {detail}")
 

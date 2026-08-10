@@ -1,3 +1,5 @@
+import errno
+import io
 import sys
 import types
 from datetime import datetime
@@ -16,9 +18,11 @@ from ComfyUI_JR_MiniMaxH3Node.nodes.enhanced_video_combine import (
     _available_video_encoders,
     _codec_order,
     _container_order,
+    _encode_video,
     _format_date_tokens,
     _preview_source_path,
     _resolve_bit_depth,
+    _run_streaming_ffmpeg,
     _safe_relative_prefix,
     _write_audio,
     detect_bit_depth,
@@ -231,3 +235,88 @@ def test_frontend_extension_contains_preview_save_and_download_contract():
 @pytest.mark.skipif(find_ffmpeg() is None, reason="FFmpeg unavailable")
 def test_ffmpeg_reports_required_h264_software_fallback():
     assert "libx264" in _available_video_encoders(find_ffmpeg())
+
+
+def test_windows_einval_from_closed_ffmpeg_pipe_returns_encoder_failure(monkeypatch):
+    class FakeStdin:
+        def write(self, _chunk):
+            raise OSError(errno.EINVAL, "Invalid argument")
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stderr = io.BytesIO(b"h264_nvenc: width exceeds encoder limit\n")
+
+        @staticmethod
+        def poll():
+            return 1
+
+        @staticmethod
+        def wait(timeout=None):
+            return 1
+
+        @staticmethod
+        def kill():
+            raise AssertionError("an expected closed pipe must not be treated as an interruption")
+
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+    result = _run_streaming_ffmpeg(
+        ["ffmpeg", "-c:v", "h264_nvenc", "output.mp4"],
+        lambda: iter([b"raw frame"]),
+    )
+    assert result.returncode == 1
+    assert b"width exceeds encoder limit" in result.stderr
+
+
+def test_unrelated_ffmpeg_pipe_oserror_is_not_swallowed(monkeypatch):
+    class FakeStdin:
+        def write(self, _chunk):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stderr = io.BytesIO()
+
+        @staticmethod
+        def poll():
+            return None
+
+        @staticmethod
+        def wait(timeout=None):
+            return 1
+
+        @staticmethod
+        def kill():
+            pass
+
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+    with pytest.raises(OSError, match="No space left on device"):
+        _run_streaming_ffmpeg(
+            ["ffmpeg", "-c:v", "h264_nvenc", "output.mp4"],
+            lambda: iter([b"raw frame"]),
+        )
+
+
+def test_h264_encoder_falls_back_after_windows_pipe_failure(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(command, _chunks, _progress):
+        encoder = command[command.index("-c:v") + 1]
+        calls.append(encoder)
+        if encoder == "h264_nvenc":
+            return types.SimpleNamespace(returncode=1, stderr=b"width exceeds encoder limit")
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.enhanced_video_combine._run_streaming_ffmpeg",
+        fake_run,
+    )
+    encoder = _encode_video(
+        "ffmpeg", {"h264_nvenc", "libx264"}, "H.264", "MP4", 8, 4352, 16, 4.0,
+        lambda: iter([b"frame"]), tmp_path / "wide.mp4", 20, None,
+        None, None, False, "Auto", "192k", lambda _seconds: None,
+    )
+    assert encoder == "libx264"
+    assert calls == ["h264_nvenc", "libx264"]
