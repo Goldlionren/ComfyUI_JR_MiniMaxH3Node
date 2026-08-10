@@ -720,14 +720,13 @@ class JR_H3_EnhancedVideoCombine:
             "bit_depth": selected_depth, "container": selected_container,
             "preview_id": f"{output_stat.st_mtime_ns:x}-{output_stat.st_size:x}",
         }
-        assets = [video_asset]
-        assets.extend({
+        frame_assets = [{
             "filename": path.name, "subfolder": subfolder, "type": output_type,
             "format": "image/png", "width": width, "height": height,
-        } for path in exports)
-        ui = {"images": assets}
-        if selected_container not in _ANIMATION_FORMATS:
-            ui["gifs"] = [{**video_asset, "fps": float(frame_rate)}]
+        } for path in exports]
+        ui = {"gifs": [{**video_asset, "fps": float(frame_rate)}]}
+        if frame_assets:
+            ui["images"] = frame_assets
         _log(f"Saved {output_path} using {encoder} ({selected_codec}/{selected_container}, {selected_depth}-bit).")
         for exported in exports:
             _log(f"Saved frame export {exported}.")

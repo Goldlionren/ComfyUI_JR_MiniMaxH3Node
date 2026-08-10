@@ -77,7 +77,9 @@ def test_ffmpeg_smoke_and_frame_contract(tmp_path, directory_name):
             "fps": 4.0,
         }
         assert result["ui"]["gifs"][0]["preview_id"]
-        assert len(result["ui"]["images"]) == 3
+        assert len(result["ui"]["images"]) == 2
+        assert all(asset["filename"].endswith(".png") for asset in result["ui"]["images"])
+        assert Path(filename).name not in {asset["filename"] for asset in result["ui"]["images"]}
     finally:
         if old is None: sys.modules.pop("folder_paths", None)
         else: sys.modules["folder_paths"] = old
@@ -183,6 +185,7 @@ def test_repeated_audio_video_runs_increment_filename_and_preview_version(tmp_pa
         assert first_path.read_bytes() == first_bytes
         assert first_path != second_path and second_path.stat().st_size > 0
         assert first["ui"]["gifs"][0]["preview_id"] != second["ui"]["gifs"][0]["preview_id"]
+        assert "images" not in first["ui"] and "images" not in second["ui"]
     finally:
         if old is None:
             sys.modules.pop("folder_paths", None)
