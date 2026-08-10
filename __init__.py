@@ -1,5 +1,6 @@
 """JR MiniMax H3 custom nodes for ComfyUI."""
 
+from .nodes.director_desk import JR_H3_DirectorDesk
 from .nodes.enhanced_video_combine import JR_H3_EnhancedVideoCombine
 from .nodes.h3_adaptive_cache import JR_H3_AdaptiveCache
 from .nodes.h3_cache_config_router import JR_H3_CacheConfigRouter
@@ -9,14 +10,16 @@ from .nodes.last_frame import JR_H3_LastFrame
 from .nodes.prompt_review_pause import JR_H3_PromptReviewPause
 from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
 from .nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner
-from .server import register_prompt_review_routes
+from .server import register_director_media_routes, register_prompt_review_routes
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 WEB_DIRECTORY = "./js"
 
 register_prompt_review_routes()
+register_director_media_routes()
 
 NODE_CLASS_MAPPINGS = {
+    "JR_H3_DirectorDesk": JR_H3_DirectorDesk,
     "JR_H3_OpenAICompatiblePromptOptimizer": JR_H3_OpenAICompatiblePromptOptimizer,
     "JR_H3_PromptReviewPause": JR_H3_PromptReviewPause,
     "JR_H3_CacheConfigRouter": JR_H3_CacheConfigRouter,
@@ -29,6 +32,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "JR_H3_DirectorDesk": "JR MiniMax H3 Director Desk",
     "JR_H3_OpenAICompatiblePromptOptimizer": "JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)",
     "JR_H3_PromptReviewPause": "JR MiniMax H3 Prompt Review & Continue",
     "JR_H3_CacheConfigRouter": "JR H3 Cache Config Router",

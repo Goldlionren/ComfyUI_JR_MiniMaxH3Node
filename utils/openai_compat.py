@@ -13,9 +13,16 @@ import urllib.request
 class OpenAICompatError(RuntimeError):
     """Safe error for an OpenAI-compatible endpoint."""
 
-    def __init__(self, message: str, *, status: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        compatibility_error: bool = False,
+    ):
         super().__init__(message)
         self.status = status
+        self.compatibility_error = compatibility_error
 
 
 def normalize_api_urls(api_base_url: str) -> tuple[str, str]:
@@ -23,6 +30,8 @@ def normalize_api_urls(api_base_url: str) -> tuple[str, str]:
     parsed = urllib.parse.urlsplit(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("api_base_url must be an absolute http:// or https:// URL.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("api_base_url must not contain embedded credentials.")
     path = parsed.path.rstrip("/")
     lower = path.lower()
     if lower.endswith("/v1/chat/completions"):
@@ -51,23 +60,33 @@ def _request_json(url: str, timeout: float, *, method: str = "GET", payload=None
             body = response.read(4 * 1024 * 1024)
     except urllib.error.HTTPError as error:
         body = error.read(2000).decode("utf-8", errors="replace")
-        body = re.sub(r"data:image/[^\s\"]+", "<image-data-redacted>", body)
-        raise OpenAICompatError(f"HTTP {error.code} from {url}: {body[:2000]}", status=error.code) from None
+        compatibility_error = bool(re.search(
+            r"unknown\s+(?:field|parameter)|unsupported\s+(?:field|parameter)|unrecognized\s+(?:field|parameter)",
+            body,
+            re.IGNORECASE,
+        ))
+        raise OpenAICompatError(
+            f"HTTP {error.code} from the OpenAI-compatible endpoint.",
+            status=error.code,
+            compatibility_error=compatibility_error,
+        ) from None
     except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as error:
-        raise OpenAICompatError(f"{type(error).__name__} while requesting {url}: {error}") from None
+        raise OpenAICompatError(
+            f"{type(error).__name__} while requesting the OpenAI-compatible endpoint."
+        ) from None
     if not body:
-        raise OpenAICompatError(f"Empty response from {url}.")
+        raise OpenAICompatError("Empty response from the OpenAI-compatible endpoint.")
     try:
         return json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise OpenAICompatError(f"Invalid JSON from {url}: {type(error).__name__}") from None
+        raise OpenAICompatError(f"Invalid JSON from the OpenAI-compatible endpoint: {type(error).__name__}") from None
 
 
 def discover_model(models_url: str, timeout: float, api_key: str = "") -> str:
     data = _request_json(models_url, timeout, api_key=api_key)
     models = data.get("data") if isinstance(data, dict) else None
     if not isinstance(models, list) or not models or not isinstance(models[0], dict) or not models[0].get("id"):
-        raise OpenAICompatError(f"No model IDs returned by {models_url}.")
+        raise OpenAICompatError("No model IDs returned by the OpenAI-compatible endpoint.")
     return str(models[0]["id"])
 
 
@@ -75,12 +94,7 @@ def request_chat(chat_url: str, payload: dict, timeout: float, api_key: str = ""
     try:
         return _request_json(chat_url, timeout, method="POST", payload=payload, api_key=api_key)
     except OpenAICompatError as error:
-        compatibility_error = re.search(
-            r"unknown\s+(?:field|parameter)|unsupported\s+(?:field|parameter)|unrecognized\s+(?:field|parameter)",
-            str(error),
-            re.IGNORECASE,
-        )
-        if error.status != 400 or not retry_reasoning_400 or compatibility_error is None:
+        if error.status != 400 or not retry_reasoning_400 or not error.compatibility_error:
             raise
         fallback = dict(payload)
         fallback.pop("reasoning_effort", None)

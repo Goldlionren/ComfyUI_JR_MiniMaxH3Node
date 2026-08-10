@@ -27,6 +27,27 @@ def test_return_original_failure_is_safe_and_three_outputs():
     assert output[2].startswith("Fallback:") and "TOPSECRET" not in output[2]
 
 
+def test_oversized_legacy_text_is_rejected_before_network_request(monkeypatch):
+    called = False
+
+    def unexpected_request(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("network request must not run")
+
+    monkeypatch.setattr(
+        "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
+        unexpected_request,
+    )
+    original = "x" * (512 * 1024 + 1)
+    output = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(enable=True, prompt=original)
+    )
+    assert output[:2] == (original, original)
+    assert output[2] == "Fallback: ValueError: prompt exceeds the 524288-byte limit."
+    assert called is False
+
+
 def test_stop_workflow_raises():
     try:
         JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(enable=True, fail_mode="Stop Workflow"))
@@ -40,7 +61,7 @@ def test_input_types_have_nine_optional_images():
     optional = inputs["optional"]
     assert all(f"ref_image_{i}" in optional for i in range(1, 10))
     assert list(inputs["required"])[-2:] == ["h3_input_mode", "reference_instructions"]
-    assert list(optional)[-2:] == ["first_frame", "last_frame"]
+    assert list(optional)[-3:] == ["first_frame", "last_frame", "pip"]
     assert inputs["required"]["h3_input_mode"][0] == ["Auto", "T2VA", "I2VA", "FL2VA", "L2VA", "Ref2VA"]
 
 

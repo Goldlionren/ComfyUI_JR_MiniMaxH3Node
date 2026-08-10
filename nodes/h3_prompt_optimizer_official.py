@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from ..utils.director_pipe_adapter import pipe_to_optimizer_context, validate_legacy_conflicts
 from ..utils.h3_prompt_builder import (
     JR_DIRECTOR_PROFILES,
     REF_SECTIONS,
@@ -29,6 +30,17 @@ from ..utils.safe_logging import safe_error
 _PROFILES = JR_DIRECTOR_PROFILES
 _H3_INPUT_MODES = [mode.value for mode in H3InputMode]
 _REPAIR_TEMPERATURE = 0.1
+_MAX_LEGACY_PROMPT_BYTES = 512 * 1024
+_MAX_REFERENCE_INSTRUCTIONS_BYTES = 64 * 1024
+
+
+def _validate_text_size(value, field, limit):
+    try:
+        size = len(str(value).encode("utf-8"))
+    except UnicodeEncodeError:
+        raise ValueError(f"{field} must be valid UTF-8 text.") from None
+    if size > limit:
+        raise ValueError(f"{field} exceeds the {limit}-byte limit.")
 
 
 class _FinalPromptValidationError(ValueError):
@@ -45,7 +57,7 @@ class _FinalPromptValidationError(ValueError):
 def _context(prompt, profile, duration, width, height, mode="T2VA", registry_text="No reference media is registered.", reference_instructions=""):
     return PromptBuildContext(
         original_prompt=str(prompt), profile=profile, mode=mode,
-        duration_seconds=int(duration), target_width=int(width), target_height=int(height),
+        duration_seconds=float(duration), target_width=int(width), target_height=int(height),
         registry_text=registry_text, reference_instructions=reference_instructions,
     )
 
@@ -302,33 +314,66 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
         optional.update({f"ref_image_{index}": ("IMAGE",) for index in range(1, 10)})
         optional["first_frame"] = ("IMAGE",)
         optional["last_frame"] = ("IMAGE",)
+        optional["pip"] = ("JR_H3_DIRECTOR_PIPE",)
         return {"required": required, "optional": optional}
 
     def optimize(
         self, prompt, enable, api_base_url, model, prompt_profile, duration_seconds,
         target_width, target_height, temperature, top_p, max_tokens, timeout_seconds,
         image_send_size, fail_mode, disable_reasoning, h3_input_mode="Auto",
-        reference_instructions="", api_key="", first_frame=None, last_frame=None, **kwargs,
+        reference_instructions="", api_key="", first_frame=None, last_frame=None, pip=None, **kwargs,
     ):
         original = str(prompt)
-        if not enable:
+        if not enable and pip is None:
             return original, original, "Disabled: original prompt returned"
         try:
-            instructions = normalize_picture_markers(str(reference_instructions or ""))
+            _validate_text_size(prompt, "prompt", _MAX_LEGACY_PROMPT_BYTES)
+            _validate_text_size(
+                reference_instructions,
+                "reference_instructions",
+                _MAX_REFERENCE_INSTRUCTIONS_BYTES,
+            )
+            source_suffix = ""
+            if pip is not None:
+                from ..utils.director_pipe import validate_director_pipe
+
+                pipe = validate_director_pipe(pip)
+                original = pipe.compiled_director_prompt
+                validate_legacy_conflicts(
+                    pipe, prompt=str(prompt), reference_instructions=reference_instructions,
+                    first_frame=first_frame, last_frame=last_frame,
+                    reference_image_count=_reference_slot_count(kwargs),
+                )
+                if not enable:
+                    return original, original, "Disabled: original prompt returned"
+                adapted = pipe_to_optimizer_context(pipe, int(image_send_size))
+                instructions = adapted.reference_instructions
+                registry = adapted.registry
+                encoded_images = list(adapted.encoded_images)
+                duration_seconds = adapted.duration_seconds
+                has_first_frame = adapted.has_first_frame
+                has_last_frame = adapted.has_last_frame
+                reference_image_count = adapted.reference_image_count
+                source_suffix = ", source=pip"
+            else:
+                instructions = normalize_picture_markers(str(reference_instructions or ""))
+                registry = ReferenceRegistry()
+                encoded_images = _encode_and_register_images(
+                    registry, first_frame=first_frame, last_frame=last_frame,
+                    image_send_size=int(image_send_size), kwargs=kwargs,
+                )
+                _register_instruction_only_references(registry, instructions)
+                registry.validate_references(instructions)
+                has_first_frame = first_frame is not None
+                has_last_frame = last_frame is not None
+                reference_image_count = _reference_slot_count(kwargs)
             selected_mode = route_h3_mode(
                 h3_input_mode,
-                has_first_frame=first_frame is not None,
-                has_last_frame=last_frame is not None,
-                reference_image_count=_reference_slot_count(kwargs),
+                has_first_frame=has_first_frame,
+                has_last_frame=has_last_frame,
+                reference_image_count=reference_image_count,
                 reference_instructions=instructions,
             )
-            registry = ReferenceRegistry()
-            encoded_images = _encode_and_register_images(
-                registry, first_frame=first_frame, last_frame=last_frame,
-                image_send_size=int(image_send_size), kwargs=kwargs,
-            )
-            _register_instruction_only_references(registry, instructions)
-            registry.validate_references(instructions)
 
             normalized_original = normalize_picture_markers(original)
             preserved_literals = extract_preserved_literals(normalized_original)
@@ -401,20 +446,20 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                     raise _FinalPromptValidationError(repaired_validation)
                 return (
                     repaired_validation.cleaned_prompt, original,
-                    f"Success: model={selected_model}, mode={selected_mode.value}, repaired=1",
+                    f"Success: model={selected_model}, mode={selected_mode.value}, repaired=1{source_suffix}",
                 )
             return (
                 validation.cleaned_prompt, original,
-                f"Success: model={selected_model}, mode={selected_mode.value}, repaired=0",
+                f"Success: model={selected_model}, mode={selected_mode.value}, repaired=0{source_suffix}",
             )
         except _FinalPromptValidationError as error:
             if fail_mode == "Stop Workflow":
-                raise ValueError(str(error)) from error
+                raise ValueError(str(error)) from None
             return original, original, f"Fallback: {error.concise_reason}"
         except Exception as error:
             message = safe_error(error, api_key)
             if fail_mode == "Stop Workflow":
-                raise RuntimeError(message) from error
+                raise RuntimeError(message) from None
             return original, original, f"Fallback: {message}"
 
 

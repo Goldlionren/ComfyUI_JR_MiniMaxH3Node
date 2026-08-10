@@ -116,7 +116,7 @@ def test_required_and_optional_input_order_keeps_legacy_prefix() -> None:
     legacy_optional = ["api_key", *(f"ref_image_{index}" for index in range(1, 10))]
 
     assert list(inputs["required"]) == legacy_required + ["h3_input_mode", "reference_instructions"]
-    assert list(inputs["optional"]) == legacy_optional + ["first_frame", "last_frame"]
+    assert list(inputs["optional"]) == legacy_optional + ["first_frame", "last_frame", "pip"]
 
 
 def test_optimizer_node_metadata_and_registration_are_stable() -> None:

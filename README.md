@@ -1,13 +1,14 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 9 个 V1 Python 节点，覆盖 H3 提示词生成与校验、人工审核、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 10 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.5.0`。版本号尚未因后续兼容性修复单独递增；请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 的 **Unreleased** 段为准。
+当前包版本：`0.6.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
 | 显示名称 | 稳定 Node ID | 分类 | 主要输出 |
 | --- | --- | --- | --- |
+| JR MiniMax H3 Director Desk | `JR_H3_DirectorDesk` | Director | 原始 Director Prompt、`JR_H3_DIRECTOR_PIPE` |
 | JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态 |
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词 |
 | JR H3 Cache Config Router | `JR_H3_CacheConfigRouter` | Cache | 缓存配置、建议档位、分析 |
@@ -69,16 +70,22 @@ Unified Acceleration 的外部依赖不会由本仓库自动安装：
 
 ## 推荐接线
 
-### 提示词与人工审核
+### Director Desk、提示词与人工审核
 
 ```text
-用户提示词
-  -> Prompt Optimizer.prompt
+Director Desk.pip
+  -> Prompt Optimizer.pip
        optimized_prompt
          -> Prompt Review & Continue.prompt
               reviewed_prompt
                 -> MiniMax H3 文本输入
 ```
+
+Director Desk 是不调用 LLM 的时间线编辑器。它把 Global Direction、Shot、图片、视频、音频和每项 Direction/Notes 确定性地编译为 raw `director_prompt`，并通过一根自定义类型的 `pip` 线把完整结构交给现有 Prompt Optimizer。正常接线不需要再把 `director_prompt` STRING 接到 Optimizer。
+
+工作流只保存轻量时间线和 ComfyUI `input/temp/output` 资产 descriptor；不会保存 Tensor、base64、音频 waveform 或视频字节。First Frame 是固定在 0.0 秒的唯一点锚；Visual 和 Reference Audio 可以重叠，Driving Audio 不允许重叠。拖动、resize、split、duplicate、delete、role 和 Direction 编辑都在节点内完成，节点只在首次创建时采用约 `1000×650` 默认尺寸，不会在执行后缩回。
+
+PIP 连接后，PIP 的 prompt、duration、registry 和媒体是权威来源；同时连接旧的 `first_frame`、`last_frame`、`ref_image_1..9` 或 `reference_instructions` 会明确报冲突，避免静默合并和重新编号。详情见 [Director Desk](docs/DIRECTOR_DESK.md)。
 
 审核节点默认等待 `3600` 秒。每次排队都会再次审核；它需要发起任务的浏览器保持在线，不适合无人值守 API 队列。
 
@@ -142,6 +149,7 @@ Prompt Optimizer 是本地 H3 Prompt/Context 预处理器，不是 MiniMax 托�
 
 - 支持 `Auto`、`T2VA`、`I2VA`、`FL2VA`、`L2VA`、`Ref2VA`。
 - 支持 `first_frame`、`last_frame` 和 `ref_image_1..9`；每个 reference slot 可以携带 IMAGE batch。
+- 支持 optional `pip: JR_H3_DIRECTOR_PIPE`；PIP 不存在时旧工作流行为不变。
 - 接受服务根地址、`/v1`、`/v1/models` 或完整 `/v1/chat/completions` 地址。
 - `model` 留空时，仅在执行阶段查询 `/v1/models`。
 - 初次完整校验失败时最多进行 **一次** `temperature=0.1` 的格式修复，再运行同一个 validator。
@@ -238,6 +246,7 @@ H.264 NVENC 常见最大宽度为 4096。横向拼接后出现 `4352×2880` 等�
 
 `examples/` 当前包含：
 
+- `jr_minimax_h3_director_desk_workflow.json`
 - `JR_MiniMax_H3_T2VA加速放大 (ver5.0).json`
 - `JR_MiniMax_H3_文生视频&首尾帧生视频_加速放大.json`
 - `JR_MiniMax_H3_ref加速放大.json`

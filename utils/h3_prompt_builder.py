@@ -44,7 +44,7 @@ class PromptBuildContext:
     original_prompt: str
     profile: str
     mode: str
-    duration_seconds: int
+    duration_seconds: float
     target_width: int
     target_height: int
     registry_text: str = "No reference media is registered."
@@ -78,7 +78,7 @@ def _mode_name(mode: object) -> str:
     return text
 
 
-def _alignment_contract(mode: str, duration_seconds: int) -> str:
+def _alignment_contract(mode: str, duration_seconds: float) -> str:
     duration = f"{float(duration_seconds):.2f}"
     if mode == "T2VA":
         return "Begin directly with integrated_multimodal_description; do not add an image-alignment line."
@@ -148,6 +148,7 @@ def build_system_prompt(context: PromptBuildContext) -> str:
     sections = get_spec_for_mode(mode).sections
     section_contract = " -> ".join(f"{name}:" for name in sections)
     reference_notes = context.reference_instructions.strip() or "No additional reference relationship instructions."
+    duration_text = f"{float(context.duration_seconds):g}"
     return f"""Mission
 Rewrite the user's request into one directly usable MiniMax H3 audiovisual prompt. Output only the finished prompt: no analysis, title, Markdown fence, JSON, or answer prefix.
 
@@ -157,10 +158,10 @@ The user's explicit intent has highest priority. Exact dialogue, lyrics, visible
 Official H3 interoperability contract (clean-room implementation)
 Resolved mode: {mode}
 Required field order: {section_contract}
-Use exact lowercase field names followed by a colon. [Shot 1] has no timestamp. Every later cut is sequential and begins '[Shot N] At MM:SS.mmm,' with a strictly increasing time below {int(context.duration_seconds)} seconds. Camera motion is natural prose, not a tag list. Stable vocal sources use (S1), (S2), etc.; spoken or sung content uses <d>[Language] exact content</d>. Describe ambient/physical sound in overall_soundscape and audience-only score in non_diegetic_music.
+Use exact lowercase field names followed by a colon. [Shot 1] has no timestamp. Every later cut is sequential and begins '[Shot N] At MM:SS.mmm,' with a strictly increasing time below {duration_text} seconds. Camera motion is natural prose, not a tag list. Stable vocal sources use (S1), (S2), etc.; spoken or sung content uses <d>[Language] exact content</d>. Describe ambient/physical sound in overall_soundscape and audience-only score in non_diegetic_music.
 After any required alignment preamble, follow this minimum syntactic skeleton exactly, replacing every angle-bracket placeholder with concrete content and adding shots only when useful:
 {_output_skeleton(mode)}
-Alignment rule: {_alignment_contract(mode, int(context.duration_seconds))}
+Alignment rule: {_alignment_contract(mode, context.duration_seconds)}
 Mode planning rule: {_mode_planning(mode)}
 For Ref2VA, retention_analysis uses only fully_preserved, partially_preserved, attribute_transfer, or weak_reference for visible labels; and fully_copy, partially_copy, reference, or weak_reference for Audio labels. All reference labels must be defined and remain stable.
 
@@ -176,7 +177,7 @@ User-supplied reference relationships
 {reference_notes}
 
 Target
-Duration: {int(context.duration_seconds)} seconds. Canvas reference: {int(context.target_width)}x{int(context.target_height)}. Do not create a cut at or beyond the duration."""
+Duration: {duration_text} seconds. Canvas reference: {int(context.target_width)}x{int(context.target_height)}. Do not create a cut at or beyond the duration."""
 
 
 def build_user_prompt(context: PromptBuildContext, preserved_literals: Iterable[str] = ()) -> str:
@@ -185,9 +186,10 @@ def build_user_prompt(context: PromptBuildContext, preserved_literals: Iterable[
     mode = _mode_name(context.mode)
     literals = tuple(str(value) for value in preserved_literals if str(value))
     protected = "\n".join(f"- {value}" for value in literals) or "- None detected; still preserve all explicit names and text."
+    duration_text = f"{float(context.duration_seconds):g}"
     return f"""Write the final H3 prompt now.
 Resolved input mode: {mode}
-Target duration: {int(context.duration_seconds)} seconds
+Target duration: {duration_text} seconds
 Canvas reference: {int(context.target_width)}x{int(context.target_height)}
 
 Registered reference media:

@@ -1,5 +1,17 @@
 # Development notes
 
+## Director Desk and JR_H3_DIRECTOR_PIPE (2026-08-10)
+
+Version 0.6.0 adds the tenth stable V1 node, `JR_H3_DirectorDesk`. The architecture decision is recorded in `docs/DIRECTOR_DESK_ARCHITECTURE.md`: lightweight schema-versioned workflow state is separate from the pure compiler and immutable runtime PIP. A hidden V1 STRING widget carries JSON to Python while `node.properties.jr_h3_director_state` remains the frontend persistence source; no tensor, decoded media, base64 or binary is serialized.
+
+The frontend Skill rules directly affect this phase: the DOM editor imports only stable `scripts/app`/`scripts/api`, uses a WeakMap per node instance, commits graph state once per user transaction, restores after configure/load, cleans media/listeners on removal and never resets node size during execution. Shot and Driving Audio overlap are validation errors; Visual and Reference Audio overlap use deterministic display-only lane stacking. Lane order never controls reference labels.
+
+The datatype Skill confirms that `JR_H3_DIRECTOR_PIPE` is a normal custom connection type. The PIP is a frozen dataclass/tuple graph and is never JSON STRING data. Prompt Optimizer receives it through one optional socket appended after all old optional inputs. With no PIP, all old behavior and status formats remain unchanged; with PIP, existing mode routing, image conversion, validator, single repair and fail modes remain authoritative.
+
+Media import reuses ComfyUI `/upload/image`; the JR probe route and execution resolver validate only relative input/temp/output descriptors. Pillow and ffprobe are lazy execution/route dependencies, subprocess calls use argv with timeout/no shell, and import does not inspect media or run FFmpeg.
+
+Six Luna workers independently covered architecture/PIP, frontend lifecycle/reference projects, media/security, optimizer integration, tests/failures and product UX before implementation. DaSiWa is GPL-3.0; qwenmultiangle metadata claims MIT but its audited tree lacked a LICENSE file; no third-party source was copied. Two fresh Luna reviewers are required after the implementation tests.
+
 ## Documentation reconciliation (2026-08-10)
 
 This pass changes documentation only. No Python, JavaScript, JSON workflow, test, dependency or package-metadata file is modified.

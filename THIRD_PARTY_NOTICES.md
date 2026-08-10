@@ -1,5 +1,13 @@
 # Third-party notices
 
+## Director Desk clean-room product research
+
+- ComfyTV: https://github.com/jtydhr88/ComfyTV — audited product concepts at commit `6cb67572c82d7f3e4e51ee0005f8308b8c15de63`; GitHub identifies MIT.
+- ComfyUI-qwenmultiangle: https://github.com/jtydhr88/ComfyUI-qwenmultiangle — audited at commit `93efd354a002f9c6add7e948663cf459528242da`; README/package metadata identifies MIT, but no LICENSE file was present in the audited tree.
+- ComfyUI-mesh2motion: https://github.com/jtydhr88/ComfyUI-mesh2motion — audited product documentation at commit `11fe6b7aaa5eac60afa3d726389cd9dd870ed1f6`; GitHub identifies MIT and the project credits additional upstream work/dependencies.
+
+These projects were used only to study lifecycle, state persistence, inspector and asset-editor product patterns. This repository does not copy their source, styles, Vue/Three code, iframe bridge, renderer, timeline libraries, assets, project database, runner, queue or stage system. Director Desk is an independent DOM/JavaScript and Python implementation. DaSiWa remains covered by its separate GPL-3.0 notice below and no DaSiWa code was copied.
+
 ## MiniMax-H3 Turbo LoRA and ComfyUI nodes
 
 - Weights/model repository: https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora

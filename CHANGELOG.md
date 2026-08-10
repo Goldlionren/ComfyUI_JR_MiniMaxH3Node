@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+## 0.6.0
+
+- Added `JR_H3_DirectorDesk`, a large in-node SHOT/VISUAL/AUDIO timeline editor with Global Direction, Inspector editing, drag/resize/snap, split/duplicate/delete/reorder, stacked overlapping reference lanes, media preview/import and persistent user sizing.
+- Added schema-versioned JSON-only Director state, deterministic timeline validation/compiler/reference registry, and immutable `JR_H3_DIRECTOR_PIPE` runtime objects whose compiled prompt exactly matches the STRING output.
+- Added safe ComfyUI asset descriptors, bounded media probing, input/temp/output path containment, lazy IMAGE decoding, missing/corrupt asset errors and video/audio descriptor-only runtime handling.
+- Appended optional `pip` to the existing Prompt Optimizer without removing or reordering legacy inputs. PIP mode reuses the existing H3 router, JPEG conversion, validator and one-shot format repair while rejecting legacy-media conflicts.
+- Added Director Desk architecture, usage/reference documentation, an importable example workflow, frontend contract tests, compiler/PIP/state tests and optimizer PIP integration coverage.
+- Recorded clean-room product research for ComfyTV, ComfyUI-qwenmultiangle, ComfyUI-mesh2motion and DaSiWa without vendoring their code, styles, assets, project systems or timeline libraries.
+
 ### Documentation
 
-- Reconciled the root README and focused guides with the current nine-node implementation.
+- Reconciled the root README and focused guides with the current ten-node implementation.
 - Added `docs/NODE_REFERENCE.md` as the canonical input/default/range/output reference.
 - Clarified Router-to-Cache wiring, model-structure compatibility, cache hit expectations, optional dependency boundaries and example-workflow limitations.
 - Documented current Prompt Review timeout/size behavior and current Enhanced Video Combine preview/output contracts.

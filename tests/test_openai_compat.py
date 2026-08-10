@@ -28,7 +28,7 @@ def test_url_preserves_path_prefix():
         "https://host.example/llama/v1/models", "https://host.example/llama/v1/chat/completions")
 
 
-@pytest.mark.parametrize("bad", ["", "127.0.0.1:10000", "ftp://host/x"])
+@pytest.mark.parametrize("bad", ["", "127.0.0.1:10000", "ftp://host/x", "https://user:secret@host/x"])
 def test_invalid_url(bad):
     with pytest.raises(ValueError): normalize_api_urls(bad)
 
@@ -114,6 +114,7 @@ def test_http_error_is_bounded_and_has_no_authorization(server):
     with pytest.raises(OpenAICompatError) as caught:
         request_chat(server + "/v1/chat/completions", {"messages": []}, 2, "super-secret")
     assert "super-secret" not in str(caught.value) and caught.value.status == 401
+    assert "denied" not in str(caught.value) and server not in str(caught.value)
 
 
 def test_non_json(server):

@@ -7,6 +7,9 @@ import numpy as np
 import torch
 from PIL import Image
 
+MAX_REFERENCE_IMAGE_FRAMES = 32
+MAX_REFERENCE_IMAGE_PIXELS = 24_000_000
+
 
 def image_batch_to_jpeg_data_urls(images: torch.Tensor, max_side: int, quality: int = 88) -> list[str]:
     if not isinstance(images, torch.Tensor):
@@ -15,8 +18,15 @@ def image_batch_to_jpeg_data_urls(images: torch.Tensor, max_side: int, quality: 
         raise ValueError("Reference image must have shape [B,H,W,C].")
     if images.shape[0] < 1:
         raise ValueError("Reference image batch is empty.")
+    if images.shape[0] > MAX_REFERENCE_IMAGE_FRAMES:
+        raise ValueError(f"Reference image batch exceeds {MAX_REFERENCE_IMAGE_FRAMES} frames.")
     if images.shape[1] < 1 or images.shape[2] < 1 or images.shape[3] not in (3, 4):
         raise ValueError("Reference image must contain non-empty RGB or RGBA frames.")
+    total_pixels = int(images.shape[0]) * int(images.shape[1]) * int(images.shape[2])
+    if total_pixels > MAX_REFERENCE_IMAGE_PIXELS:
+        raise ValueError(
+            f"Reference image batch exceeds the {MAX_REFERENCE_IMAGE_PIXELS}-pixel processing limit."
+        )
     if not 64 <= int(max_side) <= 4096:
         raise ValueError("image_send_size must be between 64 and 4096.")
 

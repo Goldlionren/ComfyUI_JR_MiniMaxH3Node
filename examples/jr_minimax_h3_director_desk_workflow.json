@@ -1,0 +1,114 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "JR_H3_DirectorDesk",
+      "pos": [40, 80],
+      "size": [1000, 650],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "director_prompt", "type": "STRING", "links": [1]},
+        {"name": "pip", "type": "JR_H3_DIRECTOR_PIPE", "links": [2]}
+      ],
+      "properties": {
+        "Node name for S&R": "JR_H3_DirectorDesk",
+        "jr_h3_director_state": {
+          "schema": "jr_h3_director_state",
+          "schema_version": 1,
+          "timeline": {"duration_seconds": 10.0, "fps": 24.0},
+          "global_direction": "Cinematic naturalism. Keep identity, wardrobe, screen direction, lighting and room geography continuous across all three shots.",
+          "shots": [
+            {"id": "shot-1", "start": 0.0, "end": 3.0, "direction": "Medium establishing shot. A woman at a quiet tea table looks toward the rain outside.", "notes": "Hold the opening composition long enough to read the room."},
+            {"id": "shot-2", "start": 3.0, "end": 7.0, "direction": "She places the cup down and stands. The camera eases back to reveal her full movement.", "notes": "Keep hand continuity and cup position physically plausible."},
+            {"id": "shot-3", "start": 7.0, "end": 10.0, "direction": "She stops beside the window in a stable wide shot while rain reflections move behind her.", "notes": "Finish on a readable, settled final state."}
+          ],
+          "visual_items": [],
+          "audio_items": [],
+          "ui": {"selected_item_id": "shot-1", "inspector_tab": "item", "zoom": 1.0}
+        }
+      },
+      "widgets_values": [
+        "{\"schema\":\"jr_h3_director_state\",\"schema_version\":1,\"timeline\":{\"duration_seconds\":10.0,\"fps\":24.0},\"global_direction\":\"Cinematic naturalism. Keep identity, wardrobe, screen direction, lighting and room geography continuous across all three shots.\",\"shots\":[{\"id\":\"shot-1\",\"start\":0.0,\"end\":3.0,\"direction\":\"Medium establishing shot. A woman at a quiet tea table looks toward the rain outside.\",\"notes\":\"Hold the opening composition long enough to read the room.\"},{\"id\":\"shot-2\",\"start\":3.0,\"end\":7.0,\"direction\":\"She places the cup down and stands. The camera eases back to reveal her full movement.\",\"notes\":\"Keep hand continuity and cup position physically plausible.\"},{\"id\":\"shot-3\",\"start\":7.0,\"end\":10.0,\"direction\":\"She stops beside the window in a stable wide shot while rain reflections move behind her.\",\"notes\":\"Finish on a readable, settled final state.\"}],\"visual_items\":[],\"audio_items\":[],\"ui\":{\"selected_item_id\":\"shot-1\",\"inspector_tab\":\"item\",\"zoom\":1.0}}"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "JR_H3_OpenAICompatiblePromptOptimizer",
+      "pos": [1080, 80],
+      "size": [420, 650],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {"name": "pip", "type": "JR_H3_DIRECTOR_PIPE", "link": 2}
+      ],
+      "outputs": [
+        {"name": "optimized_prompt", "type": "STRING", "links": [3]},
+        {"name": "original_prompt", "type": "STRING", "links": null},
+        {"name": "status", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "JR_H3_OpenAICompatiblePromptOptimizer"},
+      "widgets_values": [
+        "", true, "http://127.0.0.1:10000", "", "Standard", 10, 768, 1152,
+        0.6, 0.9, 1800, 180, 768, "Return Original", true, "Auto", "", ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "JR_H3_PromptReviewPause",
+      "pos": [1540, 120],
+      "size": [520, 500],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "prompt", "type": "STRING", "link": 3},
+        {"name": "timeout_seconds", "type": "INT", "widget": {"name": "timeout_seconds"}, "link": null}
+      ],
+      "outputs": [{"name": "reviewed_prompt", "type": "STRING", "links": [4]}],
+      "properties": {"Node name for S&R": "JR_H3_PromptReviewPause"},
+      "widgets_values": [3600]
+    },
+    {
+      "id": 4,
+      "type": "PreviewAny",
+      "pos": [1080, 770],
+      "size": [420, 220],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [{"name": "source", "type": "*", "link": 1}],
+      "outputs": [{"name": "value", "type": "STRING", "links": null}],
+      "properties": {"Node name for S&R": "PreviewAny"},
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "PreviewAny",
+      "pos": [1540, 670],
+      "size": [520, 250],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [{"name": "source", "type": "*", "link": 4}],
+      "outputs": [{"name": "value", "type": "STRING", "links": null}],
+      "properties": {"Node name for S&R": "PreviewAny"},
+      "widgets_values": []
+    }
+  ],
+  "links": [
+    [1, 1, 0, 4, 0, "STRING"],
+    [2, 1, 1, 2, 0, "JR_H3_DIRECTOR_PIPE"],
+    [3, 2, 0, 3, 0, "STRING"],
+    [4, 3, 0, 5, 0, "STRING"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {"ds": {"scale": 0.72, "offset": [80, 80]}},
+  "version": 0.4
+}

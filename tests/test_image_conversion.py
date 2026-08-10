@@ -20,3 +20,15 @@ def test_jpeg_data_urls(channels, batch):
 @pytest.mark.parametrize("tensor", [torch.empty(0, 4, 4, 3), torch.zeros(4, 4, 3), torch.zeros(1, 2, 3, 5)])
 def test_invalid_images(tensor):
     with pytest.raises((ValueError, TypeError)): image_batch_to_jpeg_data_urls(tensor, 768)
+
+
+@pytest.mark.parametrize(
+    "tensor",
+    [
+        torch.empty((33, 1, 1, 3), device="meta"),
+        torch.empty((2, 4000, 4000, 3), device="meta"),
+    ],
+)
+def test_reference_image_resource_limits_are_checked_before_encoding(tensor):
+    with pytest.raises(ValueError, match="exceeds"):
+        image_batch_to_jpeg_data_urls(tensor, 768)

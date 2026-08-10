@@ -1,6 +1,20 @@
 # 节点参数参考
 
-本页按当前 `main` 的 Python 定义记录全部 9 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 `main` 的 Python 定义记录全部 10 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+
+## Director Desk
+
+Node ID：`JR_H3_DirectorDesk`
+
+分类：`JR MiniMax H3/Director`
+
+输出：`director_prompt: STRING`、`pip: JR_H3_DIRECTOR_PIPE`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `director_state_json` | STRING | 内置 10 秒/24 fps/1 Shot state | 前端隐藏的 schema-versioned 执行 state；实际编辑数据同步保存在 `node.properties.jr_h3_director_state` |
+
+节点本身不调用 LLM。它在执行期验证时间轴、解析限定在 ComfyUI input/temp/output 根目录内的媒体 descriptor、只把 IMAGE 解码为 runtime tensor，并确定性地产生两个输出。First Frame 是唯一 0 秒点锚；Shot 不可重叠；Visual/Reference Audio 可重叠；Driving Audio 不可重叠。
 
 ## Prompt Optimizer
 
@@ -33,6 +47,7 @@ Node ID：`JR_H3_OpenAICompatiblePromptOptimizer`
 | `ref_image_1..9` | IMAGE | 未连接 | optional，可输入 batch |
 | `first_frame` | IMAGE | 未连接 | optional |
 | `last_frame` | IMAGE | 未连接 | optional |
+| `pip` | JR_H3_DIRECTOR_PIPE | 未连接 | optional；Director Desk 的权威结构化输入，必须位于 optional 列表末尾以保持旧 widget 顺序 |
 
 ## Prompt Review & Continue
 
