@@ -2,7 +2,7 @@
 
 ## Director PIPE through conditioning (2026-08-11)
 
-Version 0.7.0 adds the eleventh stable V1 node, `JR_H3_DirectedVideoConditioning`. Runtime PIPE schema v2 carries immutable compiled/optimized/reviewed prompt stages and validated video/audio handles; persisted Director state stays schema v1 and v0.6.0 JSON remains valid. Prompt Optimizer and Prompt Review append PIPE outputs while preserving their historical STRING output indices.
+Version 0.8.0 keeps the eleven stable V1 nodes and adds the deterministic official H3 prompt formatter. Runtime PIPE schema v2 carries immutable compiled/optimized/reviewed prompt stages and validated video/audio handles; persisted Director state stays schema v1 and v0.6.0 JSON remains valid. Prompt Optimizer and Prompt Review append PIPE outputs while preserving their historical STRING output indices.
 
 The conditioning node calls the installed ComfyUI `MiniMaxH3ImageToVideo` or `MiniMaxH3ReferenceToVideo` implementation instead of copying or monkey-patching upstream code. Current native behavior fixes output at 24 fps, supports 9 images/3 videos/3 video soundtracks/3 standalone audios, lacks a distinct Driving Audio port and cannot preserve hard first/last anchors in Ref2V. These are documented capability boundaries, not emulated features.
 
@@ -25,7 +25,7 @@ This pass changes documentation only. No Python, JavaScript, JSON workflow, test
 The public documentation was reconciled against the current `main` implementation and now treats these facts as authoritative:
 
 - Nine stable V1 node IDs are registered by root `__init__.py`; package version remains `0.5.0`.
-- Prompt Optimizer defaults to `max_tokens=1800` and `timeout_seconds=180`, performs at most one `temperature=0.1` format-only repair, and preserves the existing Return Original/Stop Workflow semantics.
+- Prompt Optimizer defaults to `max_tokens=1800` and `timeout_seconds=180`. The model returns semantic JSON; schema failures receive at most one `temperature=0.1` structured repair before deterministic official formatting and final validation. Existing Return Original/Stop Workflow semantics remain unchanged.
 - Prompt Review defaults to 3600 seconds, validates 60..86400, normalizes invalid legacy UI values to 3600, and preserves user-enlarged node dimensions.
 - Router connects to Adaptive Cache through `cache_config` only. `selected_profile`/`analysis` are diagnostic outputs, and connected config replaces all manual cache widgets.
 - Adaptive Cache checks the loaded native MiniMax H3 model class/structure rather than safetensors filenames. Profile selection is not a hit or speedup guarantee.

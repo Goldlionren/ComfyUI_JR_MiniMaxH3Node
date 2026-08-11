@@ -33,6 +33,7 @@ from ComfyUI_JR_MiniMaxH3Node.utils.h3_directed_conditioning import (
     prepare_directed_inputs,
 )
 from ComfyUI_JR_MiniMaxH3Node.utils.prompt_review_state import PROMPT_REVIEW_STORE
+from h3_semantic_helpers import ref_semantic
 
 
 def _asset(identifier, kind, filename, *, width=None, height=None, duration=None):
@@ -468,22 +469,12 @@ def test_node_metadata_and_types():
 
 def test_full_director_optimizer_review_conditioning_pipe_e2e(native, monkeypatch):
     pipe0 = _pipe(first=True, last=True, refs=1, video=True, audio_role="reference_audio")
-    optimized = (
-        "subject_definitions:\n<Subject 1> is defined by <Picture 1>, <Picture 2>, and <Picture 3>.\n"
-        "summary: [reference generation] <Subject 1> moves through the scene.\n"
-        "retention_analysis:\n"
-        "<Picture 1>: fully_preserved - retain the opening appearance.\n"
-        "<Picture 2>: fully_preserved - retain the closing appearance.\n"
-        "<Picture 3>: fully_preserved - retain the reference identity.\n"
-        "<Video 1>: partially_preserved - retain its motion rhythm.\n"
-        "<Audio 1>: fully_copy - retain the reference sound.\n"
-        "detailed_description: [Shot 1] <Subject 1> moves continuously.\n"
-        "overall_soundscape: Reference ambience continues.\n"
-        "non_diegetic_music: N/A"
+    semantic = ref_semantic(
+        ("<Picture 1>", "<Picture 2>", "<Picture 3>", "<Video 1>", "<Audio 1>")
     )
     monkeypatch.setattr(
         "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
-        lambda *_args, **_kwargs: {"choices": [{"message": {"content": optimized}}]},
+        lambda *_args, **_kwargs: {"choices": [{"message": {"content": semantic}}]},
     )
     result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         prompt="", enable=True, api_base_url="http://127.0.0.1:10000", model="test",
@@ -492,6 +483,7 @@ def test_full_director_optimizer_review_conditioning_pipe_e2e(native, monkeypatc
         image_send_size=768, fail_mode="Stop Workflow", disable_reasoning=True,
         h3_input_mode="Auto", reference_instructions="", api_key="", pip=pipe0,
     )
+    optimized = result[0]
     pipe1 = result[3]
     assert pipe1 is not pipe0 and pipe1.optimized_prompt == optimized
     for field in (

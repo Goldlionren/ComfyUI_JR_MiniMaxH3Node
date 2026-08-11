@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import re
-
 from ..utils.director_pipe_adapter import pipe_to_optimizer_context, validate_legacy_conflicts
+from ..utils.h3_official_prompt_formatter import H3OfficialFormatError, format_official_prompt
+from ..utils.h3_official_prompt_schema import H3SemanticError, parse_semantic_response
 from ..utils.h3_prompt_builder import (
     JR_DIRECTOR_PROFILES,
-    REF_SECTIONS,
     PromptBuildContext,
     build_system_prompt,
     build_user_prompt,
     extract_preserved_literals,
+    extract_protected_dialogues,
     registry_as_text,
 )
 from ..utils.h3_prompt_modes import H3InputMode, find_reference_label_tokens, route_h3_mode
-from ..utils.h3_prompt_validator import ValidationResult, validate_prompt
+from ..utils.h3_prompt_validator import validate_prompt
 from ..utils.h3_reference_registry import ReferenceRegistry
 from ..utils.image_conversion import image_batch_to_jpeg_data_urls
 from ..utils.openai_compat import (
@@ -49,16 +49,30 @@ class _FinalPromptValidationError(ValueError):
     def __init__(self, validation):
         self.concise_reason = validation.errors[0] if validation.errors else "unknown validation error"
         super().__init__(
-            "H3 prompt validation failed after one format-repair attempt: "
+            "Deterministic official H3 formatter output failed validation: "
             f"{_validation_summary(validation)}"
         )
 
 
-def _context(prompt, profile, duration, width, height, mode="T2VA", registry_text="No reference media is registered.", reference_instructions=""):
+class _FinalSemanticError(ValueError):
+    """Structured semantic JSON is still invalid after one repair."""
+
+    def __init__(self, error):
+        self.concise_reason = str(error)
+        super().__init__(f"H3 semantic JSON failed after one structured repair: {error}")
+
+
+def _context(
+    prompt, profile, duration, width, height, mode="T2VA",
+    registry_text="No reference media is registered.", reference_instructions="",
+    shot_starts=(), reference_labels=(), protected_dialogues=(),
+):
     return PromptBuildContext(
         original_prompt=str(prompt), profile=profile, mode=mode,
         duration_seconds=float(duration), target_width=int(width), target_height=int(height),
         registry_text=registry_text, reference_instructions=reference_instructions,
+        shot_starts=tuple(shot_starts), reference_labels=tuple(reference_labels),
+        protected_dialogues=tuple(protected_dialogues),
     )
 
 
@@ -135,138 +149,18 @@ def _validation_summary(validation):
     return summary
 
 
-def _shield_preserved_literals(candidate, preserved_literals):
-    shielded = candidate
-    shields = []
-    for index, literal in enumerate(preserved_literals, 1):
-        token = f"__JR_H3_PRESERVED_LITERAL_{index:02d}__"
-        count = shielded.count(literal)
-        if count:
-            shielded = shielded.replace(literal, token)
-        else:
-            characters = [re.escape(character) for character in literal if not character.isspace()]
-            if characters:
-                whitespace_tolerant = r"[ \t]*".join(characters)
-                shielded, count = re.subn(whitespace_tolerant, token, shielded)
-        if count:
-            shields.append((token, literal, count))
-    return shielded, tuple(shields)
+def _repair_payload(*, model, context, candidate, error, max_tokens):
+    repair_system = f"""You perform one constrained semantic JSON repair.
+Output exactly one JSON object. Do not output a final H3 prompt, Markdown, analysis, section headings, Shot headers, timestamps, speaker IDs, dialogue text, or reference labels not present in the contract. Preserve the candidate's semantic intent. Fix only JSON/schema errors. Python owns all final MiniMax H3 formatting.
 
-
-def _restore_preserved_literals(candidate, shields):
-    restored = candidate
-    errors = []
-    for token, literal, expected_count in shields:
-        token_count = restored.count(token)
-        literal_count = restored.count(literal)
-        if token_count + literal_count != expected_count:
-            errors.append(f"repair changed protected literal sentinel for {literal!r}")
-        restored = restored.replace(token, literal)
-    return restored, tuple(errors)
-
-
-def _normalize_repaired_ref2va_sections(candidate, mode):
-    if mode != "Ref2VA":
-        return candidate
-    names = "|".join(re.escape(name) for name in REF_SECTIONS)
-    heading = re.compile(
-        rf"^[ \t]*(?:#{{1,6}}[ \t]*)?(?:\*\*|__)?(?P<name>{names}):"
-        rf"(?:\*\*|__)?(?:[ \t]*(?P<body>.*))?$",
-        re.IGNORECASE,
-    )
-    normalized = []
-    for line in candidate.splitlines():
-        match = heading.fullmatch(line)
-        if match is None:
-            normalized.append(line)
-            continue
-        canonical = next(
-            name for name in REF_SECTIONS
-            if name.casefold() == match.group("name").casefold()
-        )
-        normalized.append(f"{canonical}:")
-        body = (match.group("body") or "").strip()
-        if body:
-            normalized.append(body)
-    return "\n".join(normalized)
-
-
-def _normalize_repaired_ref2va_retention(candidate, mode):
-    if mode != "Ref2VA":
-        return candidate
-    visible_from_audio = {
-        "fully_copy": "fully_preserved",
-        "partially_copy": "partially_preserved",
-        "reference": "attribute_transfer",
-    }
-    audio_from_visible = {
-        "fully_preserved": "fully_copy",
-        "partially_preserved": "partially_copy",
-        "attribute_transfer": "reference",
-    }
-    retention = re.compile(
-        r"^(?P<prefix>[ \t]*<(?P<family>Subject|Picture|Video|Audio) [1-9]\d*>"
-        r"(?:[ \t]*\([^\r\n:]*\))?[ \t]*:[ \t]*)"
-        r"(?P<value>[A-Za-z][A-Za-z0-9_-]*)(?P<suffix>.*)$"
-    )
-    normalized = []
-    for line in candidate.splitlines():
-        match = retention.fullmatch(line)
-        if match is None:
-            normalized.append(line)
-            continue
-        mapping = (
-            audio_from_visible
-            if match.group("family") == "Audio"
-            else visible_from_audio
-        )
-        value = mapping.get(match.group("value"), match.group("value"))
-        normalized.append(f"{match.group('prefix')}{value}{match.group('suffix')}")
-    return "\n".join(normalized)
-
-
-def _normalize_repaired_ref2va_subject_definitions(candidate, mode):
-    if mode != "Ref2VA":
-        return candidate
-    normalized = []
-    in_definitions = False
-    definition = re.compile(
-        r"^(?P<label>[ \t]*<Subject [1-9]\d*>)[ \t]*:[ \t]*(?P<body>.+)$"
-    )
-    for line in candidate.splitlines():
-        if line == "subject_definitions:":
-            in_definitions = True
-            normalized.append(line)
-            continue
-        if line == "summary:":
-            in_definitions = False
-            normalized.append(line)
-            continue
-        match = definition.fullmatch(line) if in_definitions else None
-        if match is None:
-            normalized.append(line)
-        else:
-            normalized.append(f"{match.group('label')} is {match.group('body')}")
-    return "\n".join(normalized)
-
-
-def _repair_payload(*, model, context, candidate, validation, preserved_literals, max_tokens):
-    protected = "\n".join(f"- {literal}" for literal in preserved_literals) or "- None"
-    errors = "\n".join(f"- {error}" for error in validation.errors)
-    repair_system = f"""You perform one constrained MiniMax H3 format repair.
-Output only the repaired prompt. Repair syntax and structure only: field names, field order, shot markers, timestamps, alignment syntax, reference syntax, and other deterministic format violations. Do not rewrite, expand, summarize, embellish, translate, or otherwise change the story, actions, camera intent, sounds, dialogue, lyrics, visible text, names, or technical terms. Preserve every protected literal exactly. Any __JR_H3_PRESERVED_LITERAL_NN__ token is immutable: copy it exactly once at its existing location and never expand, remove, rename, or interpret it. If content is already valid, leave it unchanged.
-
-Authoritative format contract:
+Authoritative semantic contract:
 {build_system_prompt(context)}"""
-    repair_user = f"""Repair the candidate only for the listed validation errors.
+    repair_user = f"""Repair this semantic JSON candidate once.
 
-Validation errors:
-{errors}
+Validation error:
+- {error}
 
-Protected user literals (must remain byte-for-byte present):
-{protected}
-
-Candidate prompt:
+Candidate semantic response:
 {candidate}"""
     return {
         "model": model,
@@ -357,6 +251,8 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 has_first_frame = adapted.has_first_frame
                 has_last_frame = adapted.has_last_frame
                 reference_image_count = adapted.reference_image_count
+                shot_starts = adapted.shot_starts
+                protected_dialogues = adapted.protected_dialogues
                 source_suffix = ", source=pip"
             else:
                 instructions = normalize_picture_markers(str(reference_instructions or ""))
@@ -370,6 +266,8 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 has_first_frame = first_frame is not None
                 has_last_frame = last_frame is not None
                 reference_image_count = _reference_slot_count(kwargs)
+                shot_starts = ()
+                protected_dialogues = extract_protected_dialogues(original)
             selected_mode = route_h3_mode(
                 h3_input_mode,
                 has_first_frame=has_first_frame,
@@ -379,10 +277,14 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
             )
 
             normalized_original = normalize_picture_markers(original)
-            preserved_literals = extract_preserved_literals(normalized_original)
+            preserved_literals = tuple(dict.fromkeys(
+                (*extract_preserved_literals(normalized_original), *protected_dialogues)
+            ))
             context = _context(
                 normalized_original, prompt_profile, duration_seconds, target_width, target_height,
                 selected_mode.value, registry_as_text(registry.entries()), instructions,
+                shot_starts=shot_starts, reference_labels=registry.labels(),
+                protected_dialogues=protected_dialogues,
             )
             models_url, chat_url = normalize_api_urls(api_base_url)
             selected_model = model.strip() or discover_model(models_url, timeout_seconds, api_key)
@@ -403,70 +305,66 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 payload["reasoning_effort"] = "none"
                 payload["chat_template_kwargs"] = {"enable_thinking": False}
             response = request_chat(chat_url, payload, timeout_seconds, api_key, disable_reasoning)
-            raw_prompt = parse_chat_content(response)
-            validation = validate_prompt(
-                raw_prompt, mode=selected_mode.value, duration_seconds=duration_seconds,
-                allowed_labels=registry.labels(), preserved_literals=preserved_literals,
-            )
-            if not validation.valid:
-                shielded_prompt, literal_shields = _shield_preserved_literals(
-                    raw_prompt, preserved_literals
+            raw_semantic = parse_chat_content(response)
+            repaired = 0
+            try:
+                semantic = parse_semantic_response(
+                    raw_semantic,
+                    mode=selected_mode.value,
+                    allowed_labels=registry.labels(),
+                    protected_dialogue_count=len(protected_dialogues),
+                    protected_dialogues=protected_dialogues,
+                    expected_shot_count=len(shot_starts) if shot_starts else None,
                 )
+            except H3SemanticError as first_error:
                 repair = _repair_payload(
-                    model=selected_model, context=context, candidate=shielded_prompt,
-                    validation=validation, preserved_literals=preserved_literals,
-                    max_tokens=max_tokens,
+                    model=selected_model, context=context, candidate=raw_semantic,
+                    error=first_error, max_tokens=max_tokens,
                 )
-                # No reasoning extensions are sent here, so request_chat cannot perform
-                # its compatibility retry. This is exactly one format-repair request.
+                # No reasoning extensions are sent here, so this is exactly one
+                # structured semantic-repair request.
                 repaired_response = request_chat(
                     chat_url, repair, timeout_seconds, api_key, False,
                 )
-                repaired_prompt, shield_errors = _restore_preserved_literals(
-                    parse_chat_content(repaired_response), literal_shields
-                )
-                repaired_prompt = _normalize_repaired_ref2va_sections(
-                    repaired_prompt, selected_mode.value
-                )
-                repaired_prompt = _normalize_repaired_ref2va_subject_definitions(
-                    repaired_prompt, selected_mode.value
-                )
-                repaired_prompt = _normalize_repaired_ref2va_retention(
-                    repaired_prompt, selected_mode.value
-                )
-                repaired_validation = validate_prompt(
-                    repaired_prompt, mode=selected_mode.value,
-                    duration_seconds=duration_seconds, allowed_labels=registry.labels(),
-                    preserved_literals=preserved_literals,
-                )
-                if shield_errors:
-                    repaired_validation = ValidationResult(
-                        cleaned_prompt=repaired_validation.cleaned_prompt,
-                        valid=False,
-                        errors=shield_errors + repaired_validation.errors,
+                try:
+                    semantic = parse_semantic_response(
+                        parse_chat_content(repaired_response),
+                        mode=selected_mode.value,
+                        allowed_labels=registry.labels(),
+                        protected_dialogue_count=len(protected_dialogues),
+                        protected_dialogues=protected_dialogues,
+                        expected_shot_count=len(shot_starts) if shot_starts else None,
                     )
-                if not repaired_validation.valid:
-                    raise _FinalPromptValidationError(repaired_validation)
-                return (
-                    repaired_validation.cleaned_prompt, original,
-                    f"Success: model={selected_model}, mode={selected_mode.value}, repaired=1{source_suffix}",
-                    (
-                        pipe.derive(
-                            optimized_prompt=repaired_validation.cleaned_prompt,
-                            reviewed_prompt="",
-                        )
-                        if pip is not None else None
-                    ),
+                except H3SemanticError as second_error:
+                    raise _FinalSemanticError(second_error) from None
+                repaired = 1
+
+            try:
+                formatted_prompt = format_official_prompt(
+                    semantic,
+                    mode=selected_mode.value,
+                    duration_seconds=duration_seconds,
+                    protected_dialogues=protected_dialogues,
+                    authoritative_shot_starts=shot_starts,
                 )
+            except H3OfficialFormatError as error:
+                raise _FinalSemanticError(error) from None
+            validation = validate_prompt(
+                formatted_prompt, mode=selected_mode.value, duration_seconds=duration_seconds,
+                allowed_labels=registry.labels(), preserved_literals=preserved_literals,
+                protected_dialogues=protected_dialogues,
+            )
+            if not validation.valid:
+                raise _FinalPromptValidationError(validation)
             return (
                 validation.cleaned_prompt, original,
-                f"Success: model={selected_model}, mode={selected_mode.value}, repaired=0{source_suffix}",
+                f"Success: model={selected_model}, mode={selected_mode.value}, repaired={repaired}{source_suffix}",
                 (
                     pipe.derive(optimized_prompt=validation.cleaned_prompt, reviewed_prompt="")
                     if pip is not None else None
                 ),
             )
-        except _FinalPromptValidationError as error:
+        except (_FinalPromptValidationError, _FinalSemanticError) as error:
             if fail_mode == "Stop Workflow":
                 raise ValueError(str(error)) from None
             return original, original, f"Fallback: {error.concise_reason}", output_pipe

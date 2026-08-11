@@ -2,7 +2,7 @@
 
 面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 11 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.7.1`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.8.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -151,13 +151,14 @@ Resolution Calculator 的 `divisor` 是字符串下拉选项 `"8"`、`"16"`、`"
 
 Prompt Optimizer 是本地 H3 Prompt/Context 预处理器，不是 MiniMax 托管的 H3-Context-IR。它：
 
+- 固定使用 MiniMax-H3 commit `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea` 的 Prompt Writing 规范：LLM 只返回语义 JSON，Python 确定性生成最终官方 H3 字段、顺序、Shot、时间戳、对白、reference label 与 retention enum。
 - 支持 `Auto`、`T2VA`、`I2VA`、`FL2VA`、`L2VA`、`Ref2VA`。
 - 支持 `first_frame`、`last_frame` 和 `ref_image_1..9`；每个 reference slot 可以携带 IMAGE batch。
 - 支持 optional `pip: JR_H3_DIRECTOR_PIPE`；PIP 不存在时旧工作流行为不变，新增的第四个 PIPE 输出为 `None`。
 - PIP 模式成功后返回派生 PIPE，并写入 `optimized_prompt`；原 PIPE 的时间线、registry 和 runtime media 原样保留。
 - 接受服务根地址、`/v1`、`/v1/models` 或完整 `/v1/chat/completions` 地址。
 - `model` 留空时，仅在执行阶段查询 `/v1/models`。
-- 初次完整校验失败时最多进行 **一次** `temperature=0.1` 的格式修复，再运行同一个 validator。
+- 语义 JSON 初次 schema 校验失败时最多进行 **一次** `temperature=0.1` 的结构化修复；随后 Python formatter 生成最终文本并运行严格 validator。
 
 成功状态：
 
@@ -171,7 +172,7 @@ Success: model=<id>, mode=<mode>, repaired=1
 - `Return Original`：返回原始用户提示词，状态为 `Fallback: <原因>`。
 - `Stop Workflow`：抛出描述性错误并停止工作流。
 
-修复不会无限重试，也不会为了减少失败而放宽 validator。Ref2VA 的 `subject_definitions:` 必须是独立行标题，subject 定义采用 `<Subject N> is ...`。
+修复不会无限重试，也不会为了减少失败而放宽 validator。不同 OpenAI-compatible 模型仍会带来不同语义质量，但最终 H3 结构不再由模型自由排版。对白原文由程序逐字保护，Base 对白只进入 `integrated_multimodal_description`，Ref2VA 对白只进入 `detailed_description`，不会重复到 `overall_soundscape`。
 
 Auto 模式优先级：
 
@@ -183,7 +184,7 @@ Auto 模式优先级：
 | 仅 `last_frame` | L2VA |
 | 均无 | T2VA |
 
-显式模式会拒绝冲突输入，不会偷偷切换模式。clean-room 格式来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [resources/minimax_h3_spec](resources/minimax_h3_spec/)。
+显式模式会拒绝冲突输入，不会偷偷切换模式。实现与升级边界见 [Official H3 Prompt Formatter](docs/H3_OFFICIAL_PROMPT_FORMATTER.md)；clean-room 格式来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、[固定规范来源](specs/minimax_h3_prompt/8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea/SOURCE.md) 与 [resources/minimax_h3_spec](resources/minimax_h3_spec/)。
 
 ## Prompt Review & Continue
 

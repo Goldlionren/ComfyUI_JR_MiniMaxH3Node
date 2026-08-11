@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -58,6 +59,12 @@ _AUDIO_RETENTION_LINE_RE = re.compile(
     re.ASCII,
 )
 _SUBJECT_DEFINITION_RE = re.compile(r"^\s*<Subject ([1-9]\d*)>\s+is\b", re.MULTILINE)
+_UNKNOWN_HEADING_RE = re.compile(r"^(?P<name>[a-z][a-z0-9_]*)\s*:", re.MULTILINE)
+_DIALOGUE_RE = re.compile(
+    r"<d>\[(?P<language>[A-Za-z][A-Za-z -]*)\] (?P<text>[^\r\n]*?)</d>"
+)
+_DIALOGUE_MARKER_RE = re.compile(r"</?d>", re.IGNORECASE)
+_SPEAKER_PREFIX_RE = re.compile(r"\(S[1-9]\d*(?:,S[1-9]\d*)*\)[^<>\r\n]{0,180}:\s*$")
 
 
 @dataclass(frozen=True)
@@ -388,6 +395,50 @@ def _taxonomy_errors(text: str, mode: str, section_spans: list[tuple[str, int, i
     return errors
 
 
+def _unknown_heading_errors(text: str, expected: tuple[str, ...]) -> list[str]:
+    return [
+        f"unknown section heading '{match.group('name')}:'"
+        for match in _UNKNOWN_HEADING_RE.finditer(text)
+        if match.group("name") not in expected
+    ]
+
+
+def _dialogue_errors(
+    text: str,
+    main_section: tuple[str, int, int, str] | None,
+    protected_dialogues: Iterable[Any] | None,
+) -> list[str]:
+    errors: list[str] = []
+    matches = list(_DIALOGUE_RE.finditer(text))
+    marker_count = len(_DIALOGUE_MARKER_RE.findall(text))
+    if marker_count != len(matches) * 2:
+        errors.append("dialogue must use exact '<d>[Language] literal</d>' syntax")
+    start = main_section[1] if main_section else -1
+    end = main_section[2] if main_section else -1
+    for match in matches:
+        if not (start <= match.start() < end):
+            errors.append("dialogue is only allowed in the main shot-description section")
+        prefix = text[max(start, match.start() - 220):match.start()]
+        if _SPEAKER_PREFIX_RE.search(prefix) is None:
+            errors.append("each dialogue block must be preceded by a stable (Sx) speaker ID and delivery")
+    if protected_dialogues is not None:
+        required = tuple(str(value) for value in protected_dialogues)
+        actual = tuple(match.group("text") for match in matches)
+        required_counts = Counter(required)
+        actual_counts = Counter(actual)
+        for literal, expected_count in required_counts.items():
+            count = actual_counts[literal]
+            if count != expected_count:
+                errors.append(
+                    "protected dialogue occurrence count mismatch in dialogue blocks: "
+                    f"{literal!r} expected {expected_count}, found {count}"
+                )
+        for literal in actual_counts:
+            if literal not in required_counts:
+                errors.append(f"unregistered dialogue literal in final prompt: {literal!r}")
+    return errors
+
+
 def _shot_errors(text: str, duration_seconds: Any) -> list[str]:
     errors: list[str] = []
     shots: list[tuple[int, float | None, int]] = []
@@ -511,6 +562,7 @@ def validate_prompt(
     duration_seconds: Any = None,
     allowed_labels: Any = None,
     preserved_literals: Iterable[Any] | None = None,
+    protected_dialogues: Iterable[Any] | None = None,
     **kwargs: Any,
 ) -> ValidationResult:
     """Clean and statically validate a MiniMax H3 prompt.
@@ -557,6 +609,7 @@ def validate_prompt(
     expected_sections = _section_order_for(normalized_mode)
     section_spans, section_errors = _section_spans(cleaned, expected_sections)
     errors.extend(section_errors)
+    errors.extend(_unknown_heading_errors(cleaned, expected_sections))
     errors.extend(_alignment_errors(cleaned, normalized_mode, duration_seconds, section_spans))
 
     # Build a registry from all common keyword spellings.  ``allowed_labels``
@@ -575,8 +628,10 @@ def validate_prompt(
     errors.extend(_reference_errors(cleaned, normalized_mode, registry, section_spans))
     errors.extend(_taxonomy_errors(cleaned, normalized_mode, section_spans))
     main_section = "detailed_description" if normalized_mode == REF_MODE else "integrated_multimodal_description"
-    main_body = next((item[3] for item in section_spans if item[0] == main_section), "")
+    main_span = next((item for item in section_spans if item[0] == main_section), None)
+    main_body = main_span[3] if main_span else ""
     errors.extend(_shot_errors(main_body, duration_seconds))
+    errors.extend(_dialogue_errors(cleaned, main_span, protected_dialogues))
 
     literals = preserved_literals
     if literals is None:

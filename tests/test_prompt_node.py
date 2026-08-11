@@ -5,6 +5,7 @@ from ComfyUI_JR_MiniMaxH3Node.nodes.h3_openai_prompt_optimizer import (
     _system_prompt,
     _user_prompt,
 )
+from h3_semantic_helpers import ref_semantic
 
 
 def _args(**overrides):
@@ -68,15 +69,7 @@ def test_input_types_have_nine_optional_images():
 
 def test_multimodal_structure_has_separators(monkeypatch):
     captured = {}
-    response = """subject_definitions:
-<Subject 1> is a referenced person defined by <Picture 1> and <Picture 2>.
-summary: [reference generation] <Subject 1> performs the requested action.
-retention_analysis:
-<Picture 1>: fully_preserved - appearance source.
-<Picture 2>: fully_preserved - appearance source.
-detailed_description: [Shot 1] <Subject 1> remains visible.
-overall_soundscape: Quiet room tone.
-non_diegetic_music: N/A"""
+    response = ref_semantic(("<Picture 1>", "<Picture 2>"))
     def fake_request(url, payload, *args):
         captured["payload"] = payload
         return {"choices": [{"message": {"content": response}}]}
@@ -95,11 +88,12 @@ non_diegetic_music: N/A"""
 def test_system_prompt_contains_h3_timeline_and_hard_constraints():
     prompt = _system_prompt("Standard", 6, 768, 1152)
     assert "MiniMax H3" in prompt
-    assert "[Shot 1] has no timestamp" in prompt
-    assert "[Shot N] At MM:SS.mmm," in prompt
+    assert "Do not output the final H3 prompt" in prompt
+    assert "Python formats and validates the official output" in prompt
+    assert "Shot headers, timestamps" in prompt
     assert "Duration: 6 seconds" in prompt and "768x1152" in prompt
     assert "user's explicit intent has highest priority" in prompt
-    assert "must never override field names" in prompt
+    assert "must not emit final formatting" in prompt
 
 
 @pytest.mark.parametrize(

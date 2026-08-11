@@ -24,6 +24,8 @@ Node ID：`JR_H3_OpenAICompatiblePromptOptimizer`
 
 输出：`optimized_prompt: STRING`、`original_prompt: STRING`、`status: STRING`、`pip: JR_H3_DIRECTOR_PIPE`
 
+执行契约：OpenAI-compatible 模型只生成严格语义 JSON；Python 按固定 MiniMax-H3 commit `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea` 确定性生成最终 T2VA/I2VA/FL2VA/L2VA/Ref2VA 文本。字段名、section 顺序、Shot 时间、reference 编号、retention enum、对白原文/语言标签/稳定 speaker ID 不由模型自由决定。schema 不合法时最多一次低温结构化修复；formatter 输出再经过严格 validator。
+
 | 输入 | 类型 | 默认值 | 范围或说明 |
 | --- | --- | --- | --- |
 | `prompt` | STRING | 空 | multiline |

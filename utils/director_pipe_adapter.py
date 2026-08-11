@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 
 from .director_pipe import DirectorPipe, validate_director_pipe
+from .h3_prompt_builder import extract_protected_dialogues
 from .h3_reference_registry import ReferenceRegistry
 from .image_conversion import image_batch_to_jpeg_data_urls
 
@@ -20,6 +21,8 @@ class DirectorOptimizerContext:
     has_first_frame: bool
     has_last_frame: bool
     reference_image_count: int
+    shot_starts: tuple[float, ...]
+    protected_dialogues: tuple[str, ...]
 
 
 def _media_instruction(record) -> str:
@@ -80,6 +83,12 @@ def pipe_to_optimizer_context(pipe: DirectorPipe, image_send_size: int) -> Direc
 
     reference_text = "\n".join(instructions)
     registry.validate_references(reference_text)
+    ordered_shots = sorted(pipe.shots, key=lambda item: (item.start, item.end, item.id))
+    protected_dialogues = tuple(
+        literal
+        for shot in ordered_shots
+        for literal in extract_protected_dialogues(f"{shot.direction}\n{shot.notes}")
+    )
     return DirectorOptimizerContext(
         original_prompt=pipe.compiled_director_prompt,
         duration_seconds=pipe.timeline.duration_seconds,
@@ -89,6 +98,8 @@ def pipe_to_optimizer_context(pipe: DirectorPipe, image_send_size: int) -> Direc
         has_first_frame=has_first,
         has_last_frame=has_last,
         reference_image_count=reference_images,
+        shot_starts=tuple(shot.start for shot in ordered_shots),
+        protected_dialogues=protected_dialogues,
     )
 
 

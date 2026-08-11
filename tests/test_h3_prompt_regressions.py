@@ -10,6 +10,7 @@ from ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official import (
     JR_H3_OpenAICompatiblePromptOptimizer,
 )
 from ComfyUI_JR_MiniMaxH3Node.utils.openai_compat import OpenAICompatError, normalize_api_urls
+from h3_semantic_helpers import base_semantic
 
 
 def _legacy_args(**overrides: object) -> dict[str, object]:
@@ -42,11 +43,7 @@ def _valid_t2va_response() -> dict[str, object]:
         "choices": [
             {
                 "message": {
-                    "content": (
-                        "integrated_multimodal_description: [Shot 1] A paper boat crosses the pool.\n"
-                        "overall_soundscape: Water moves softly.\n"
-                        "non_diegetic_music: N/A"
-                    )
+                    "content": base_semantic(("A paper boat crosses the pool.",))
                 }
             }
         ]
@@ -169,9 +166,9 @@ def test_validation_error_obeys_fail_mode(
     if fail_mode == "Return Original":
         fallback = call()
         assert fallback[:2] == (_legacy_args()["prompt"], _legacy_args()["prompt"])
-        assert fallback[2].startswith("Fallback: missing required section")
+        assert fallback[2].startswith("Fallback: Semantic response is not valid JSON")
     else:
-        with pytest.raises(ValueError, match="after one format-repair attempt"):
+        with pytest.raises(ValueError, match="after one structured repair"):
             call()
 
 

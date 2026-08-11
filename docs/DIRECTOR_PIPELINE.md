@@ -36,7 +36,7 @@ An empty result across all three stages is an error.
 
 ## Optimizer and Review compatibility
 
-Without a PIPE, Prompt Optimizer retains every legacy input and behavior. Its trailing PIP output is `None`. With a PIPE, the legacy `duration_seconds` widget must exactly equal the PIPE timeline duration; legacy first/last/reference media and reference instructions are conflicts; the normal prompt must be blank or byte-identical to the compiled Director Prompt. Images reuse the existing JPEG data-URL path. Video and audio binary are never sent to the OpenAI-compatible endpoint; only canonical labels, roles, directions and timeline/source text are sent.
+Without a PIPE, Prompt Optimizer retains every legacy input and behavior. Its trailing PIP output is `None`. With a PIPE, the legacy `duration_seconds` widget must exactly equal the PIPE timeline duration; legacy first/last/reference media and reference instructions are conflicts; the normal prompt must be blank or byte-identical to the compiled Director Prompt. Images reuse the existing JPEG data-URL path. Video and audio binary are never sent to the OpenAI-compatible endpoint; only canonical labels, roles, directions and timeline/source text are sent. The endpoint returns semantic JSON only; Python uses authoritative PIPE timing/registry data to produce and validate the final official H3 text.
 
 Prompt Review also retains STRING-only operation. With a PIPE, the review source is `optimized_prompt`, falling back to `compiled_director_prompt`. A nonblank STRING must match that source exactly. Clicking Next always derives P2, even when the user does not edit the text. Timeout, Stop, interruption, active-browser checks, refresh recovery, one-time approval and pending-state cleanup remain unchanged.
 

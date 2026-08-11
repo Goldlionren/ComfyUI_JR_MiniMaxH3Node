@@ -10,6 +10,7 @@ from ComfyUI_JR_MiniMaxH3Node.utils.director_state import (
     DEFAULT_DIRECTOR_STATE_JSON,
     director_state_from_dict,
 )
+from h3_semantic_helpers import base_semantic, ref_semantic
 
 
 def _args(**updates):
@@ -90,16 +91,7 @@ def _install(monkeypatch, response, captured):
 
 
 def test_pip_is_authoritative_and_video_audio_are_text_only(monkeypatch):
-    response = (
-        "subject_definitions:\n<Subject 1> is a paper boat from <Picture 1>.\n"
-        "summary: [reference generation] <Subject 1> crosses the water.\n"
-        "retention_analysis:\n"
-        "<Picture 1>: fully_preserved - preserve the paper texture.\n"
-        "<Video 1>: partially_preserved - use its motion rhythm.\n"
-        "<Audio 1>: fully_copy - use the water ambience.\n"
-        "detailed_description: [Shot 1] <Subject 1> crosses the water.\n"
-        "overall_soundscape: Water moves softly.\nnon_diegetic_music: N/A"
-    )
+    response = ref_semantic(("<Picture 1>", "<Video 1>", "<Audio 1>"))
     pipe = _reference_pipe()
     captured = {}
     _install(monkeypatch, response, captured)
@@ -107,12 +99,14 @@ def test_pip_is_authoritative_and_video_audio_are_text_only(monkeypatch):
     optimized, original, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         **_args(pip=pipe)
     )
-    assert optimized == response
+    assert optimized.startswith("subject_definitions:\n<Picture 1> is")
+    assert "<Video 1>: fully_preserved" in optimized
+    assert "<Audio 1>: fully_copy" in optimized
     assert original == pipe.compiled_director_prompt
     assert status == "Success: model=test-model, mode=Ref2VA, repaired=0, source=pip"
     assert pipe.to_persisted() == before
     assert output_pipe is not pipe
-    assert output_pipe.optimized_prompt == response
+    assert output_pipe.optimized_prompt == optimized
     assert output_pipe.reviewed_prompt == ""
     assert output_pipe.runtime_media is pipe.runtime_media
     assert output_pipe.reference_registry is pipe.reference_registry
@@ -125,25 +119,22 @@ def test_pip_is_authoritative_and_video_audio_are_text_only(monkeypatch):
 
 
 def test_first_frame_only_pip_routes_to_i2va(monkeypatch):
-    response = (
-        "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\n"
-        "integrated_multimodal_description: [Shot 1] She turns from <Picture 1>.\n"
-        "overall_soundscape: Quiet room tone.\nnon_diegetic_music: N/A"
-    )
+    response = base_semantic(("She turns from <Picture 1>.",))
     pipe = _first_frame_pipe()
     captured = {}
     _install(monkeypatch, response, captured)
     result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(pip=pipe))
     assert result[2] == "Success: model=test-model, mode=I2VA, repaired=0, source=pip"
-    assert result[3].optimized_prompt == response
+    assert result[3].optimized_prompt == result[0]
+    assert result[0].startswith(
+        "For the target video, at 0.00 seconds into the target video, "
+        "<Picture 1> (from [Shot 1]) is fully referenced."
+    )
     assert sum(item["type"] == "image_url" for item in captured["payload"]["messages"][1]["content"]) == 1
 
 
 def test_empty_media_pip_routes_to_t2va_and_returns_pipe(monkeypatch):
-    response = (
-        "integrated_multimodal_description: [Shot 1] A quiet establishing shot.\n"
-        "overall_soundscape: Quiet room tone.\nnon_diegetic_music: N/A"
-    )
+    response = base_semantic(("A quiet establishing shot.",))
     pipe = build_director_pipe(director_state_from_dict(json.loads(DEFAULT_DIRECTOR_STATE_JSON)))
     captured = {}
     _install(monkeypatch, response, captured)
@@ -151,7 +142,7 @@ def test_empty_media_pip_routes_to_t2va_and_returns_pipe(monkeypatch):
         **_args(pip=pipe, duration_seconds=10)
     )
     assert result[2] == "Success: model=test-model, mode=T2VA, repaired=0, source=pip"
-    assert result[3].optimized_prompt == response
+    assert result[3].optimized_prompt == result[0]
     assert all(item["type"] != "image_url" for item in captured["payload"]["messages"][1]["content"])
 
 

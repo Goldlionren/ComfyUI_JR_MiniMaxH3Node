@@ -12,3 +12,13 @@ __pycache__/
 *.avi
 *.safetensors
 test-output/
+
+# MiniMax H3 prompt-writing prose is kept local for spec verification only.
+# Redistribution rights are not assumed; commit SOURCE.md and hashes instead.
+specs/minimax_h3_prompt/*/SKILL.md
+specs/minimax_h3_prompt/*/references/*.txt
+
+# MiniMax H3 prompt-writing prose is kept local for spec verification only.
+# Redistribution rights are not assumed; commit SOURCE.md and hashes instead.
+specs/minimax_h3_prompt/*/SKILL.md
+specs/minimax_h3_prompt/*/references/*.txt

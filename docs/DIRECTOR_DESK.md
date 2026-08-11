@@ -71,7 +71,7 @@ The compiler builds one canonical registry:
 
 First Frame sorts first, Last Frame second, then Reference Images follow stable creation order and item ID. Display lane placement and array rendering order never change labels. Adding/removing a media item can legitimately recompile the registry; the STRING output, PIP registry, optimizer view and native conditioning input order always use the same result.
 
-The raw compiled text contains the fixed sections `GLOBAL DIRECTION`, `REFERENCE MEDIA`, `TIMELINE` and `END STATE`. It is a Director Prompt, not the final strict H3 response. Prompt Optimizer remains the only component that selects H3 mode, calls the OpenAI-compatible endpoint, validates output and performs at most one format-only repair.
+The raw compiled text contains the fixed sections `GLOBAL DIRECTION`, `REFERENCE MEDIA`, `TIMELINE` and `END STATE`. It is a Director Prompt, not the final strict H3 response. Prompt Optimizer remains the only component that selects H3 mode and calls the OpenAI-compatible endpoint. The endpoint returns semantic JSON; Python performs at most one structured repair, then deterministically formats and validates the final official H3 text.
 
 ## PIP schema and persistence boundary
 

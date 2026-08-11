@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.8.0
+
+- Replaced free-form final H3 text generation with a strict semantic JSON contract and one optional low-temperature structured repair.
+- Added deterministic official Base-family and Ref2VA formatters pinned to MiniMax-H3 commit `8d8824efaf94586c0cc9ac7ad8d0723d4d6420ea`.
+- Made Python authoritative for section names/order, alignment preambles, Shot numbering/timestamps, protected dialogue literals/language tags/stable speaker IDs, reference order and retention taxonomy.
+- Strengthened final validation for unknown headings, dialogue syntax and section ownership while preserving legacy inputs, four outputs and immutable PIPE derivation.
+- Recorded the fixed source paths and SHA256 values without redistributing upstream guide prose because its documentation license terms are not safely generalizable.
+
 ## 0.7.1
 
 - Fixed Director Inspector edits being discarded when the user clicked or dragged a timeline item before the browser emitted the input's blur/change event.
