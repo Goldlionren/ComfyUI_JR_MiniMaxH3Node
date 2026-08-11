@@ -2,7 +2,7 @@
 
 面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 11 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.8.1`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.8.2`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 

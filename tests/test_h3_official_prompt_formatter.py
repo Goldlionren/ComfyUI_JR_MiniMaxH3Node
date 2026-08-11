@@ -215,6 +215,65 @@ def test_audio_and_visible_retention_taxonomies_are_not_interchangeable():
         )
 
 
+@pytest.mark.parametrize(
+    ("label", "alias_name", "alias_value", "irrelevant_name", "irrelevant_value"),
+    [
+        ("<Picture 1>", "visible_retention", "fully_preserved", "audio_retention", "fully_copy"),
+        ("<Video 1>", "visible_retention", "partially_preserved", "audio_retention", "reference"),
+        ("<Audio 1>", "audio_retention", "reference", "visible_retention", "weak_reference"),
+    ],
+)
+def test_known_reference_aliases_are_normalized_by_media_family(
+    label, alias_name, alias_value, irrelevant_name, irrelevant_value
+):
+    raw = json.loads(ref_semantic((label,)))
+    reference = raw["references"][0]
+    reference["reference_label"] = reference.pop("label")
+    reference.pop("retention")
+    reference[alias_name] = alias_value
+    reference[irrelevant_name] = irrelevant_value
+
+    semantic = parse_semantic_response(
+        json.dumps(raw), mode="Ref2VA", allowed_labels=(label,)
+    )
+
+    assert semantic.references[0].label == label
+    assert semantic.references[0].retention == alias_value
+
+
+@pytest.mark.parametrize(
+    ("updates", "match"),
+    [
+        (
+            {"reference_label": "<Picture 2>"},
+            "conflicting values for label and reference_label",
+        ),
+        (
+            {"visible_retention": "partially_preserved"},
+            "conflicting values for retention and visible_retention",
+        ),
+    ],
+)
+def test_known_reference_alias_conflicts_are_rejected(updates, match):
+    raw = json.loads(ref_semantic(("<Picture 1>",)))
+    raw["references"][0].update(updates)
+
+    with pytest.raises(H3SemanticError, match=match):
+        parse_semantic_response(
+            json.dumps(raw), mode="Ref2VA", allowed_labels=("<Picture 1>",)
+        )
+
+
+def test_unrelated_unknown_reference_field_remains_rejected():
+    raw = json.loads(ref_semantic(("<Picture 1>",)))
+    raw["references"][0]["made_up_field"] = "value"
+
+    with pytest.raises(H3SemanticError, match="unknown field.*made_up_field"):
+        parse_semantic_response(
+            json.dumps(raw), mode="Ref2VA", allowed_labels=("<Picture 1>",)
+        )
+
+
 def test_formatter_rejects_missing_later_timing_without_director_authority():
     semantic = parse_semantic_response(
         base_semantic(("First.", "Second."), starts=(0, None)), mode="T2VA"

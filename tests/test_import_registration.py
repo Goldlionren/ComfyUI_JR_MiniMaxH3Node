@@ -19,7 +19,7 @@ def test_root_import_and_exact_registration(package_name):
         name.startswith(("JR MiniMax H3", "JR H3")) or name == "H3 Unified Acceleration"
         for name in package.NODE_DISPLAY_NAME_MAPPINGS.values()
     )
-    assert package.__version__ == "0.8.1"
+    assert package.__version__ == "0.8.2"
     assert package.WEB_DIRECTORY == "./js"
 
 

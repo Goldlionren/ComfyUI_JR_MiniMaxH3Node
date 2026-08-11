@@ -149,8 +149,52 @@ def _parse_shot(value: Any, index: int) -> SemanticShot:
     )
 
 
+def _normalize_reference_aliases(value: Any, index: int) -> Any:
+    """Normalize only known model-produced reference aliases.
+
+    The formatter contract always uses ``label`` and ``retention``. Some
+    OpenAI-compatible models nevertheless expand those names to
+    ``reference_label`` plus family-specific retention fields. Accepting that
+    narrow, deterministic spelling variation is safe; conflicting canonical
+    and aliased values remain an error.
+    """
+
+    if not isinstance(value, dict):
+        return value
+    field = f"references[{index}]"
+    normalized = dict(value)
+
+    if "reference_label" in normalized:
+        alias = normalized.pop("reference_label")
+        if "label" in normalized and normalized["label"] != alias:
+            raise H3SemanticError(
+                f"{field} has conflicting values for label and reference_label."
+            )
+        normalized.setdefault("label", alias)
+
+    label = normalized.get("label")
+    match = _LABEL_RE.fullmatch(label) if isinstance(label, str) else None
+    relevant_alias = "audio_retention" if match and match.group(1) == "Audio" else "visible_retention"
+    irrelevant_alias = "visible_retention" if relevant_alias == "audio_retention" else "audio_retention"
+
+    if relevant_alias in normalized:
+        alias = normalized.pop(relevant_alias)
+        if "retention" in normalized and normalized["retention"] != alias:
+            raise H3SemanticError(
+                f"{field} has conflicting values for retention and {relevant_alias}."
+            )
+        normalized.setdefault("retention", alias)
+
+    # Models sometimes emit both family-specific fields from a generic JSON
+    # template. The field for the other media family is inapplicable, so it is
+    # discarded rather than treated as a semantic value or an unknown field.
+    normalized.pop(irrelevant_alias, None)
+    return normalized
+
+
 def _parse_reference(value: Any, index: int) -> SemanticReference:
     field = f"references[{index}]"
+    value = _normalize_reference_aliases(value, index)
     data = _object(value, field, {"label", "definition", "retention", "retention_detail"})
     label = _text(data.get("label"), f"{field}.label")
     match = _LABEL_RE.fullmatch(label)

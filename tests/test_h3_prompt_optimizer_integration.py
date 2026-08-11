@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import torch
 from ComfyUI_JR_MiniMaxH3Node.nodes.h3_openai_prompt_optimizer import (
@@ -113,6 +115,24 @@ def test_reference_instruction_registers_video_without_binary_upload(monkeypatch
     payload = captured["calls"][0]
     assert all(item["type"] != "image_url" for item in payload["messages"][1]["content"])
     assert "data:video" not in str(payload)
+
+
+def test_reference_aliases_are_normalized_before_optimizer_validation(monkeypatch):
+    raw = json.loads(ref_semantic(("<Picture 1>",)))
+    reference = raw["references"][0]
+    reference["reference_label"] = reference.pop("label")
+    reference["visible_retention"] = reference.pop("retention")
+    reference["audio_retention"] = "fully_copy"
+    captured = {}
+    _install_responses(monkeypatch, json.dumps(raw), captured)
+
+    optimized, _, status, _ = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(ref_image_1=torch.zeros(1, 8, 8, 3))
+    )
+
+    assert "<Picture 1>: fully_preserved" in optimized
+    assert status == "Success: model=test-model, mode=Ref2VA, repaired=0"
+    assert len(captured["calls"]) == 1
 
 
 def test_dialogue_is_inserted_byte_exactly_once_with_deterministic_language_and_speaker(monkeypatch):

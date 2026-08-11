@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.2
+
+- Added deterministic normalization for the known semantic reference aliases `reference_label`, `visible_retention`, and `audio_retention` before strict validation.
+- Added conflict detection so canonical and aliased reference fields can never silently overwrite different values; unrelated unknown fields remain rejected.
+- Clarified the model contract that every reference object must use the canonical `label` and `retention` property names.
+
 ## 0.8.1
 
 - Tightened Prompt Optimizer into a closed-world faithful rewrite: Director facts and directly visible reference facts are authoritative, creative profiles cannot invent narrative/action/emotion details, and speculative or alternative semantic prose is rejected before deterministic formatting.
