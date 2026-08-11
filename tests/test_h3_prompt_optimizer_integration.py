@@ -147,6 +147,9 @@ def test_one_low_temperature_structured_repair_can_recover(monkeypatch):
     assert repair["top_p"] == 1.0
     assert "reasoning_effort" not in repair
     assert "constrained semantic JSON repair" in repair["messages"][0]["content"]
+    assert "Preserve only candidate semantics supported by the authoritative source request" in repair["messages"][0]["content"]
+    assert "Authoritative source request and protected-dialogue mapping" in repair["messages"][1]["content"]
+    assert "A paper boat moves across a shallow pool." in repair["messages"][1]["content"]
     assert "Candidate semantic response:\nnot json" in repair["messages"][1]["content"]
 
 

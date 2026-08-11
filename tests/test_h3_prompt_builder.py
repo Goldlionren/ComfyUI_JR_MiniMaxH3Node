@@ -61,6 +61,16 @@ def test_system_prompt_carries_authoritative_shot_starts_and_reference_order():
     assert "Allowed reference labels in exact order: <Picture 1>, <Video 1>, <Audio 1>" in prompt
 
 
+def test_system_prompt_enforces_closed_world_faithful_rewrite():
+    prompt = build_system_prompt(_context(profile="Cinematic Drama"))
+    assert "Closed-world faithful rewrite contract" in prompt
+    assert "must be traceable to that source" in prompt
+    assert "does not prove that a teacher is present" in prompt
+    assert "omit it instead of completing it creatively" in prompt
+    assert "The profile controls emphasis and prose style only" in prompt
+    assert "must not create new story facts" in prompt
+
+
 def test_extract_preserved_and_dialogue_literals_keep_unicode_in_order():
     text = '牌子写着“JR-42”，女孩说：“介绍一下 MiniMax H3”。 He says "Keep this exact."'
     assert extract_preserved_literals(text) == (
@@ -80,6 +90,19 @@ def test_existing_dialogue_block_is_protected():
     assert extract_preserved_literals(text) == ("请介绍一下",)
 
 
+@pytest.mark.parametrize(
+    ("source", "literal"),
+    (
+        ('女孩轻声呻吟“这个感觉对吗？”', "这个感觉对吗？"),
+        ('女孩低语“请再看一下”', "请再看一下"),
+        ('She murmurs "Is this right?"', "Is this right?"),
+    ),
+)
+def test_vocalized_quoted_lines_are_protected_dialogue(source, literal):
+    assert extract_protected_dialogues(source) == (literal,)
+    assert extract_preserved_literals(source) == (literal,)
+
+
 def test_user_prompt_carries_original_and_indexed_dialogue_without_requesting_final_text():
     context = _context(protected_dialogues=("介绍一下 MiniMax H3",))
     result = build_user_prompt(context, extract_preserved_literals(context.original_prompt))
@@ -87,6 +110,7 @@ def test_user_prompt_carries_original_and_indexed_dialogue_without_requesting_fi
     assert "literal_index=1: 介绍一下 MiniMax H3" in result
     assert "do not copy their text into JSON" in result
     assert "Resolved input mode: T2VA" in result
+    assert "Perform a conservative rewrite, not a creative continuation" in result
 
 
 def test_registry_serialization_is_duck_typed():

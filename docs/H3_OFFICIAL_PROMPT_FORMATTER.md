@@ -23,6 +23,10 @@ Director PIPE or legacy inputs
 
 The model decides scene semantics: action, camera, atmosphere, sound intent, delivery and reference relationships. Python owns every structural token: section title and order, mode alignment preamble, Shot number and timestamp, reference label/order, retention enum, speaker ID, language tag, protected dialogue text and blank-line layout. Runtime behavior never reads GitHub or parses the upstream natural-language files.
 
+The semantic rewrite is closed-world and conservative. Director direction/notes/timing, explicit user instructions, registered reference relationships and facts directly visible in supplied reference images are the complete source of truth. The selected creative profile may change emphasis and wording, but it must not invent relationships, calls, motives, actions, poses, gestures, expressions, emotions, prop behavior, camera moves or audio events. Dialogue meaning is not evidence for an off-screen participant or story context. Unspecified details are omitted; speculative and alternative wording is rejected by the semantic schema and may trigger the single structured repair.
+
+Reference images may contribute directly observable identity, clothing, environment and visible-prop facts. Initial pose and prop state are not assumed to persist across later shots unless the Director requires them. Retention prose must remain consistent with every generated Shot.
+
 ## Mode contracts
 
 - `T2VA`: Base three-section format without an alignment preamble.
@@ -41,6 +45,6 @@ Ref2VA semantic JSON must return every registered `<Picture N>`, `<Video N>` and
 
 ## Repair and compatibility
 
-Malformed semantic JSON receives at most one `temperature=0.1` structured repair request. Python never asks the repair call to rewrite the final H3 text. A formatter/validator failure is treated as a deterministic data or code error and follows the existing `Return Original` / `Stop Workflow` behavior.
+Malformed semantic JSON receives at most one `temperature=0.1` structured repair request. The repair request repeats the authoritative Director/user source and protected-dialogue mapping; it may retain only candidate semantics supported by that source and must delete unsupported inventions instead of replacing them creatively. Python never asks the repair call to rewrite the final H3 text. A formatter/validator failure is treated as a deterministic data or code error and follows the existing `Return Original` / `Stop Workflow` behavior.
 
 The node ID, legacy inputs, mode routing, image-data URL behavior, status shape and four outputs are unchanged. With a PIPE, only `optimized_prompt` is derived; timeline, shots, registry and runtime media remain unchanged.

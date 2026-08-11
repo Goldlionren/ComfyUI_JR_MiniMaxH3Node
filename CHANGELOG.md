@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.1
+
+- Tightened Prompt Optimizer into a closed-world faithful rewrite: Director facts and directly visible reference facts are authoritative, creative profiles cannot invent narrative/action/emotion details, and speculative or alternative semantic prose is rejected before deterministic formatting.
+- Expanded protected-dialogue detection to vocalized lines such as Chinese `呻吟` / `低语` and English `murmurs` / `moans`, preventing valid Director dialogue from falling back merely because it did not use “说”.
+- Made the single semantic repair repeat the authoritative source request and dialogue mapping, so it removes unsupported inventions instead of repairing against the candidate alone.
+
 ## 0.8.0
 
 - Replaced free-form final H3 text generation with a strict semantic JSON contract and one optional low-temperature structured repair.

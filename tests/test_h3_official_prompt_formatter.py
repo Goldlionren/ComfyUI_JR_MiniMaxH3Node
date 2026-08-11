@@ -134,6 +134,21 @@ def test_protected_dialogue_cannot_be_copied_into_semantic_prose():
         )
 
 
+@pytest.mark.parametrize(
+    "description",
+    (
+        "She likely starts a video call.",
+        "She touches her hair or arches her back.",
+        "She appears to wait for her teacher.",
+        "She perhaps blushes.",
+    ),
+)
+def test_semantic_prose_rejects_speculation_and_alternative_actions(description):
+    response = base_semantic((description,))
+    with pytest.raises(H3SemanticError, match="must be decisive"):
+        parse_semantic_response(response, mode="T2VA")
+
+
 def test_repeated_identical_dialogue_occurrences_are_preserved_by_index():
     literal = "好"
     dialogues = (

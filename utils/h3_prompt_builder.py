@@ -82,7 +82,9 @@ def extract_protected_dialogues(text: str) -> tuple[str, ...]:
         if match.group(1):
             matches.append((match.start(1), match.group(1)))
     speech_hint = re.compile(
-        r"(?:dialogue|spoken line|says?|asks?|repl(?:y|ies)|shouts?|whispers?|台词|对白|说|问|喊)",
+        r"(?:dialogue|spoken line|says?|asks?|repl(?:y|ies)|shouts?|whispers?|"
+        r"groans?|moans?|murmurs?|mutters?|sings?|chants?|"
+        r"台词|对白|说|问|喊|回答|回应|低语|耳语|呢喃|喃喃|嘟囔|呻吟|唱|念|叫)",
         re.I,
     )
     for pattern in _QUOTED_PATTERNS:
@@ -183,6 +185,15 @@ Return one JSON object containing audiovisual semantics for a MiniMax H3 prompt.
 Authority and preservation
 The user's explicit intent has highest priority. Do not invent or rewrite dialogue. Protected dialogue is supplied by index; place every literal_index exactly once in a semantic shot and provide only speaker_key, speaker_description, and delivery. Python inserts the byte-exact text, language tag, and stable speaker ID.
 
+Closed-world faithful rewrite contract
+- Treat the original request, Director shot direction/notes/timing, registered reference relationships, and facts directly visible in supplied reference images as the complete source of truth.
+- Every concrete action, pose, gesture, gaze, facial expression, emotion, relationship, prop interaction, setting change, camera move, sound, and music cue must be traceable to that source. Do not add, replace, intensify, or dramatize one.
+- Dialogue meaning must not be used to invent an off-screen participant, relationship, video-call context, motivation, or story goal. For example, a greeting to a teacher does not prove that a teacher is present or that a video call is occurring.
+- Reference images may supply directly observable stable appearance, clothing, environment, and visible-prop facts. Do not assume an initial pose or prop state persists across later shots unless the Director explicitly requires it.
+- A stated action may receive only the minimal physical consequence needed to make that same action readable; it must not gain a second action. If a detail is unspecified or ambiguous, omit it instead of completing it creatively.
+- Use one definite action, not alternatives or speculation. Avoid "or", "either", "likely", "possibly", "perhaps", "maybe", "appears to", and "seems to" in semantic prose.
+- Summary, reference retention, every shot, soundscape, and music must agree. Never claim that a pose, prop, or state is preserved throughout when later shots do not preserve it.
+
 Pinned official H3 contract (Python-owned)
 Resolved mode: {mode}
 Final field order (informational only; never emit these headings): {section_contract}
@@ -196,7 +207,7 @@ Each shot object has description, start_seconds, and dialogues. A dialogue item 
 JR creative director layer
 Selected profile: {context.profile}
 Direction: {JR_DIRECTOR_PROFILES[context.profile]}
-This layer may improve staging, performance, motion, and continuity, but it must not emit final formatting or override timing, labels, user intent, or protected literals.
+The profile controls emphasis and prose style only. It may clarify staging, performance, motion, and continuity already present in the source, but it must not create new story facts, actions, emotions, poses, relationships, or prop behavior. It must not emit final formatting or override timing, labels, user intent, or protected literals.
 
 Reference registry
 {context.registry_text}
@@ -231,6 +242,9 @@ Verbatim literals detected in the user request:
 
 Protected dialogue literals (reference by literal_index; do not copy their text into JSON):
 {dialogues}
+
+Fidelity reminder:
+Perform a conservative rewrite, not a creative continuation. Keep every Director action and note authoritative; omit unspecified details and do not infer relationships, calls, motives, gestures, emotions, or alternative actions.
 
 Original user request:
 {context.original_prompt}"""

@@ -151,11 +151,17 @@ def _validation_summary(validation):
 
 def _repair_payload(*, model, context, candidate, error, max_tokens):
     repair_system = f"""You perform one constrained semantic JSON repair.
-Output exactly one JSON object. Do not output a final H3 prompt, Markdown, analysis, section headings, Shot headers, timestamps, speaker IDs, dialogue text, or reference labels not present in the contract. Preserve the candidate's semantic intent. Fix only JSON/schema errors. Python owns all final MiniMax H3 formatting.
+Output exactly one JSON object. Do not output a final H3 prompt, Markdown, analysis, section headings, Shot headers, timestamps, speaker IDs, dialogue text, or reference labels not present in the contract. Preserve only candidate semantics supported by the authoritative source request. Delete unsupported inventions and fix the reported JSON/schema error without adding replacement details. Python owns all final MiniMax H3 formatting.
 
 Authoritative semantic contract:
 {build_system_prompt(context)}"""
+    source_request = build_user_prompt(
+        context, extract_preserved_literals(context.original_prompt)
+    )
     repair_user = f"""Repair this semantic JSON candidate once.
+
+Authoritative source request and protected-dialogue mapping:
+{source_request}
 
 Validation error:
 - {error}

@@ -2,7 +2,7 @@
 
 面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 11 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.8.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.8.1`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -159,6 +159,7 @@ Prompt Optimizer 是本地 H3 Prompt/Context 预处理器，不是 MiniMax 托�
 - 接受服务根地址、`/v1`、`/v1/models` 或完整 `/v1/chat/completions` 地址。
 - `model` 留空时，仅在执行阶段查询 `/v1/models`。
 - 语义 JSON 初次 schema 校验失败时最多进行 **一次** `temperature=0.1` 的结构化修复；随后 Python formatter 生成最终文本并运行严格 validator。
+- 使用 closed-world 忠实改写规则：Director direction/notes/timing、显式用户要求和参考图中可直接观察的事实是完整真值源；profile 只能改变表达重点，不能新增人物关系、剧情动机、动作、姿势、表情、道具行为或音画事件。未指定内容必须省略，不能用 `or`、`likely`、`perhaps` 等备选或猜测表达补全。
 
 成功状态：
 

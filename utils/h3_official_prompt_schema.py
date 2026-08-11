@@ -22,6 +22,11 @@ TASK_TYPES = (
 )
 _LABEL_RE = re.compile(r"^<(Subject|Picture|Video|Audio) ([1-9]\d*)>$")
 _FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.I | re.S)
+_SPECULATIVE_PROSE_RE = re.compile(
+    r"\b(?:or|either|likely|possibly|perhaps|maybe|apparently)\b|"
+    r"\b(?:appears?|seems?)\s+to\b",
+    re.I,
+)
 
 
 class H3SemanticError(ValueError):
@@ -92,6 +97,10 @@ def _plain_semantic_text(value: Any, field: str, *, allow_empty: bool = False) -
     result = _text(value, field, allow_empty=allow_empty)
     if "<d>" in result.casefold() or "</d>" in result.casefold():
         raise H3SemanticError(f"{field} must contain semantics only, not final <d> formatting.")
+    if _SPECULATIVE_PROSE_RE.search(result):
+        raise H3SemanticError(
+            f"{field} must be decisive and must not contain alternatives or speculative wording."
+        )
     return result
 
 
