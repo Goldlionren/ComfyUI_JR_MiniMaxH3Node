@@ -63,7 +63,7 @@ def test_legacy_optimize_kwargs_use_defaults_without_new_arguments(monkeypatch: 
         return _valid_t2va_response()
 
     monkeypatch.setattr(optimizer_module, "request_chat", fake_request)
-    optimized, original, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+    optimized, original, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         **_legacy_args(enable=True)
     )
 
@@ -71,9 +71,12 @@ def test_legacy_optimize_kwargs_use_defaults_without_new_arguments(monkeypatch: 
     assert original == _legacy_args()["prompt"]
     assert "mode=T2VA" in status
     assert calls == ["http://127.0.0.1:10000/v1/chat/completions"]
+    assert output_pipe is None
 
 
-def test_disabled_legacy_call_returns_three_outputs_without_http(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_disabled_legacy_call_preserves_three_string_outputs_and_adds_empty_pipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
 
     def fail_http(*args: object, **kwargs: object) -> object:
@@ -90,6 +93,7 @@ def test_disabled_legacy_call_returns_three_outputs_without_http(monkeypatch: py
         "A paper boat crosses a quiet pool.",
         "A paper boat crosses a quiet pool.",
         "Disabled: original prompt returned",
+        None,
     )
     assert calls == []
 
@@ -128,7 +132,7 @@ def test_optimizer_node_metadata_and_registration_are_stable() -> None:
         package.NODE_DISPLAY_NAME_MAPPINGS["JR_H3_OpenAICompatiblePromptOptimizer"]
         == "JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)"
     )
-    assert node.RETURN_TYPES == ("STRING", "STRING", "STRING")
+    assert node.RETURN_TYPES == ("STRING", "STRING", "STRING", "JR_H3_DIRECTOR_PIPE")
     assert node.FUNCTION == "optimize"
     assert node.CATEGORY == "JR MiniMax H3/Prompt"
 

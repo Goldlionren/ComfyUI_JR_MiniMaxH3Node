@@ -15,7 +15,7 @@ from ComfyUI_JR_MiniMaxH3Node.utils.director_state import (
 def _args(**updates):
     values = dict(
         prompt="", enable=True, api_base_url="http://127.0.0.1:10000", model="test-model",
-        prompt_profile="Standard", duration_seconds=60, target_width=768, target_height=1152,
+        prompt_profile="Standard", duration_seconds=5, target_width=768, target_height=1152,
         temperature=0.0, top_p=1.0, max_tokens=1800, timeout_seconds=2,
         image_send_size=768, fail_mode="Stop Workflow", disable_reasoning=True,
         h3_input_mode="Auto", reference_instructions="", api_key="",
@@ -104,13 +104,18 @@ def test_pip_is_authoritative_and_video_audio_are_text_only(monkeypatch):
     captured = {}
     _install(monkeypatch, response, captured)
     before = pipe.to_persisted()
-    optimized, original, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+    optimized, original, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         **_args(pip=pipe)
     )
     assert optimized == response
     assert original == pipe.compiled_director_prompt
     assert status == "Success: model=test-model, mode=Ref2VA, repaired=0, source=pip"
     assert pipe.to_persisted() == before
+    assert output_pipe is not pipe
+    assert output_pipe.optimized_prompt == response
+    assert output_pipe.reviewed_prompt == ""
+    assert output_pipe.runtime_media is pipe.runtime_media
+    assert output_pipe.reference_registry is pipe.reference_registry
     payload = captured["payload"]
     assert "Target duration: 5 seconds" in payload["messages"][1]["content"][0]["text"]
     assert sum(item["type"] == "image_url" for item in payload["messages"][1]["content"]) == 1
@@ -130,7 +135,24 @@ def test_first_frame_only_pip_routes_to_i2va(monkeypatch):
     _install(monkeypatch, response, captured)
     result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(pip=pipe))
     assert result[2] == "Success: model=test-model, mode=I2VA, repaired=0, source=pip"
+    assert result[3].optimized_prompt == response
     assert sum(item["type"] == "image_url" for item in captured["payload"]["messages"][1]["content"]) == 1
+
+
+def test_empty_media_pip_routes_to_t2va_and_returns_pipe(monkeypatch):
+    response = (
+        "integrated_multimodal_description: [Shot 1] A quiet establishing shot.\n"
+        "overall_soundscape: Quiet room tone.\nnon_diegetic_music: N/A"
+    )
+    pipe = build_director_pipe(director_state_from_dict(json.loads(DEFAULT_DIRECTOR_STATE_JSON)))
+    captured = {}
+    _install(monkeypatch, response, captured)
+    result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(pip=pipe, duration_seconds=10)
+    )
+    assert result[2] == "Success: model=test-model, mode=T2VA, repaired=0, source=pip"
+    assert result[3].optimized_prompt == response
+    assert all(item["type"] != "image_url" for item in captured["payload"]["messages"][1]["content"])
 
 
 @pytest.mark.parametrize(
@@ -139,7 +161,9 @@ def test_first_frame_only_pip_routes_to_i2va(monkeypatch):
         {"prompt": "different prompt"},
         {"reference_instructions": "<Video 9> legacy"},
         {"first_frame": torch.zeros(1, 8, 8, 3)},
+        {"last_frame": torch.zeros(1, 8, 8, 3)},
         {"ref_image_1": torch.zeros(1, 8, 8, 3)},
+        {"duration_seconds": 6},
     ],
 )
 def test_pip_legacy_conflicts_fail_before_network(monkeypatch, conflict):
@@ -162,6 +186,7 @@ def test_pip_return_original_fallback_returns_director_prompt(monkeypatch):
     )
     assert result[0] == result[1] == pipe.compiled_director_prompt
     assert result[2].startswith("Fallback: ValueError: Director PIP conflict")
+    assert result[3] is pipe
 
 
 def test_disabled_pip_returns_compiled_prompt_without_network(monkeypatch):
@@ -171,7 +196,7 @@ def test_disabled_pip_returns_compiled_prompt_without_network(monkeypatch):
     )
     pipe = _reference_pipe()
     result = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(pip=pipe, enable=False))
-    assert result == (pipe.compiled_director_prompt, pipe.compiled_director_prompt, "Disabled: original prompt returned")
+    assert result == (pipe.compiled_director_prompt, pipe.compiled_director_prompt, "Disabled: original prompt returned", pipe)
 
 
 def test_pip_input_is_appended_without_changing_legacy_optional_order():

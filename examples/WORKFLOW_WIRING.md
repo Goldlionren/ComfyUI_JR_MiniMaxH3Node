@@ -3,12 +3,14 @@
 ## 提示词审核
 
 ```text
-JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)
-  optimized_prompt -> JR MiniMax H3 Prompt Review & Continue.prompt
-                        reviewed_prompt -> MiniMax H3 文本输入
+JR MiniMax H3 Director Desk.pip
+  -> JR MiniMax H3 Prompt Optimizer.pip
+       pip -> JR MiniMax H3 Prompt Review & Continue.pip
+                pip -> JR MiniMax H3 Directed Video Conditioning.pipe
+                         positive + latent -> H3 sampler chain
 ```
 
-审核节点默认超时 3600 秒，需要发起执行的浏览器在线。审核编辑器不序列化为下一次工作流的 socket 输入。
+STRING 输出仅供监控和调试；PIPE 是主数据总线。审核节点默认超时 3600 秒，需要发起执行的浏览器在线。审核编辑器不序列化为下一次工作流的 socket 输入。
 
 ## Router 与 Adaptive Cache
 

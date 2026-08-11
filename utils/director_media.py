@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from .director_pipe import RuntimeMedia
+from .director_pipe import RuntimeMedia, RuntimeMediaFile
 from .director_state import AssetDescriptor, DirectorState
 
 IMAGE_MAX_BYTES = 128 * 1024 * 1024
@@ -64,7 +64,8 @@ def _file_limit(kind: str) -> int:
 
 def _basic_metadata(asset: AssetDescriptor, path: Path) -> dict[str, Any]:
     try:
-        size = path.stat().st_size
+        stat = path.stat()
+        size = stat.st_size
     except OSError:
         raise DirectorMediaError(f"Director asset metadata is unavailable: {asset.display_name}.") from None
     if size <= 0:
@@ -74,6 +75,7 @@ def _basic_metadata(asset: AssetDescriptor, path: Path) -> dict[str, Any]:
     return {
         "status": "ready",
         "size_bytes": size,
+        "mtime_ns": stat.st_mtime_ns,
         "mime_type": mimetypes.guess_type(asset.filename)[0] or asset.mime_type or "application/octet-stream",
     }
 
@@ -264,7 +266,7 @@ def resolve_runtime_media(state: DirectorState) -> tuple[RuntimeMedia, ...]:
                     )
                 payload = _load_image(path, item.asset)
             else:
-                payload = None
+                payload = RuntimeMediaFile(path=str(path), kind=item.asset.kind)
             cached = (metadata, payload)
             cache[key] = cached
         metadata, payload = cached
@@ -272,7 +274,7 @@ def resolve_runtime_media(state: DirectorState) -> tuple[RuntimeMedia, ...]:
             key: value for key, value in metadata.items()
             if key in {
                 "status", "size_bytes", "mime_type", "duration_seconds", "width", "height",
-                "codec_name", "fps", "sample_rate", "channels",
+                "codec_name", "fps", "sample_rate", "channels", "mtime_ns",
             }
         }
         runtime.append(RuntimeMedia(

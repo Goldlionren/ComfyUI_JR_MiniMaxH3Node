@@ -6,6 +6,7 @@ const PROP_KEY = "jr_h3_director_state";
 const STATE_WIDGET = "director_state_json";
 const SNAP = 0.1;
 const MAX_TIMELINE_SECONDS = 3600;
+const isPointAnchor = (item) => item?.role === "first_frame" || item?.role === "last_frame";
 const instances = new WeakMap();
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value));
@@ -137,14 +138,15 @@ function normalizeState(raw) {
         if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`visual_items[${index}] must be an object.`);
         if (!["image", "video"].includes(item.kind)) throw new Error(`Unsupported visual kind: ${String(item.kind)}.`);
         const kind = item.kind;
-        if (!["reference_image", "first_frame", "reference_video"].includes(item.role)) throw new Error(`Unsupported visual role: ${String(item.role)}.`);
+        if (!["reference_image", "first_frame", "last_frame", "reference_video"].includes(item.role)) throw new Error(`Unsupported visual role: ${String(item.role)}.`);
         const role = item.role;
+        const anchorTime = role === "last_frame" ? duration : 0;
         return {
             id: identifier(item.id, `visual_items[${index}].id`), kind, role,
-            start: role === "first_frame" ? 0 : snap(time(item.start, 0, `visual_items[${index}].start`)),
-            end: role === "first_frame" ? 0 : snap(time(item.end, 0, `visual_items[${index}].end`)),
-            source_in: item.source_in == null ? null : snap(time(item.source_in, 0, `visual_items[${index}].source_in`)),
-            source_out: item.source_out == null ? null : snap(time(item.source_out, 0, `visual_items[${index}].source_out`)),
+            start: isPointAnchor({ role }) ? anchorTime : snap(time(item.start, 0, `visual_items[${index}].start`)),
+            end: isPointAnchor({ role }) ? anchorTime : snap(time(item.end, 0, `visual_items[${index}].end`)),
+            source_in: isPointAnchor({ role }) || item.source_in == null ? null : snap(time(item.source_in, 0, `visual_items[${index}].source_in`)),
+            source_out: isPointAnchor({ role }) || item.source_out == null ? null : snap(time(item.source_out, 0, `visual_items[${index}].source_out`)),
             direction: text(item.direction), notes: text(item.notes),
             registry_order: (() => { const value = finite(item.registry_order, index + 1, `visual_items[${index}].registry_order`); if (!Number.isInteger(value) || value < 0) throw new Error("registry_order must be a non-negative integer."); return value; })(),
             asset: normalizeAsset(item.asset, kind),
@@ -207,13 +209,18 @@ function validateState(state) {
         if (i && item.start < shots[i - 1].end) return `Shots ${shots[i - 1].id} and ${item.id} overlap.`;
     }
     const firstFrames = state.visual_items.filter((item) => item.role === "first_frame");
+    const lastFrames = state.visual_items.filter((item) => item.role === "last_frame");
     if (firstFrames.length > 1) return "Only one First Frame may exist.";
+    if (lastFrames.length > 1) return "Only one Last Frame may exist.";
     if (firstFrames.length && shots[0].start !== 0) return "A First Frame requires the first Shot to begin at 0.0s.";
+    if (lastFrames.length && shots.at(-1).end !== duration) return "A Last Frame requires the final Shot to end at the timeline duration.";
     for (const item of state.visual_items) {
         if (ids.has(item.id)) return `Duplicate item id: ${item.id}`;
         ids.add(item.id);
         if (item.role === "first_frame") {
             if (item.kind !== "image" || item.start !== 0 || item.end !== 0) return "First Frame must be an IMAGE point at 0.0s.";
+        } else if (item.role === "last_frame") {
+            if (item.kind !== "image" || item.start !== duration || item.end !== duration) return "Last Frame must be an IMAGE point at the timeline end.";
         } else {
             const expectedKind = item.role === "reference_video" ? "video" : "image";
             if (item.kind !== expectedKind || item.asset?.kind !== item.kind) return `Role/media type mismatch: ${item.id}`;
@@ -247,7 +254,7 @@ function laneLayout(items, preferredOrder = []) {
     const ends = [];
     const result = new Map();
     for (const item of ordered) {
-        if (item.role === "first_frame") {
+        if (isPointAnchor(item)) {
             result.set(item.id, 0);
             continue;
         }
@@ -256,7 +263,7 @@ function laneLayout(items, preferredOrder = []) {
         ends[lane] = item.end;
         result.set(item.id, lane);
     }
-    return { lanes: Math.max(1, ends.length, items.some((item) => item.role === "first_frame") ? 1 : 0), result };
+    return { lanes: Math.max(1, ends.length, items.some(isPointAnchor) ? 1 : 0), result };
 }
 
 function assetUrl(asset) {
@@ -322,10 +329,11 @@ function updateItem(instance, id, changes) {
     const next = deepClone(instance.state);
     const found = findItem(next, id);
     if (!found) return false;
-    const wasFirstFrame = found.item.role === "first_frame";
+    const wasPointAnchor = isPointAnchor(found.item);
     Object.assign(found.item, changes);
     if (found.item.role === "first_frame") Object.assign(found.item, { start: 0, end: 0, source_in: null, source_out: null });
-    else if (wasFirstFrame && found.item.end <= found.item.start) Object.assign(found.item, { start: 0, end: next.timeline.duration_seconds });
+    else if (found.item.role === "last_frame") Object.assign(found.item, { start: next.timeline.duration_seconds, end: next.timeline.duration_seconds, source_in: null, source_out: null });
+    else if (wasPointAnchor && found.item.end <= found.item.start) Object.assign(found.item, { start: 0, end: next.timeline.duration_seconds });
     return commit(instance, next);
 }
 
@@ -345,6 +353,7 @@ function duplicateItem(instance, id) {
     const next = deepClone(instance.state);
     const found = findItem(next, id);
     if (!found) return;
+    if (isPointAnchor(found.item)) return setStatus(instance, "Frame anchors cannot be duplicated; change the role first.", true);
     const copy = deepClone(found.item);
     copy.id = uid(found.key === "shots" ? "shot" : found.key === "visual_items" ? "visual" : "audio");
     const length = Math.max(SNAP, found.item.end - found.item.start);
@@ -365,7 +374,7 @@ function duplicateItem(instance, id) {
 function splitItem(instance, id) {
     const next = deepClone(instance.state);
     const found = findItem(next, id);
-    if (!found || found.item.role === "first_frame") return;
+    if (!found || isPointAnchor(found.item)) return;
     const midpoint = snap((found.item.start + found.item.end) / 2);
     if (midpoint <= found.item.start || midpoint >= found.item.end) return setStatus(instance, "The item is too short to split at 0.1s precision.", true);
     const second = deepClone(found.item);
@@ -411,7 +420,7 @@ function reorderItem(instance, id, delta) {
 }
 
 function startDrag(instance, event, item, mode) {
-    if (event.button !== 0 || item.role === "first_frame") return;
+    if (event.button !== 0 || isPointAnchor(item)) return;
     event.preventDefault(); event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const before = deepClone(instance.state);
@@ -468,6 +477,7 @@ function startDrag(instance, event, item, mode) {
 
 function itemTitle(item) {
     if (item.role === "first_frame") return `◆ First Frame · ${item.asset.display_name}`;
+    if (item.role === "last_frame") return `◆ Last Frame · ${item.asset.display_name}`;
     if (item.asset) return `${item.role.replaceAll("_", " ")} · ${item.asset.display_name}`;
     return `Shot · ${item.id}`;
 }
@@ -479,16 +489,16 @@ function itemElement(instance, item, lane) {
     element.dataset.itemId = item.id;
     element.title = `${itemTitle(item)}\n${fmt(item.start)}s – ${fmt(item.end)}s`;
     const duration = instance.state.timeline.duration_seconds;
-    if (item.role === "first_frame") {
+    if (isPointAnchor(item)) {
         element.classList.add("point");
-        element.style.left = "0%"; element.style.width = "18px";
+        element.style.left = item.role === "last_frame" ? "calc(100% - 18px)" : "0%"; element.style.width = "18px";
     } else {
         element.style.left = `${item.start / duration * 100}%`;
         element.style.width = `${Math.max(0.4, (item.end - item.start) / duration * 100)}%`;
     }
     element.style.top = `${lane * 34 + 3}px`;
     const label = document.createElement("span"); label.textContent = itemTitle(item); element.append(label);
-    if (item.role !== "first_frame") {
+    if (!isPointAnchor(item)) {
         for (const side of ["start", "end"]) {
             const handle = document.createElement("i"); handle.className = `jr-dd-handle ${side}`;
             handle.addEventListener("pointerdown", (event) => startDrag(instance, event, item, side));
@@ -643,14 +653,14 @@ function renderInspector(instance) {
     if (found.key !== "shots") {
         const select = document.createElement("select");
         const roles = found.key === "visual_items"
-            ? (item.kind === "image" ? ["reference_image", "first_frame"] : ["reference_video"])
+            ? (item.kind === "image" ? ["reference_image", "first_frame", "last_frame"] : ["reference_video"])
             : ["reference_audio", "driving_audio"];
         for (const role of roles) { const option = document.createElement("option"); option.value = role; option.textContent = role.replaceAll("_", " "); select.append(option); }
         select.value = item.role;
         select.addEventListener("change", () => updateItem(instance, item.id, { role: select.value }));
         inspector.append(field("Role", select));
     }
-    if (item.role !== "first_frame") {
+    if (!isPointAnchor(item)) {
         inspector.append(field("Timeline start (s)", numberInput(item.start, (value) => updateItem(instance, item.id, { start: value }))));
         inspector.append(field("Timeline end (s)", numberInput(item.end, (value) => updateItem(instance, item.id, { end: value }), { max: instance.state.timeline.duration_seconds })));
     }
@@ -694,8 +704,9 @@ function showContextMenu(instance, event, item) {
     const action = (label, fn) => menu.append(button(label, () => { close(); fn(); }));
     action("Edit in Inspector", () => selectItem(instance, item.id));
     action("Duplicate", () => duplicateItem(instance, item.id));
-    if (item.role !== "first_frame") action("Split at midpoint", () => splitItem(instance, item.id));
+    if (!isPointAnchor(item)) action("Split at midpoint", () => splitItem(instance, item.id));
     if (item.kind === "image" && item.role !== "first_frame") action("Set as First Frame", () => updateItem(instance, item.id, { role: "first_frame", start: 0, end: 0 }));
+    if (item.kind === "image" && item.role !== "last_frame") action("Set as Last Frame", () => updateItem(instance, item.id, { role: "last_frame", start: instance.state.timeline.duration_seconds, end: instance.state.timeline.duration_seconds }));
     action("Move Up", () => reorderItem(instance, item.id, -1));
     action("Move Down", () => reorderItem(instance, item.id, 1));
     action("Delete", () => deleteItem(instance, item.id));
@@ -853,7 +864,8 @@ function buildPanel(node, stateWidget) {
         const next = deepClone(instance.state); const value = Math.max(SNAP, snap(durationInput.value));
         const previous = next.timeline.duration_seconds; next.timeline.duration_seconds = value;
         for (const item of [...next.shots, ...next.visual_items, ...next.audio_items]) {
-            if (item.role !== "first_frame" && item.end === previous) item.end = value;
+            if (item.role === "last_frame") Object.assign(item, { start: value, end: value });
+            else if (item.role !== "first_frame" && item.end === previous) item.end = value;
         }
         commit(instance, next);
     });

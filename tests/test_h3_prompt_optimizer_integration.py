@@ -91,10 +91,11 @@ def _install_response(monkeypatch, text, captured):
 def test_auto_mode_end_to_end(monkeypatch, expected_mode, inputs, response, expected_labels):
     captured = {}
     _install_response(monkeypatch, response, captured)
-    optimized, original, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(**inputs))
+    optimized, original, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(**inputs))
     assert optimized == response
     assert original == _args()["prompt"]
     assert status == f"Success: model=test-model, mode={expected_mode}, repaired=0"
+    assert output_pipe is None
     content = captured["payload"]["messages"][1]["content"]
     assert [item["text"] for item in content if item["type"] == "text" and item["text"].startswith("[Picture")] == expected_labels
     assert f"Resolved mode: {expected_mode}" in captured["payload"]["messages"][0]["content"]
@@ -155,6 +156,7 @@ def test_one_low_temperature_format_repair_can_recover(monkeypatch):
         repaired,
         original,
         "Success: model=test-model, mode=T2VA, repaired=1",
+        None,
     )
     assert len(calls) == 2
     repair = calls[1]
@@ -188,7 +190,7 @@ def test_repair_shields_and_restores_a_literal_with_inserted_whitespace(monkeypa
         "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
         fake_request,
     )
-    optimized, returned_original, status = (
+    optimized, returned_original, status, output_pipe = (
         JR_H3_OpenAICompatiblePromptOptimizer().optimize(
             **_args(prompt=original, fail_mode="Stop Workflow")
         )
@@ -199,6 +201,7 @@ def test_repair_shields_and_restores_a_literal_with_inserted_whitespace(monkeypa
     assert "__JR_H3_PRESERVED_LITERAL" not in optimized
     assert status == "Success: model=test-model, mode=T2VA, repaired=1"
     assert len(calls) == 2
+    assert output_pipe is None
     candidate = calls[1]["messages"][1]["content"].split("Candidate prompt:\n", 1)[1]
     assert "__JR_H3_PRESERVED_LITERAL_01__" in candidate
     assert "介绍一下 MiniMax H3" not in candidate
@@ -223,7 +226,7 @@ def test_ref2va_repair_canonicalizes_inline_section_headings(monkeypatch):
         "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
         fake_request,
     )
-    optimized, _, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+    optimized, _, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         **_args(
             h3_input_mode="Ref2VA",
             reference_instructions=(
@@ -237,6 +240,7 @@ def test_ref2va_repair_canonicalizes_inline_section_headings(monkeypatch):
     assert "detailed_description:\n[Shot 1]" in optimized
     assert status == "Success: model=test-model, mode=Ref2VA, repaired=1"
     assert len(calls) == 2
+    assert output_pipe is None
 
 
 def test_ref2va_repair_canonicalizes_colon_subject_definition(monkeypatch):
@@ -258,7 +262,7 @@ def test_ref2va_repair_canonicalizes_colon_subject_definition(monkeypatch):
         "ComfyUI_JR_MiniMaxH3Node.nodes.h3_prompt_optimizer_official.request_chat",
         fake_request,
     )
-    optimized, _, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+    optimized, _, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         **_args(
             h3_input_mode="Ref2VA",
             reference_instructions="<Video 1> supplies composition.",
@@ -268,6 +272,7 @@ def test_ref2va_repair_canonicalizes_colon_subject_definition(monkeypatch):
     assert "<Subject 1>: a woman" not in optimized
     assert status == "Success: model=test-model, mode=Ref2VA, repaired=1"
     assert len(calls) == 2
+    assert output_pipe is None
 
 
 @pytest.mark.parametrize(
@@ -299,7 +304,7 @@ def test_ref2va_repair_canonicalizes_cross_taxonomy_retention_values(
         fake_request,
     )
     family = label[1:].split(" ", 1)[0]
-    optimized, _, status = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+    optimized, _, status, output_pipe = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
         **_args(
             h3_input_mode="Ref2VA",
             reference_instructions=f"{label} supplies the {family.lower()} reference.",
@@ -309,6 +314,7 @@ def test_ref2va_repair_canonicalizes_cross_taxonomy_retention_values(
     assert f"{label}: {invalid_value}" not in optimized
     assert status == "Success: model=test-model, mode=Ref2VA, repaired=1"
     assert len(calls) == 2
+    assert output_pipe is None
 
 
 @pytest.mark.parametrize("fail_mode", ["Return Original", "Stop Workflow"])

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.0
+
+- Added immutable PIPE v2 prompt stages so Prompt Optimizer derives `optimized_prompt` and Prompt Review derives `reviewed_prompt` without losing timeline, registry or runtime media.
+- Added `JR_H3_DirectedVideoConditioning`, a unified PIPE consumer that delegates directly to the installed ComfyUI MiniMax H3 Image-to-Video or Reference-to-Video conditioning implementation and returns native `CONDITIONING` plus AV `LATENT`.
+- Added deterministic `reviewed > optimized > director` prompt precedence, Auto I2V/Ref2V routing, explicit override conflicts, fixed-24-fps duration conversion, Prefer Pipe/Prefer Node dimensions and native reference-count enforcement.
+- Extended Director state schema v1 additively with a Last Frame point role while keeping existing v0.6.0 workflow JSON valid; runtime PIPE schema is now v2 and remains non-serializable.
+- Added real-media adapters for reference IMAGE batches, 24 fps video frame decoding and AUDIO waveform loading/trimming. Video/audio remain labels only during LLM optimization and are decoded only at conditioning time.
+- Updated the full Director example, README and focused architecture/pipeline/node-reference documentation, plus PIP stage, Review, routing, native delegation, ordering and end-to-end regression coverage.
+
 ## 0.6.0
 
 - Added `JR_H3_DirectorDesk`, a large in-node SHOT/VISUAL/AUDIO timeline editor with Global Direction, Inspector editing, drag/resize/snap, split/duplicate/delete/reorder, stacked overlapping reference lanes, media preview/import and persistent user sizing.

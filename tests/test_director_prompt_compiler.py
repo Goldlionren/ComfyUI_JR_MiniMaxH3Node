@@ -72,6 +72,37 @@ def test_first_frame_is_unique_zero_second_point_anchor():
         ))
 
 
+def test_last_frame_is_unique_timeline_end_anchor_and_registry_second():
+    first = {
+        "id": "first", "kind": "image", "role": "first_frame", "start": 0, "end": 0,
+        "direction": "", "notes": "", "registry_order": 50,
+        "asset": _asset("asset-first", "image", "first.png"),
+    }
+    last = {
+        "id": "last", "kind": "image", "role": "last_frame", "start": 10, "end": 10,
+        "direction": "", "notes": "", "registry_order": 99,
+        "asset": _asset("asset-last", "image", "last.png"),
+    }
+    reference = {
+        "id": "ref", "kind": "image", "role": "reference_image", "start": 0, "end": 10,
+        "direction": "", "notes": "", "registry_order": 1,
+        "asset": _asset("asset-ref", "image", "ref.png"),
+    }
+    state = _state(visual_items=[reference, last, first])
+    registry = build_reference_registry(state)
+    assert [(record.label, record.role) for record in registry] == [
+        ("<Picture 1>", "first_frame"),
+        ("<Picture 2>", "last_frame"),
+        ("<Picture 3>", "reference_image"),
+    ]
+    assert "timeline=10.0s point anchor" in compile_director_prompt(state)
+    with pytest.raises(DirectorValidationError, match="Only one Last Frame"):
+        validate_director_state(_state(visual_items=[
+            last,
+            {**last, "id": "last-2", "asset": {**last["asset"], "id": "asset-last-2"}},
+        ]))
+
+
 def test_image_source_range_is_rejected_before_prompt_compilation():
     image = {
         "id": "image-a", "kind": "image", "role": "reference_image", "start": 0, "end": 10,

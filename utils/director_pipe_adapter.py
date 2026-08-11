@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .director_pipe import DirectorPipe, validate_director_pipe
@@ -22,7 +23,11 @@ class DirectorOptimizerContext:
 
 
 def _media_instruction(record) -> str:
-    interval = "0.0s point anchor" if record.role == "first_frame" else f"{record.start:.1f}s-{record.end:.1f}s"
+    interval = (
+        f"{record.start:.1f}s point anchor"
+        if record.role in {"first_frame", "last_frame"}
+        else f"{record.start:.1f}s-{record.end:.1f}s"
+    )
     direction = record.direction.strip() or "No additional local direction."
     notes = record.notes.strip() or "No additional notes."
     return (
@@ -44,7 +49,9 @@ def pipe_to_optimizer_context(pipe: DirectorPipe, image_send_size: int) -> Direc
     for record in pipe.reference_registry:
         source = f"director_pipe:{record.item_id}"
         if record.family == "Picture":
-            registry_role = "first_frame" if record.role == "first_frame" else "reference"
+            registry_role = (
+                record.role if record.role in {"first_frame", "last_frame"} else "reference"
+            )
             entry = registry.register_picture(
                 source, registry_role, source_key=record.item_id, identifier=record.label,
             )
@@ -57,6 +64,8 @@ def pipe_to_optimizer_context(pipe: DirectorPipe, image_send_size: int) -> Direc
             encoded.append((entry.label, urls[0]))
             if record.role == "first_frame":
                 has_first = True
+            elif record.role == "last_frame":
+                has_last = True
             else:
                 reference_images += 1
                 instructions.append(_media_instruction(record))
@@ -91,6 +100,7 @@ def validate_legacy_conflicts(
     first_frame,
     last_frame,
     reference_image_count: int,
+    duration_seconds: float,
 ) -> None:
     authoritative = pipe.compiled_director_prompt
     if str(prompt).strip() and str(prompt) != authoritative:
@@ -98,6 +108,12 @@ def validate_legacy_conflicts(
             "Director PIP conflict: prompt must be empty or exactly equal to pip.compiled_director_prompt."
         )
     conflicts = []
+    if not math.isclose(
+        float(duration_seconds), float(pipe.timeline.duration_seconds), rel_tol=0.0, abs_tol=1e-9
+    ):
+        conflicts.append(
+            f"duration_seconds ({float(duration_seconds):g} != {pipe.timeline.duration_seconds:g})"
+        )
     if str(reference_instructions or "").strip():
         conflicts.append("reference_instructions")
     if first_frame is not None:

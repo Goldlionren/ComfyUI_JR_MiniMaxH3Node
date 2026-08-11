@@ -1,19 +1,20 @@
 # Prompt Review & Continue
 
-`JR_H3_PromptReviewPause` 是交互式人工审核节点。它接收必须连接的 multiline `STRING`，暂停当前 ComfyUI 执行，等待发起任务的浏览器确认或编辑，然后输出 `reviewed_prompt`。
+`JR_H3_PromptReviewPause` 是交互式人工审核节点。它同时支持 legacy multiline `STRING` 和 optional `JR_H3_DIRECTOR_PIPE`，暂停当前 ComfyUI 执行，等待发起任务的浏览器确认或编辑，然后输出 `reviewed_prompt` 与派生 PIPE。
 
 ## 接线
 
 ```text
-Prompt Optimizer.optimized_prompt
-  -> Prompt Review & Continue.prompt
-       reviewed_prompt -> MiniMax H3 文本输入
+Prompt Optimizer.pip
+  -> Prompt Review & Continue.pip
+       pip -> JR MiniMax H3 Directed Video Conditioning.pipe
 ```
 
 参数：
 
-- `prompt`：force-input STRING，不使用节点内持久化文本作为 socket 数据。
+- `prompt`：legacy multiline STRING；当前 ComfyUI 前端允许 widget 和 STRING 连接共存，PIPE 模式下应为空，非空时必须与 PIPE 的权威审核文本完全相同。
 - `timeout_seconds`：默认 `3600`，范围 `60..86400` 秒。
+- `pip`：optional `JR_H3_DIRECTOR_PIPE`。审核文本优先 `optimized_prompt`，再回退 `compiled_director_prompt`。
 - 隐藏输入 `unique_id`：把审核与具体节点实例绑定。
 
 ## 执行过程
@@ -23,7 +24,9 @@ Prompt Optimizer.optimized_prompt
 3. 只向该 client 发送 incoming prompt。
 4. 节点显示 **Waiting for review**，后端以最多 0.25 秒的短等待循环检查 Stop 和超时。
 5. 用户编辑文本并点击 **Next / Continue**。
-6. 服务端校验 review ID 与文本，唤醒当前执行并原样输出已批准文本。
+6. 服务端校验 review ID 与文本，唤醒当前执行并原样输出已批准文本。PIPE 模式会派生新 PIPE 并写入 `reviewed_prompt`，即使用户未修改直接 Next 也会写入。
+
+Review 不会 mutate 输入 PIPE；timeline、registry 和 runtime media 均原样保留。STRING-only 模式继续返回 `(reviewed_prompt, None)`，因此旧 STRING 工作流保持兼容。
 
 `IS_CHANGED` 返回 NaN，所以相同输入再次排队仍会重新审核，不会命中 ComfyUI 缓存而跳过。
 

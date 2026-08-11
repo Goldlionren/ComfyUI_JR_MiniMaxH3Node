@@ -93,6 +93,7 @@ def validate_director_state(state: DirectorState) -> None:
         previous = shot
 
     first_frames = []
+    last_frames = []
     for index, item in enumerate(state.visual_items, 1):
         field = f"Visual item {item.id or index}"
         if item.id in item_ids:
@@ -106,6 +107,14 @@ def validate_director_state(state: DirectorState) -> None:
                 raise DirectorValidationError("First Frame must use an IMAGE asset.")
             if item.start != 0.0 or item.end != 0.0:
                 raise DirectorValidationError("First Frame is a point marker fixed at 0.0 seconds.")
+        elif item.role == "last_frame":
+            last_frames.append(item)
+            if item.kind != "image":
+                raise DirectorValidationError("Last Frame must use an IMAGE asset.")
+            if item.start != duration or item.end != duration:
+                raise DirectorValidationError(
+                    "Last Frame is a point marker fixed at the timeline duration."
+                )
         else:
             expected = "image" if item.role == "reference_image" else "video"
             if item.kind != expected:
@@ -122,8 +131,14 @@ def validate_director_state(state: DirectorState) -> None:
             raise DirectorValidationError(f"{field} asset is {item.asset.status}: {item.asset.display_name}.")
     if len(first_frames) > 1:
         raise DirectorValidationError("Only one First Frame may exist in a Director Desk timeline.")
+    if len(last_frames) > 1:
+        raise DirectorValidationError("Only one Last Frame may exist in a Director Desk timeline.")
     if first_frames and ordered_shots[0].start != 0.0:
         raise DirectorValidationError("A timeline with a First Frame must have its first Shot start at 0.0 seconds.")
+    if last_frames and ordered_shots[-1].end != duration:
+        raise DirectorValidationError(
+            "A timeline with a Last Frame must have its final Shot end at the timeline duration."
+        )
 
     driving = []
     for index, item in enumerate(state.audio_items, 1):
@@ -157,7 +172,11 @@ def build_reference_registry(state: DirectorState) -> tuple[ReferenceRecord, ...
     validate_director_state(state)
     pictures = sorted(
         (item for item in state.visual_items if item.kind == "image"),
-        key=lambda item: (0 if item.role == "first_frame" else 1, item.registry_order, item.id),
+        key=lambda item: (
+            0 if item.role == "first_frame" else 1 if item.role == "last_frame" else 2,
+            item.registry_order,
+            item.id,
+        ),
     )
     videos = sorted(
         (item for item in state.visual_items if item.kind == "video"),
@@ -182,6 +201,8 @@ def _time(value: float) -> str:
 def _interval(record: ReferenceRecord) -> str:
     if record.role == "first_frame":
         return "0.0s point anchor"
+    if record.role == "last_frame":
+        return f"{_time(record.end)} point anchor"
     return f"{_time(record.start)}-{_time(record.end)}"
 
 
@@ -238,6 +259,7 @@ def compile_director_prompt(
         active = [
             record for record in media_records
             if (record.role == "first_frame" and shot_index == 1)
+            or (record.role == "last_frame" and shot_index == len(ordered_shots))
             or _ranges_overlap(shot.start, shot.end, record.start, record.end)
         ]
         lines.append("  active_references:")

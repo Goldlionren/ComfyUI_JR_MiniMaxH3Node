@@ -17,6 +17,9 @@ def test_frontend_uses_properties_hidden_state_and_lifecycle_cleanup():
         "assetFingerprint",
         "lane_order",
         "instance.mediaElements",
+        '"last_frame"',
+        'Set as Last Frame',
+        'isPointAnchor',
         "serialize: false",
         "hideOnZoom: false",
     ]:

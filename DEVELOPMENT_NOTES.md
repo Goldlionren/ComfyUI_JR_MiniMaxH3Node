@@ -1,5 +1,11 @@
 # Development notes
 
+## Director PIPE through conditioning (2026-08-11)
+
+Version 0.7.0 adds the eleventh stable V1 node, `JR_H3_DirectedVideoConditioning`. Runtime PIPE schema v2 carries immutable compiled/optimized/reviewed prompt stages and validated video/audio handles; persisted Director state stays schema v1 and v0.6.0 JSON remains valid. Prompt Optimizer and Prompt Review append PIPE outputs while preserving their historical STRING output indices.
+
+The conditioning node calls the installed ComfyUI `MiniMaxH3ImageToVideo` or `MiniMaxH3ReferenceToVideo` implementation instead of copying or monkey-patching upstream code. Current native behavior fixes output at 24 fps, supports 9 images/3 videos/3 video soundtracks/3 standalone audios, lacks a distinct Driving Audio port and cannot preserve hard first/last anchors in Ref2V. These are documented capability boundaries, not emulated features.
+
 ## Director Desk and JR_H3_DIRECTOR_PIPE (2026-08-10)
 
 Version 0.6.0 adds the tenth stable V1 node, `JR_H3_DirectorDesk`. The architecture decision is recorded in `docs/DIRECTOR_DESK_ARCHITECTURE.md`: lightweight schema-versioned workflow state is separate from the pure compiler and immutable runtime PIP. A hidden V1 STRING widget carries JSON to Python while `node.properties.jr_h3_director_state` remains the frontend persistence source; no tensor, decoded media, base64 or binary is serialized.
@@ -85,7 +91,7 @@ The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills
 - Output-writing nodes use `OUTPUT_NODE = True`; video encoding uses `IS_CHANGED` so queuing creates a fresh output.
 - V1 UI results use `{"ui": ..., "result": (...)}`. Enhanced Video Combine publishes complete `gifs` and `images` asset descriptors and exposes `WEB_DIRECTORY = "./js"` for its DOM preview widget.
 - Frontend extensions import only the stable `scripts/app` and `scripts/api` modules, preserve existing node lifecycle callbacks, prevent DOM interactions from reaching the canvas, and release the video element when a node is removed.
-- Prompt Review & Continue uses a force-connected multiline STRING input, a non-serialized DOM editor, `UNIQUE_ID`, and `IS_CHANGED = NaN`. Its WebSocket event is sent only to the executing client ID; a bounded thread-safe state store and short interruptible waits prevent stale reviews and allow ComfyUI Stop to cancel execution.
+- Prompt Review & Continue accepts a legacy multiline STRING plus optional Director PIPE, uses a non-serialized DOM editor, `UNIQUE_ID`, and `IS_CHANGED = NaN`. Its WebSocket event is sent only to the executing client ID; a bounded thread-safe state store and short interruptible waits prevent stale reviews and allow ComfyUI Stop to cancel execution.
 - Custom POST/GET routes are registered once per PromptServer instance. Route handlers never perform long synchronous waits or log submitted review text.
 - Validation that depends on actual tensors, CUDA, FFmpeg, HTTP, or optional SDKs occurs only during execution.
 - Imports do not contact HTTP services, run FFmpeg, initialize CUDA, or import `nvvfx`.
@@ -96,7 +102,7 @@ The local skills under `C:\Users\Admin\.agents\skills\comfyui-custom-node-skills
 - Sampling invalidation uses semantic/structural signatures, not transient tensor `data_ptr()` values. ComfyUI may reconstruct equivalent conditioning tensors during one denoise run; cleanup and timestep restart provide the run boundary while seed, model, layout, reference structure, shape, dtype, device, and batch protect correctness.
 - Cache thresholds must be calibrated in this implementation's own relative-delta scale. v0.3.3 uses native 25-step H3 measurements and logs input/probe count/min/average/max; profile selection alone never bypasses audio/video vetoes or forced-refresh limits.
 - The production MiniMax H3 implementation was inspected read-only: `MiniMaxH3Model` defaults to 50 joint packed audio/video blocks, target audio then target video are the final packed segments, and the core prefetch queue advances outside Block replacement callbacks. Skipped blocks therefore still receive balanced prefetch pop/cleanup calls.
-- `JR_H3_CACHE_CONFIG` is an immutable Python object. Router results override every manual cache widget; Prompt Optimizer remains unchanged at three outputs and retains its independent system prompt.
+- `JR_H3_CACHE_CONFIG` is an immutable Python object. Router results override every manual cache widget; Prompt Optimizer retains its first three historical STRING output indices and appends one Director PIPE output.
 
 ## Licensing decision
 

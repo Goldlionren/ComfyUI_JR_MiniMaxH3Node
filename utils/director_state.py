@@ -18,7 +18,7 @@ MAX_DIRECTION_CHARS = 32_768
 MAX_GLOBAL_DIRECTION_CHARS = 65_536
 MAX_TIMELINE_SECONDS = 3600.0
 
-VISUAL_ROLES = {"reference_image", "first_frame", "reference_video"}
+VISUAL_ROLES = {"reference_image", "first_frame", "last_frame", "reference_video"}
 AUDIO_ROLES = {"reference_audio", "driving_audio"}
 ASSET_KINDS = {"image", "video", "audio"}
 FOLDER_TYPES = {"input", "output", "temp"}

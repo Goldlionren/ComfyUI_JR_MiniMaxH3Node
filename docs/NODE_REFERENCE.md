@@ -1,6 +1,6 @@
 # 节点参数参考
 
-本页按当前 `main` 的 Python 定义记录全部 10 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 `main` 的 Python 定义记录全部 11 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
 
 ## Director Desk
 
@@ -22,7 +22,7 @@ Node ID：`JR_H3_OpenAICompatiblePromptOptimizer`
 
 分类：`JR MiniMax H3/Prompt`
 
-输出：`optimized_prompt: STRING`、`original_prompt: STRING`、`status: STRING`
+输出：`optimized_prompt: STRING`、`original_prompt: STRING`、`status: STRING`、`pip: JR_H3_DIRECTOR_PIPE`
 
 | 输入 | 类型 | 默认值 | 范围或说明 |
 | --- | --- | --- | --- |
@@ -55,14 +55,38 @@ Node ID：`JR_H3_PromptReviewPause`
 
 分类：`JR MiniMax H3/Prompt`
 
-输出：`reviewed_prompt: STRING`
+输出：`reviewed_prompt: STRING`、`pip: JR_H3_DIRECTOR_PIPE`
 
 | 输入 | 类型 | 默认值 | 范围或说明 |
 | --- | --- | --- | --- |
-| `prompt` | STRING | 必须连接 | multiline、force input |
+| `prompt` | STRING | 空 | multiline；legacy STRING 模式使用，PIPE 模式必须为空或与权威审核文本相同 |
 | `timeout_seconds` | INT | `3600` | 60..86400 秒 |
+| `pip` | JR_H3_DIRECTOR_PIPE | 未连接 | optional；审核 `optimized_prompt`，缺失时回退 compiled Director Prompt |
 
 隐藏输入：`unique_id: UNIQUE_ID`。节点每次排队强制执行，不缓存人工审核结果。
+
+## Directed Video Conditioning
+
+Node ID：`JR_H3_DirectedVideoConditioning`
+
+分类：`JR MiniMax H3/Generation`
+
+输出：`positive: CONDITIONING`、`latent: LATENT`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `clip` | CLIP | 必须连接 | 当前 MiniMax H3 CLIP |
+| `vae` | VAE | 必须连接 | MiniMax H3 video VAE |
+| `pipe` | JR_H3_DIRECTOR_PIPE | 必须连接 | Review 输出的权威 PIPE |
+| `mode_override` | COMBO | Auto | Auto、Image to Video、Reference to Video |
+| `dimension_source` | COMBO | Prefer Pipe | Prefer Pipe、Prefer Node |
+| `width` | INT | 1344 | 32..16384，step 32 |
+| `height` | INT | 768 | 32..16384，step 32 |
+| `length` | INT | 124 | 5..3600；原生按 24 fps 与 `n % 17 == 5` 对齐 |
+| `ref_image_size` | COMBO | match | match、max；透传原生 Ref2V |
+| `audio_vae` | VAE | 未连接 | optional；PIPE 含任意 Reference/Driving Audio 时必须连接 |
+
+节点按 `reviewed > optimized > compiled director` 选择提示词，并直接调用当前 ComfyUI 原生 MiniMax H3 I2V/Ref2V conditioning。详情见 [DIRECTOR_PIPELINE.md](DIRECTOR_PIPELINE.md)。
 
 ## Cache Config Router
 

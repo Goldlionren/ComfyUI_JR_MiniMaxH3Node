@@ -284,8 +284,8 @@ Candidate prompt:
 class JR_H3_OpenAICompatiblePromptOptimizer:
     CATEGORY = "JR MiniMax H3/Prompt"
     FUNCTION = "optimize"
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("optimized_prompt", "original_prompt", "status")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "JR_H3_DIRECTOR_PIPE")
+    RETURN_NAMES = ("optimized_prompt", "original_prompt", "status", "pip")
     DESCRIPTION = "Builds and validates mode-aware MiniMax H3 prompts through an OpenAI-compatible endpoint."
 
     @classmethod
@@ -324,8 +324,9 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
         reference_instructions="", api_key="", first_frame=None, last_frame=None, pip=None, **kwargs,
     ):
         original = str(prompt)
+        output_pipe = None
         if not enable and pip is None:
-            return original, original, "Disabled: original prompt returned"
+            return original, original, "Disabled: original prompt returned", None
         try:
             _validate_text_size(prompt, "prompt", _MAX_LEGACY_PROMPT_BYTES)
             _validate_text_size(
@@ -338,14 +339,16 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 from ..utils.director_pipe import validate_director_pipe
 
                 pipe = validate_director_pipe(pip)
+                output_pipe = pipe
                 original = pipe.compiled_director_prompt
                 validate_legacy_conflicts(
                     pipe, prompt=str(prompt), reference_instructions=reference_instructions,
                     first_frame=first_frame, last_frame=last_frame,
                     reference_image_count=_reference_slot_count(kwargs),
+                    duration_seconds=duration_seconds,
                 )
                 if not enable:
-                    return original, original, "Disabled: original prompt returned"
+                    return original, original, "Disabled: original prompt returned", pipe
                 adapted = pipe_to_optimizer_context(pipe, int(image_send_size))
                 instructions = adapted.reference_instructions
                 registry = adapted.registry
@@ -447,20 +450,31 @@ class JR_H3_OpenAICompatiblePromptOptimizer:
                 return (
                     repaired_validation.cleaned_prompt, original,
                     f"Success: model={selected_model}, mode={selected_mode.value}, repaired=1{source_suffix}",
+                    (
+                        pipe.derive(
+                            optimized_prompt=repaired_validation.cleaned_prompt,
+                            reviewed_prompt="",
+                        )
+                        if pip is not None else None
+                    ),
                 )
             return (
                 validation.cleaned_prompt, original,
                 f"Success: model={selected_model}, mode={selected_mode.value}, repaired=0{source_suffix}",
+                (
+                    pipe.derive(optimized_prompt=validation.cleaned_prompt, reviewed_prompt="")
+                    if pip is not None else None
+                ),
             )
         except _FinalPromptValidationError as error:
             if fail_mode == "Stop Workflow":
                 raise ValueError(str(error)) from None
-            return original, original, f"Fallback: {error.concise_reason}"
+            return original, original, f"Fallback: {error.concise_reason}", output_pipe
         except Exception as error:
             message = safe_error(error, api_key)
             if fail_mode == "Stop Workflow":
                 raise RuntimeError(message) from None
-            return original, original, f"Fallback: {message}"
+            return original, original, f"Fallback: {message}", output_pipe
 
 
 __all__ = ["JR_H3_OpenAICompatiblePromptOptimizer", "_system_prompt", "_user_prompt"]

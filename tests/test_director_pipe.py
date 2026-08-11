@@ -25,7 +25,8 @@ def test_pipe_is_typed_immutable_and_prompt_matches_output():
     )
     assert isinstance(pipe, DirectorPipe)
     assert pipe.schema == PIPE_SCHEMA
-    assert pipe.schema_version == 1
+    assert pipe.schema_version == 2
+    assert pipe.optimized_prompt == pipe.reviewed_prompt == ""
     assert pipe.compiled_director_prompt.startswith("GLOBAL DIRECTION")
     assert validate_director_pipe(pipe) is pipe
     with pytest.raises(FrozenInstanceError):
@@ -39,6 +40,8 @@ def test_runtime_media_is_separate_from_persisted_state():
     persisted = pipe.to_persisted()
     assert "runtime_media" not in persisted
     assert "compiled_director_prompt" not in persisted
+    assert "optimized_prompt" not in persisted
+    assert "reviewed_prompt" not in persisted
     assert pipe.runtime_media == ()
 
 
@@ -77,3 +80,19 @@ def test_pipe_rejects_runtime_asset_or_kind_mismatch():
         validate_director_pipe(replace(
             pipe, runtime_media=(RuntimeMedia("asset-1", "visual-1", "video", object()),),
         ))
+
+
+def test_pipe_stage_derivation_is_immutable_and_preserves_runtime_identity():
+    state = default_director_state()
+    pipe0 = build_director_pipe(state)
+    pipe1 = pipe0.derive(optimized_prompt=" optimized ", reviewed_prompt="")
+    pipe2 = pipe1.derive(reviewed_prompt=" reviewed ")
+    assert pipe0 is not pipe1 and pipe1 is not pipe2
+    assert pipe0.optimized_prompt == pipe0.reviewed_prompt == ""
+    assert pipe1.final_prompt() == " optimized "
+    assert pipe2.final_prompt() == " reviewed "
+    assert pipe0.timeline is pipe1.timeline is pipe2.timeline
+    assert pipe0.shots is pipe1.shots is pipe2.shots
+    assert pipe0.runtime_media is pipe1.runtime_media is pipe2.runtime_media
+    pipe3 = pipe2.derive(optimized_prompt="new", reviewed_prompt="")
+    assert pipe3.final_prompt() == "new"

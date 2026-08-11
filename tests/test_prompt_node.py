@@ -16,14 +16,15 @@ def _args(**overrides):
     values.update(overrides); return values
 
 
-def test_disabled_is_three_outputs_and_no_request():
+def test_disabled_is_four_outputs_and_no_request():
     output = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args())
-    assert output == ("rough", "rough", "Disabled: original prompt returned")
+    assert output == ("rough", "rough", "Disabled: original prompt returned", None)
 
 
-def test_return_original_failure_is_safe_and_three_outputs():
+def test_return_original_failure_is_safe_and_four_outputs():
     output = JR_H3_OpenAICompatiblePromptOptimizer().optimize(**_args(enable=True, api_key="TOPSECRET"))
-    assert len(output) == 3 and output[:2] == ("rough", "rough")
+    assert len(output) == 4 and output[:2] == ("rough", "rough")
+    assert output[3] is None
     assert output[2].startswith("Fallback:") and "TOPSECRET" not in output[2]
 
 

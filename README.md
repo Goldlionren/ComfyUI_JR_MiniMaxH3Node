@@ -1,16 +1,17 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 10 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 11 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.6.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.7.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
 | 显示名称 | 稳定 Node ID | 分类 | 主要输出 |
 | --- | --- | --- | --- |
 | JR MiniMax H3 Director Desk | `JR_H3_DirectorDesk` | Director | 原始 Director Prompt、`JR_H3_DIRECTOR_PIPE` |
-| JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态 |
-| JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词 |
+| JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态、派生 PIPE |
+| JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
+| JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
 | JR H3 Cache Config Router | `JR_H3_CacheConfigRouter` | Cache | 缓存配置、建议档位、分析 |
 | JR H3 Adaptive Cache | `JR_H3_AdaptiveCache` | Cache | 已 patch 的 MODEL、实际档位、状态 |
 | H3 Unified Acceleration | `JR_H3_UnifiedAcceleration` | Optimization | 已 patch 的 MODEL |
@@ -75,17 +76,20 @@ Unified Acceleration 的外部依赖不会由本仓库自动安装：
 ```text
 Director Desk.pip
   -> Prompt Optimizer.pip
-       optimized_prompt
-         -> Prompt Review & Continue.prompt
-              reviewed_prompt
-                -> MiniMax H3 文本输入
+       pip
+         -> Prompt Review & Continue.pip
+              pip
+                -> Directed Video Conditioning.pipe
+                     positive + latent
 ```
 
-Director Desk 是不调用 LLM 的时间线编辑器。它把 Global Direction、Shot、图片、视频、音频和每项 Direction/Notes 确定性地编译为 raw `director_prompt`，并通过一根自定义类型的 `pip` 线把完整结构交给现有 Prompt Optimizer。正常接线不需要再把 `director_prompt` STRING 接到 Optimizer。
+Director Desk 是不调用 LLM 的时间线编辑器。它把 Global Direction、Shot、图片、视频、音频和每项 Direction/Notes 确定性地编译为 raw `director_prompt`，并通过一根自定义类型的 `pip` 线把完整结构交给现有 Prompt Optimizer。Optimizer 将 `optimized_prompt` 写入一个新 PIPE，Review 将最终批准文本写入另一个新 PIPE，最后由 Directed Video Conditioning 直接调用当前 ComfyUI 原生 MiniMax H3 I2V/Ref2V conditioning。三个节点都不会原地修改上游 PIPE。
+
+`director_prompt`、`optimized_prompt`、`reviewed_prompt` 等 STRING 输出用于监控、检查和调试；`JR_H3_DIRECTOR_PIPE` 才是 Director 主链唯一权威数据总线。最终提示词优先级固定为 `reviewed > optimized > director`。
 
 工作流只保存轻量时间线和 ComfyUI `input/temp/output` 资产 descriptor；不会保存 Tensor、base64、音频 waveform 或视频字节。First Frame 是固定在 0.0 秒的唯一点锚；Visual 和 Reference Audio 可以重叠，Driving Audio 不允许重叠。拖动、resize、split、duplicate、delete、role 和 Direction 编辑都在节点内完成，节点只在首次创建时采用约 `1000×650` 默认尺寸，不会在执行后缩回。
 
-PIP 连接后，PIP 的 prompt、duration、registry 和媒体是权威来源；同时连接旧的 `first_frame`、`last_frame`、`ref_image_1..9` 或 `reference_instructions` 会明确报冲突，避免静默合并和重新编号。详情见 [Director Desk](docs/DIRECTOR_DESK.md)。
+PIP 连接后，PIP 的 prompt、duration、registry 和媒体是权威来源；Optimizer 的 legacy `duration_seconds` widget 必须与 PIPE timeline duration 相同，同时连接旧的 `first_frame`、`last_frame`、`ref_image_1..9` 或 `reference_instructions` 也会明确报冲突，避免静默覆盖、合并和重新编号。Review 的 STRING 只允许为空或与 PIPE 的权威审核文本完全相同。详情见 [Director Desk](docs/DIRECTOR_DESK.md) 和 [Director Pipeline](docs/DIRECTOR_PIPELINE.md)。
 
 审核节点默认等待 `3600` 秒。每次排队都会再次审核；它需要发起任务的浏览器保持在线，不适合无人值守 API 队列。
 
@@ -149,7 +153,8 @@ Prompt Optimizer 是本地 H3 Prompt/Context 预处理器，不是 MiniMax 托�
 
 - 支持 `Auto`、`T2VA`、`I2VA`、`FL2VA`、`L2VA`、`Ref2VA`。
 - 支持 `first_frame`、`last_frame` 和 `ref_image_1..9`；每个 reference slot 可以携带 IMAGE batch。
-- 支持 optional `pip: JR_H3_DIRECTOR_PIPE`；PIP 不存在时旧工作流行为不变。
+- 支持 optional `pip: JR_H3_DIRECTOR_PIPE`；PIP 不存在时旧工作流行为不变，新增的第四个 PIPE 输出为 `None`。
+- PIP 模式成功后返回派生 PIPE，并写入 `optimized_prompt`；原 PIPE 的时间线、registry 和 runtime media 原样保留。
 - 接受服务根地址、`/v1`、`/v1/models` 或完整 `/v1/chat/completions` 地址。
 - `model` 留空时，仅在执行阶段查询 `/v1/models`。
 - 初次完整校验失败时最多进行 **一次** `temperature=0.1` 的格式修复，再运行同一个 validator。
@@ -182,7 +187,7 @@ Auto 模式优先级：
 
 ## Prompt Review & Continue
 
-审核节点把 incoming STRING 显示在节点内的可编辑文本区，点击 **Next / Continue** 后才释放下游。
+审核节点同时支持旧 STRING 模式和 Director PIPE 模式。PIPE 模式按 `optimized_prompt > compiled_director_prompt` 选择审核文本，点击 **Next / Continue** 后返回 `reviewed_prompt: STRING`，并把同一批准文本写入新的 PIPE。
 
 - 默认超时 `3600` 秒，范围 `60..86400`。
 - 最小节点尺寸约为 `460×360`；前端不会把用户手动放大的节点缩回默认值。
@@ -191,6 +196,25 @@ Auto 模式优先级：
 - 提示词只保存在有限的内存状态中，不写入普通日志。
 
 详见 [Prompt Review & Continue](docs/PROMPT_REVIEW_CONTINUE.md)。
+
+## Directed Video Conditioning
+
+`JR_H3_DirectedVideoConditioning` 直接消费审核后的 PIPE，并复用当前 ComfyUI 的 `MiniMaxH3ImageToVideo` / `MiniMaxH3ReferenceToVideo` 实现，输出可直接进入 H3 下游采样链的标准 `CONDITIONING` 与 AV `LATENT`。
+
+- `Auto`：存在任意 Reference Image/Video/Audio 或 Driving Audio 时选择 Reference to Video；否则选择 Image to Video。
+- 显式 Image to Video 遇到 Ref2V-only 媒体会明确报冲突，不会静默忽略。
+- `Prefer Pipe`：从首个 Picture/Video 媒体尺寸推导画布；时长按固定 H3 `24 fps` 转成 `ceil(duration×24)` 帧，再由原生节点执行 `n % 17 == 5` 对齐。没有媒体尺寸时回退节点宽高。
+- `Prefer Node`：使用节点 `width/height/length`。
+- 原生限制为最多 9 张参考图、3 个参考视频、3 个独立参考音频；Ref2V 下首/尾帧也计入这 9 张 Picture 总额。`<Picture N>/<Video N>/<Audio N>` 顺序与实际送入原生节点的顺序一致。
+- LLM 阶段不会上传 video/audio 二进制；Conditioning 阶段才按安全 descriptor 延迟解码并真正消费媒体。
+- 参考视频必须解码为 24 fps，裁切后至少 5 帧；单条最多解码 15 秒，并受像素预算保护。原生实现随后按 `17k+5` 帧网格裁切参考帧。
+- 文件音频在解码前必须具有可信的大小、时长、采样率和声道元数据，并受文件大小、时长和解码采样总量预算保护。
+- `Prefer Pipe` 的 timeline 超过 150 秒会超过节点的 3600 帧输入上限并明确拒绝；这不是对完整 H3 工作流或模型能力的通用时长承诺。
+- Ref2V 原生接口没有首尾帧硬锚。首/尾帧与其他 reference 同时出现时会作为普通参考图送入，不能声称仍有 I2V 硬锚语义。
+- Driving Audio 映射到原生 standalone reference audio；它仍是 Director 的角色/提示词语义，不是模型级目标音轨替换或时间门控。
+- 时间线 `start/end` 会保留在 PIPE 和提示词中；当前原生 H3 conditioning 不支持按 clip 区间对 tensor 条件做任意启停。
+
+完整映射和限制见 [Director Pipeline](docs/DIRECTOR_PIPELINE.md)。
 
 ## H3 Adaptive Cache
 

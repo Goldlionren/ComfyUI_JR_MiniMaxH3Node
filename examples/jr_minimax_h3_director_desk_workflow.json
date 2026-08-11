@@ -1,6 +1,6 @@
 {
-  "last_node_id": 5,
-  "last_link_id": 4,
+  "last_node_id": 9,
+  "last_link_id": 8,
   "nodes": [
     {
       "id": 1,
@@ -48,9 +48,10 @@
         {"name": "pip", "type": "JR_H3_DIRECTOR_PIPE", "link": 2}
       ],
       "outputs": [
-        {"name": "optimized_prompt", "type": "STRING", "links": [3]},
+        {"name": "optimized_prompt", "type": "STRING", "links": null},
         {"name": "original_prompt", "type": "STRING", "links": null},
-        {"name": "status", "type": "STRING", "links": null}
+        {"name": "status", "type": "STRING", "links": null},
+        {"name": "pip", "type": "JR_H3_DIRECTOR_PIPE", "links": [3]}
       ],
       "properties": {"Node name for S&R": "JR_H3_OpenAICompatiblePromptOptimizer"},
       "widgets_values": [
@@ -67,10 +68,14 @@
       "order": 2,
       "mode": 0,
       "inputs": [
-        {"name": "prompt", "type": "STRING", "link": 3},
-        {"name": "timeout_seconds", "type": "INT", "widget": {"name": "timeout_seconds"}, "link": null}
+        {"name": "timeout_seconds", "type": "INT", "widget": {"name": "timeout_seconds"}, "link": null},
+        {"name": "prompt", "type": "STRING", "shape": 7, "link": null},
+        {"name": "pip", "type": "JR_H3_DIRECTOR_PIPE", "shape": 7, "link": 3}
       ],
-      "outputs": [{"name": "reviewed_prompt", "type": "STRING", "links": [4]}],
+      "outputs": [
+        {"name": "reviewed_prompt", "type": "STRING", "links": [4]},
+        {"name": "pip", "type": "JR_H3_DIRECTOR_PIPE", "links": [5]}
+      ],
       "properties": {"Node name for S&R": "JR_H3_PromptReviewPause"},
       "widgets_values": [3600]
     },
@@ -99,13 +104,83 @@
       "outputs": [{"name": "value", "type": "STRING", "links": null}],
       "properties": {"Node name for S&R": "PreviewAny"},
       "widgets_values": []
+    },
+    {
+      "id": 6,
+      "type": "JR_H3_DirectedVideoConditioning",
+      "pos": [2120, 120],
+      "size": [430, 390],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"name": "clip", "type": "CLIP", "link": 6},
+        {"name": "vae", "type": "VAE", "link": 7},
+        {"name": "pipe", "type": "JR_H3_DIRECTOR_PIPE", "link": 5},
+        {"name": "mode_override", "type": "COMBO", "widget": {"name": "mode_override"}, "link": null},
+        {"name": "dimension_source", "type": "COMBO", "widget": {"name": "dimension_source"}, "link": null},
+        {"name": "width", "type": "INT", "widget": {"name": "width"}, "link": null},
+        {"name": "height", "type": "INT", "widget": {"name": "height"}, "link": null},
+        {"name": "length", "type": "INT", "widget": {"name": "length"}, "link": null},
+        {"name": "ref_image_size", "type": "COMBO", "widget": {"name": "ref_image_size"}, "link": null},
+        {"name": "audio_vae", "type": "VAE", "shape": 7, "link": 8}
+      ],
+      "outputs": [
+        {"name": "positive", "type": "CONDITIONING", "links": null},
+        {"name": "latent", "type": "LATENT", "links": null}
+      ],
+      "properties": {"Node name for S&R": "JR_H3_DirectedVideoConditioning"},
+      "widgets_values": ["Auto", "Prefer Pipe", 1344, 768, 124, "match"]
+    },
+    {
+      "id": 7,
+      "type": "CLIPLoader",
+      "pos": [2120, 560],
+      "size": [430, 110],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [{"name": "CLIP", "type": "CLIP", "links": [6]}],
+      "properties": {"Node name for S&R": "CLIPLoader", "cnr_id": "comfy-core"},
+      "widgets_values": ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors", "minimax", "default"]
+    },
+    {
+      "id": 8,
+      "type": "VAELoader",
+      "pos": [2120, 710],
+      "size": [430, 62],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [{"name": "VAE", "type": "VAE", "links": [7]}],
+      "properties": {"Node name for S&R": "VAELoader", "cnr_id": "comfy-core"},
+      "widgets_values": ["minimax_h3_video_vae_fp16.safetensors"]
+    },
+    {
+      "id": 9,
+      "type": "VAELoader",
+      "pos": [2120, 820],
+      "size": [430, 62],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [{"name": "VAE", "type": "VAE", "links": [8]}],
+      "properties": {"Node name for S&R": "VAELoader", "cnr_id": "comfy-core"},
+      "widgets_values": ["minimax_h3_audio_vae_fp32.safetensors"]
     }
   ],
   "links": [
     [1, 1, 0, 4, 0, "STRING"],
     [2, 1, 1, 2, 0, "JR_H3_DIRECTOR_PIPE"],
-    [3, 2, 0, 3, 0, "STRING"],
-    [4, 3, 0, 5, 0, "STRING"]
+    [3, 2, 3, 3, 2, "JR_H3_DIRECTOR_PIPE"],
+    [4, 3, 0, 5, 0, "STRING"],
+    [5, 3, 1, 6, 2, "JR_H3_DIRECTOR_PIPE"],
+    [6, 7, 0, 6, 0, "CLIP"],
+    [7, 8, 0, 6, 1, "VAE"],
+    [8, 9, 0, 6, 9, "VAE"]
   ],
   "groups": [],
   "config": {},
