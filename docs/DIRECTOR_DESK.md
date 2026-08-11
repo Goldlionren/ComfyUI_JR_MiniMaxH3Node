@@ -27,9 +27,9 @@ The node starts at approximately `1000×650` and remains freely resizable. Its s
 - **AUDIO** accepts Reference Audio and Driving Audio. Reference items may overlap; Driving items must be sequential and non-overlapping.
 - **Inspector** is the main editor for role, timeline time, source in/out, Direction, Notes and media relinking.
 
-Items support selection, drag, left/right resize, 0.1-second snapping, duplicate, midpoint split, delete and ordering actions. Right-click opens the same contextual operations; double-click focuses the Inspector. Dragging uses a local draft and commits once on pointer release so one drag produces one ComfyUI undo transaction.
+Items support selection, drag, left/right resize, 0.1-second snapping, duplicate, midpoint split, delete and ordering actions. Right-click opens the same contextual operations; double-click focuses the Inspector. Inspector edits are committed before timeline selection or dragging, so a newly typed time is not lost when the user immediately clicks a Shot. Dragging uses a local draft and commits once on pointer release so one drag produces one ComfyUI undo transaction.
 
-Visual and Audio lane ordering is saved separately from reference creation order. The Inspector arrow actions adjust the saved display preference without silently renumbering `<Picture N>`, `<Video N>` or `<Audio N>` labels.
+For Shots, `Earlier` / `Later` swaps the selected Shot with the previous or next chronological time slot. For Visual and Audio items, `Lane ↑` / `Lane ↓` changes only the saved stacked display order: it does not change timing or silently renumber `<Picture N>`, `<Video N>` or `<Audio N>` labels. `Duplicate` creates a new item (or the next non-overlapping Shot), while `Split` divides the selected non-point item at its midpoint.
 
 ### Time semantics
 

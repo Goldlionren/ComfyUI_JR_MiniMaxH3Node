@@ -14,6 +14,8 @@ def test_frontend_uses_properties_hidden_state_and_lifecycle_cleanup():
         "onRemoved",
         "instances = new WeakMap()",
         "instance.activeDragCancel?.()",
+        "flushInspectorEditor(instance)",
+        "instance.pendingInspectorFlush",
         "assetFingerprint",
         "lane_order",
         "instance.mediaElements",
@@ -40,6 +42,7 @@ def test_frontend_has_required_sections_actions_media_and_security_boundaries():
     for token in [
         'makeRow("SHOT")', 'makeRow("VISUAL")', 'makeRow("AUDIO")',
         'textContent = "Global Direction"', 'button("Duplicate"', 'button("Split"',
+        'button(shotActions ? "Earlier" : "Lane ↑"', 'button(shotActions ? "Later" : "Lane ↓"',
         'button("Delete"', 'button("+ Image"', 'button("+ Video"', 'button("+ Audio"',
         'api.fetchApi("/upload/image"', 'api.fetchApi("/jr-h3/director/probe"',
         'new URLSearchParams({ filename: asset.filename, subfolder: asset.subfolder, type: asset.type })',
@@ -47,3 +50,12 @@ def test_frontend_has_required_sections_actions_media_and_security_boundaries():
         assert token in SOURCE
     assert "base64" not in SOURCE.lower()
     assert "file://" not in SOURCE.lower()
+
+
+def test_inspector_edits_flush_before_timeline_selection_without_forced_rerender():
+    select_start = SOURCE.index("function selectItem")
+    clone_start = SOURCE.index("const next = deepClone(instance.state);", select_start)
+    flush_start = SOURCE.index("flushInspectorEditor(instance)", select_start)
+    assert flush_start < clone_start
+    assert 'change(value, { render: false })' in SOURCE
+    assert 'if (!selectItem(instance, item.id, { render: false })) return;' in SOURCE

@@ -305,11 +305,20 @@ function commit(instance, next, { undo = true, render = true } = {}) {
     return true;
 }
 
+function flushInspectorEditor(instance) {
+    const flush = instance.pendingInspectorFlush;
+    if (typeof flush !== "function") return true;
+    instance.pendingInspectorFlush = null;
+    return flush();
+}
+
 function selectItem(instance, id, { render = true } = {}) {
+    if (!flushInspectorEditor(instance)) return false;
     const next = deepClone(instance.state);
     next.ui.selected_item_id = id;
-    commit(instance, next, { undo: false, render });
+    if (!commit(instance, next, { undo: false, render })) return false;
     if (!render) renderInspector(instance);
+    return true;
 }
 
 function findItem(state, id) {
@@ -325,7 +334,7 @@ function maxRegistryOrder(state, family) {
     return source.reduce((value, item) => Math.max(value, Number(item.registry_order) || 0), 0);
 }
 
-function updateItem(instance, id, changes) {
+function updateItem(instance, id, changes, { undo = true, render = true } = {}) {
     const next = deepClone(instance.state);
     const found = findItem(next, id);
     if (!found) return false;
@@ -334,7 +343,7 @@ function updateItem(instance, id, changes) {
     if (found.item.role === "first_frame") Object.assign(found.item, { start: 0, end: 0, source_in: null, source_out: null });
     else if (found.item.role === "last_frame") Object.assign(found.item, { start: next.timeline.duration_seconds, end: next.timeline.duration_seconds, source_in: null, source_out: null });
     else if (wasPointAnchor && found.item.end <= found.item.start) Object.assign(found.item, { start: 0, end: next.timeline.duration_seconds });
-    return commit(instance, next);
+    return commit(instance, next, { undo, render });
 }
 
 function deleteItem(instance, id) {
@@ -421,6 +430,7 @@ function reorderItem(instance, id, delta) {
 
 function startDrag(instance, event, item, mode) {
     if (event.button !== 0 || isPointAnchor(item)) return;
+    if (!flushInspectorEditor(instance)) return;
     event.preventDefault(); event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const before = deepClone(instance.state);
@@ -507,7 +517,7 @@ function itemElement(instance, item, lane) {
     }
     element.addEventListener("pointerdown", (event) => {
         if (event.target.classList.contains("jr-dd-handle")) return;
-        selectItem(instance, item.id, { render: false });
+        if (!selectItem(instance, item.id, { render: false })) return;
         startDrag(instance, event, item, "move");
     });
     element.addEventListener("dblclick", (event) => {
@@ -554,23 +564,55 @@ function field(labelText, input) {
     label.append(span, input); return label;
 }
 
-function numberInput(value, change, { min = 0, max = 3600 } = {}) {
-    const input = document.createElement("input"); input.type = "number"; input.step = "0.1";
-    input.min = String(min); input.max = String(max); input.value = fmt(value);
-    input.addEventListener("change", () => change(snap(input.value)));
+function registerInspectorEditor(instance, input, readValue, normalizeValue, change, { refreshTimeline = false } = {}) {
+    let lastCommitted = normalizeValue(readValue());
+    const flush = () => {
+        if (instance.destroyed) return false;
+        let value;
+        try { value = normalizeValue(readValue()); }
+        catch (error) { setStatus(instance, error?.message || "Inspector value is invalid.", true); return false; }
+        if (Object.is(value, lastCommitted)) return true;
+        const applied = change(value, { render: false });
+        if (!applied) { instance.pendingInspectorFlush = flush; return false; }
+        lastCommitted = value;
+        if (refreshTimeline) renderTimeline(instance);
+        return true;
+    };
+    const arm = () => { instance.pendingInspectorFlush = flush; };
+    const finish = () => {
+        if (instance.pendingInspectorFlush === flush) instance.pendingInspectorFlush = null;
+        flush();
+    };
+    input.addEventListener("focus", arm);
+    input.addEventListener("input", arm);
+    input.addEventListener("change", finish);
+    input.addEventListener("blur", finish);
     return input;
 }
 
-function textArea(value, change, placeholder) {
+function numberInput(instance, value, change, { min = 0, max = 3600, refreshTimeline = false } = {}) {
+    const input = document.createElement("input"); input.type = "number"; input.step = "0.1";
+    input.min = String(min); input.max = String(max); input.value = fmt(value);
+    return registerInspectorEditor(instance, input, () => input.value, (raw) => {
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed < min || parsed > max) throw new Error(`Enter a value from ${min} to ${max}.`);
+        return snap(parsed);
+    }, change, { refreshTimeline });
+}
+
+function textArea(value, change, placeholder, instance = null) {
     const area = document.createElement("textarea"); area.value = value || ""; area.placeholder = placeholder;
     area.maxLength = 32768;
-    area.addEventListener("blur", () => change(area.value));
+    if (instance) registerInspectorEditor(instance, area, () => area.value, String, change);
+    else area.addEventListener("blur", () => change(area.value));
     return area;
 }
 
-function button(text, action, className = "") {
+function button(text, action, className = "", title = "") {
     const value = document.createElement("button"); value.type = "button"; value.textContent = text;
-    if (className) value.className = className; value.addEventListener("click", action); return value;
+    if (className) value.className = className;
+    if (title) value.title = title;
+    value.addEventListener("click", action); return value;
 }
 
 function releaseMediaElement(instance, media) {
@@ -661,21 +703,29 @@ function renderInspector(instance) {
         inspector.append(field("Role", select));
     }
     if (!isPointAnchor(item)) {
-        inspector.append(field("Timeline start (s)", numberInput(item.start, (value) => updateItem(instance, item.id, { start: value }))));
-        inspector.append(field("Timeline end (s)", numberInput(item.end, (value) => updateItem(instance, item.id, { end: value }), { max: instance.state.timeline.duration_seconds })));
+        inspector.append(field("Timeline start (s)", numberInput(instance, item.start, (value, options) => updateItem(instance, item.id, { start: value }, options), { max: instance.state.timeline.duration_seconds, refreshTimeline: true })));
+        inspector.append(field("Timeline end (s)", numberInput(instance, item.end, (value, options) => updateItem(instance, item.id, { end: value }, options), { max: instance.state.timeline.duration_seconds, refreshTimeline: true })));
     }
     if (item.asset && item.kind !== "image") {
-        inspector.append(field("Source in (s)", numberInput(item.source_in ?? 0, (value) => updateItem(instance, item.id, { source_in: value, source_out: item.source_out ?? item.asset.duration_seconds ?? value + SNAP }))));
-        inspector.append(field("Source out (s)", numberInput(item.source_out ?? item.asset.duration_seconds ?? item.end - item.start, (value) => updateItem(instance, item.id, { source_in: item.source_in ?? 0, source_out: value }))));
+        const sourceMax = item.asset.duration_seconds ?? 3600;
+        inspector.append(field("Source in (s)", numberInput(instance, item.source_in ?? 0, (value, options) => updateItem(instance, item.id, { source_in: value }, options), { max: sourceMax })));
+        inspector.append(field("Source out (s)", numberInput(instance, item.source_out ?? item.asset.duration_seconds ?? item.end - item.start, (value, options) => updateItem(instance, item.id, { source_out: value }, options), { max: sourceMax })));
     }
-    inspector.append(field("Direction", textArea(item.direction, (value) => updateItem(instance, item.id, { direction: value }), "What should happen or be preserved here?")));
-    inspector.append(field("Notes", textArea(item.notes, (value) => updateItem(instance, item.id, { notes: value }), "Production notes, continuity, caveats…")));
+    inspector.append(field("Direction", textArea(item.direction, (value, options) => updateItem(instance, item.id, { direction: value }, options), "What should happen or be preserved here?", instance)));
+    inspector.append(field("Notes", textArea(item.notes, (value, options) => updateItem(instance, item.id, { notes: value }, options), "Production notes, continuity, caveats…", instance)));
     const actions = document.createElement("div"); actions.className = "jr-dd-actions";
+    const shotActions = found.key === "shots";
+    const earlierTitle = shotActions
+        ? "Swap this Shot into the previous chronological time slot."
+        : "Move this item up in the stacked display lanes; timing and reference labels do not change.";
+    const laterTitle = shotActions
+        ? "Swap this Shot into the next chronological time slot."
+        : "Move this item down in the stacked display lanes; timing and reference labels do not change.";
     actions.append(
         button("Duplicate", () => duplicateItem(instance, item.id)),
         button("Split", () => splitItem(instance, item.id)),
-        button("↑", () => reorderItem(instance, item.id, -1)),
-        button("↓", () => reorderItem(instance, item.id, 1)),
+        button(shotActions ? "Earlier" : "Lane ↑", () => reorderItem(instance, item.id, -1), "", earlierTitle),
+        button(shotActions ? "Later" : "Lane ↓", () => reorderItem(instance, item.id, 1), "", laterTitle),
         button("Delete", () => deleteItem(instance, item.id), "danger"),
     );
     inspector.append(actions);
@@ -707,8 +757,9 @@ function showContextMenu(instance, event, item) {
     if (!isPointAnchor(item)) action("Split at midpoint", () => splitItem(instance, item.id));
     if (item.kind === "image" && item.role !== "first_frame") action("Set as First Frame", () => updateItem(instance, item.id, { role: "first_frame", start: 0, end: 0 }));
     if (item.kind === "image" && item.role !== "last_frame") action("Set as Last Frame", () => updateItem(instance, item.id, { role: "last_frame", start: instance.state.timeline.duration_seconds, end: instance.state.timeline.duration_seconds }));
-    action("Move Up", () => reorderItem(instance, item.id, -1));
-    action("Move Down", () => reorderItem(instance, item.id, 1));
+    const shotActions = findItem(instance.state, item.id)?.key === "shots";
+    action(shotActions ? "Move Earlier" : "Move Lane Up", () => reorderItem(instance, item.id, -1));
+    action(shotActions ? "Move Later" : "Move Lane Down", () => reorderItem(instance, item.id, 1));
     action("Delete", () => deleteItem(instance, item.id));
     document.body.append(menu); instance.contextMenu = menu;
     instance.closeContextMenu = close;
@@ -858,7 +909,7 @@ function buildPanel(node, stateWidget) {
         toolbar, durationInput, fpsInput, zoomInput, globalInput, status, main, timelineScroll,
         timelineInner, ruler, shotTrack, visualTrack, audioTrack, inspector,
         syncing: false, dragging: false, destroyed: false, contextMenu: null,
-        closeContextMenu: null, activeDragCancel: null, mediaElements: new Set(), cleanup: [],
+        closeContextMenu: null, activeDragCancel: null, pendingInspectorFlush: null, mediaElements: new Set(), cleanup: [],
     };
     durationInput.addEventListener("change", () => {
         const next = deepClone(instance.state); const value = Math.max(SNAP, snap(durationInput.value));
@@ -1004,6 +1055,7 @@ app.registerExtension({
             const instance = instances.get(this);
             if (instance) {
                 instance.destroyed = true;
+                instance.pendingInspectorFlush = null;
                 instance.activeDragCancel?.();
                 instance.closeContextMenu?.();
                 for (const media of instance.mediaElements) releaseMediaElement(instance, media);

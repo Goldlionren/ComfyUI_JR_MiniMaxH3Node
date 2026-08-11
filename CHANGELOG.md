@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.7.1
+
+- Fixed Director Inspector edits being discarded when the user clicked or dragged a timeline item before the browser emitted the input's blur/change event.
+- Replaced the ambiguous Director ordering arrows with `Earlier` / `Later` for Shots and `Lane ↑` / `Lane ↓` for Visual/Audio display lanes, including contextual labels and tooltips.
+
 ## 0.7.0
 
 - Added immutable PIPE v2 prompt stages so Prompt Optimizer derives `optimized_prompt` and Prompt Review derives `reviewed_prompt` without losing timeline, registry or runtime media.
