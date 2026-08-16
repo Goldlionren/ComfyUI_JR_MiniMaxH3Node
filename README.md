@@ -1,13 +1,14 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 11 个 V1 Python 节点，覆盖多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 12 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.8.3`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.9.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
 | 显示名称 | 稳定 Node ID | 分类 | 主要输出 |
 | --- | --- | --- | --- |
+| JR MiniMax H3 Hybrid Loader | `JR_H3_HybridLoader` | Loaders | 一个原生 `MODEL` |
 | JR MiniMax H3 Director Desk | `JR_H3_DirectorDesk` | Director | 原始 Director Prompt、`JR_H3_DIRECTOR_PIPE` |
 | JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态、派生 PIPE |
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
@@ -70,6 +71,26 @@ Unified Acceleration 的外部依赖不会由本仓库自动安装：
 这些依赖均在节点执行时才解析；缺少它们不会阻止其他 JR 节点加载。本仓库不复制 KJNodes、Sol-Attn、SageAttention、Triton 或 NVIDIA SDK 源码。
 
 ## 推荐接线
+
+### Hybrid Loader 与模型 patch 链
+
+```text
+JR MiniMax H3 Hybrid Loader
+  -> Turbo LoRA（可选）
+  -> H3 Unified Acceleration（可选）
+  -> sampler / H3 workflow
+```
+
+Hybrid Loader 直接选择 `diffusion_models` 下的一份 FL2VA checkpoint 和一份 REF2VA checkpoint。Hybrid profile 始终只完整加载 FL：FL state dict 走当前 ComfyUI 原生 `load_torch_file`，因此会继承当前 AIMDO/mmap 或 stock fallback；REF 先扫描 safetensors header，再只读取计划内的 AdaLN tensor family，复制为自有 CPU tensor后立即关闭 REF，最终由 stock `load_diffusion_model_state_dict` 构造唯一 MODEL。它不会实例化两个完整 H3 MODEL。
+
+- `Recommended`：REF blocks 25–49 AdaLN；Final AdaLN、video/audio output heads 及其余权重来自 FL。
+- `All Block AdaLN`：REF blocks 0–49 AdaLN，Final AdaLN 来自 FL。
+- `All Block AdaLN + Final`：REF blocks 0–49 AdaLN 加 Final AdaLN。
+- `Custom Range`：REF 使用指定 block 闭区间；Final 由开关决定。
+- `Pure FL` / `Pure REF`：直接调用 stock diffusion loader，且不会打开另一份 checkpoint。
+- `Advanced Custom`：`custom_ref` 选择 prefix/glob，`custom_fl` 以完整 tensor-family 粒度强制退回 FL。
+
+Header resolver 会让量化 weight、scale、`.comfy_quant` 等实际存在的 sibling 同源，并对 selected family 的 key、shape、dtype/quant representation 做 fail-closed 校验。全局不相关 key 不同不会导致整个 Hybrid 被拒绝。BF16、普通 INT8 ConvRot、pruned INT8 的 AdaLN 表示和内存量差异很大，不能跨格式混配；日志会报告实际 selected family/tensor/byte 数，不承诺固定 RAM 节省比例。`Recommended 25–49` 是 Scott Mudge 项目的实验建议，不是 MiniMax 官方推荐。详见 [Hybrid Loader](docs/H3_HYBRID_LOADER.md)。
 
 ### Director Desk、提示词与人工审核
 

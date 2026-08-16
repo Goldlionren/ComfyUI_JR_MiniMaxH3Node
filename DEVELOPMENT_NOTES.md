@@ -1,5 +1,13 @@
 # Development notes
 
+## H3 Hybrid Loader (2026-08-17)
+
+Version 0.9.0 adds a V1 `JR_H3_HybridLoader` with two `diffusion_models` selectors and one MODEL output. Per the local ComfyUI node Skills, imports remain side-effect free, path selection is delegated to `folder_paths`, stock MODEL construction is retained, and `cached_patcher_init` contains every setting needed for Dynamic VRAM delegate/multi-GPU reconstruction.
+
+The installed ComfyUI commit `0f1fa67ad8a68b62c65ebc97a7bf485df2459c3a` routes `comfy.utils.load_torch_file` through AIMDO `ModelMMAP` when enabled and through safetensors `safe_open` otherwise. Hybrid FL therefore uses that public current path with `return_metadata=True`; the JR code never imports or reimplements private AIMDO APIs. REF uses a bounded header parser plus selected-only `safe_open.get_tensor` calls and owned CPU clones. The resulting state dict is handed to `comfy.sd.load_diffusion_model_state_dict`, and no second REF MODEL is created.
+
+Scott Mudge's MIT loader at commit `a44c69b02242e41fbd01e22abe2a492adc853038` supplied the experimental profile semantics and family provenance concept. Its dual-safe_open full-state construction was deliberately replaced. Current BF16, INT8 ConvRot and pruned INT8 headers demonstrate three materially different AdaLN representations; the resolver compares only selected complete families and fails closed across incompatible representations instead of requiring identical global key sets.
+
 ## Director PIPE through conditioning (2026-08-11)
 
 Version 0.8.0 keeps the eleven stable V1 nodes and adds the deterministic official H3 prompt formatter. Runtime PIPE schema v2 carries immutable compiled/optimized/reviewed prompt stages and validated video/audio handles; persisted Director state stays schema v1 and v0.6.0 JSON remains valid. Prompt Optimizer and Prompt Review append PIPE outputs while preserving their historical STRING output indices.

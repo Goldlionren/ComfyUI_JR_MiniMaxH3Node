@@ -1,6 +1,28 @@
 # 节点参数参考
 
-本页按当前 `main` 的 Python 定义记录全部 11 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 `main` 的 Python 定义记录全部 12 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+
+## Hybrid Loader
+
+Node ID：`JR_H3_HybridLoader`
+
+分类：`JR MiniMax H3/Loaders`
+
+输出：`model: MODEL`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `fl_model_name` | diffusion_models COMBO | 首项 | FL2VA authoritative base checkpoint |
+| `ref_model_name` | diffusion_models COMBO | 首项 | REF2VA selective overlay checkpoint |
+| `profile` | COMBO | Recommended | Recommended、All Block AdaLN、All Block AdaLN + Final、Custom Range、Pure FL、Pure REF、Advanced Custom |
+| `weight_dtype` | COMBO | default | default、fp8_e4m3fn、fp8_e4m3fn_fast、fp8_e5m2；与本机 stock Load Diffusion Model 对齐 |
+| `block_range_start` | INT | 25 | 0..49；Custom Range 使用 |
+| `block_range_end` | INT | 49 | 0..49；Custom Range 使用 |
+| `final_adaln_from_ref` | BOOLEAN | false | Custom Range/Advanced Custom 的 additive Final AdaLN 选择 |
+| `custom_ref` | STRING | 空 | Advanced Custom 的逗号/换行 prefix 或 glob，最多 64 项/4096 UTF-8 bytes |
+| `custom_fl` | STRING | 空 | Advanced Custom 强制退回 FL，按完整 tensor family 生效 |
+
+Pure profile 只解析并 stock-load 被选 checkpoint。Hybrid profile 先执行 header-only H3/layout/family compatibility validation，然后 native-load FL、selected-only copy REF，最终 stock-construct 一个 MODEL。详见 [H3_HYBRID_LOADER.md](H3_HYBRID_LOADER.md)。
 
 ## Director Desk
 

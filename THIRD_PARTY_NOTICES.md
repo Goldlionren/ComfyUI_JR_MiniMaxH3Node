@@ -1,5 +1,24 @@
 # Third-party notices
 
+## Scott Mudge — ComfyUI_MinimaxH3HybridLoader
+
+- Repository: https://github.com/scottmudge/ComfyUI_MinimaxH3HybridLoader
+- Audited/adapted commit: `a44c69b02242e41fbd01e22abe2a492adc853038`
+- License observed: MIT (`LICENSE.txt`)
+- Copyright: Copyright (c) 2026 Scott Mudge
+
+The JR Hybrid Loader adapts the upstream experimental preset semantics, block-range and custom selection concepts, and the principle that quantization siblings must follow the selected weight's provenance. The JR loading core is materially different: FL is the only full state dict and uses the installed ComfyUI native `load_torch_file` path; REF is header-scanned and only selected families are materialized as owned CPU copies before the handle is closed. The upstream dual-safe_open loop that materializes every base/overlay key is not used.
+
+MIT License
+
+Copyright (c) 2026 Scott Mudge
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 ## Director Desk clean-room product research
 
 - ComfyTV: https://github.com/jtydhr88/ComfyTV — audited product concepts at commit `6cb67572c82d7f3e4e51ee0005f8308b8c15de63`; GitHub identifies MIT.

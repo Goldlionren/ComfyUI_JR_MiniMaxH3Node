@@ -19,3 +19,7 @@ facts observed in MiniMax-AI/MiniMax-H3 at commit
 are not distributed in this project because the linked MiniMax H3 Community License contains
 territorial redistribution restrictions. Source provenance and the license audit are recorded in
 THIRD_PARTY_NOTICES.md and resources/minimax_h3_spec/UPSTREAM.json.
+
+Portions of the JR MiniMax H3 Hybrid Loader profile-selection and tensor-family provenance design
+are adapted from ComfyUI_MinimaxH3HybridLoader, Copyright (c) 2026 Scott Mudge, under the MIT
+License. The full notice and audited commit are recorded in THIRD_PARTY_NOTICES.md.

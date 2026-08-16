@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.9.0
+
+- Added `JR_H3_HybridLoader`, a single-MODEL FL2VA-base loader with header-first, selected-only REF2VA AdaLN overlays.
+- Preserved the current ComfyUI native FL `load_torch_file`/AIMDO/mmap path and FL metadata while avoiding a full REF state dict or second REF MODEL.
+- Added deterministic Recommended/All/Custom/Pure/Advanced profiles, family-level custom FL overrides, quant sibling co-travel and fail-closed selected-family shape/dtype/layout checks.
+- Added cached patcher reconstruction for Dynamic VRAM/multi-GPU paths, real installed BF16/INT8/pruned-INT8 header accounting, synthetic selective-read/provenance/short-circuit tests, and Scott Mudge MIT attribution.
+
 ## 0.8.3
 
 - Expanded protected-dialogue detection to accept half-width/full-width colons, straight/full-width double quotes, and curly double quotes in either IME orientation.
