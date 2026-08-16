@@ -30,10 +30,14 @@ JR_DIRECTOR_PROFILES = {
 _MODE_VALUES = {"T2VA", "I2VA", "FL2VA", "L2VA", "Ref2VA"}
 _DIALOGUE_BLOCK_RE = re.compile(r"<d>\s*(?:\[[^\]\r\n]+\]\s*)?(.*?)</d>", re.I | re.S)
 _QUOTED_PATTERNS = (
-    re.compile(r"“([^”\r\n]+)”"),
+    # Curly double quotes are frequently entered in either orientation by
+    # Chinese IMEs. Accept “text”, ”text“, and same-direction pairs while
+    # keeping quote characters out of the captured literal.
+    re.compile(r"[“”]([^“”\r\n]+)[“”]"),
     re.compile(r"「([^」\r\n]+)」"),
     re.compile(r"『([^』\r\n]+)』"),
     re.compile(r'"([^"\r\n]+)"'),
+    re.compile(r"＂([^＂\r\n]+)＂"),
 )
 
 
@@ -83,8 +87,9 @@ def extract_protected_dialogues(text: str) -> tuple[str, ...]:
             matches.append((match.start(1), match.group(1)))
     speech_hint = re.compile(
         r"(?:dialogue|spoken line|says?|asks?|repl(?:y|ies)|shouts?|whispers?|"
-        r"groans?|moans?|murmurs?|mutters?|sings?|chants?|"
-        r"台词|对白|说|问|喊|回答|回应|低语|耳语|呢喃|喃喃|嘟囔|呻吟|唱|念|叫)",
+        r"groans?|moans?|murmurs?|mutters?|sings?|chants?|begs?|pleads?|"
+        r"台词|对白|说|问|喊|回答|回应|低语|耳语|呢喃|喃喃|嘟囔|呻吟|唱|念|叫|"
+        r"恳求|请求|哀求|央求)",
         re.I,
     )
     for pattern in _QUOTED_PATTERNS:
@@ -93,7 +98,7 @@ def extract_protected_dialogues(text: str) -> tuple[str, ...]:
                 matches.append((match.start(1), match.group(1)))
     line_literal = re.compile(r"^[ \t]*(?:dialogue|spoken line|台词|对白)[ \t]*[:：][ \t]*(.+?)\s*$", re.I | re.M)
     for match in line_literal.finditer(source):
-        value = match.group(1).strip().strip('“”「」『』"')
+        value = match.group(1).strip().strip('“”「」『』"＂')
         if value:
             matches.append((match.start(1), value))
     ordered: list[str] = []

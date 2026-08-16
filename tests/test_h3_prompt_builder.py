@@ -103,6 +103,28 @@ def test_vocalized_quoted_lines_are_protected_dialogue(source, literal):
     assert extract_preserved_literals(source) == (literal,)
 
 
+@pytest.mark.parametrize(
+    ("source", "literal"),
+    (
+        ('女生慌张的恳求说：”求求你，饶了我吧“', "求求你，饶了我吧"),
+        ('女生慌张地恳求:”求求你，饶了我吧“', "求求你，饶了我吧"),
+        ('女生哀求：“求求你，饶了我吧”', "求求你，饶了我吧"),
+        ('女生央求:“求求你，饶了我吧”', "求求你，饶了我吧"),
+        ('She pleads: "Please spare me."', "Please spare me."),
+        ('She begs：＂Please spare me.＂', "Please spare me."),
+    ),
+)
+def test_dialogue_detection_accepts_chinese_english_colons_and_quote_styles(source, literal):
+    assert extract_protected_dialogues(source) == (literal,)
+    assert extract_preserved_literals(source) == (literal,)
+
+
+def test_quoted_visible_text_after_a_colon_is_not_misclassified_as_dialogue():
+    source = '屏幕显示：“求求你，饶了我吧”'
+    assert extract_preserved_literals(source) == ("求求你，饶了我吧",)
+    assert extract_protected_dialogues(source) == ()
+
+
 def test_user_prompt_carries_original_and_indexed_dialogue_without_requesting_final_text():
     context = _context(protected_dialogues=("介绍一下 MiniMax H3",))
     result = build_user_prompt(context, extract_preserved_literals(context.original_prompt))

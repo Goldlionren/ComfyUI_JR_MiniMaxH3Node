@@ -27,6 +27,8 @@ Known model spelling aliases are normalized narrowly before strict validation: `
 
 The semantic rewrite is closed-world and conservative. Director direction/notes/timing, explicit user instructions, registered reference relationships and facts directly visible in supplied reference images are the complete source of truth. The selected creative profile may change emphasis and wording, but it must not invent relationships, calls, motives, actions, poses, gestures, expressions, emotions, prop behavior, camera moves or audio events. Dialogue meaning is not evidence for an off-screen participant or story context. Unspecified details are omitted; speculative and alternative wording is rejected by the semantic schema and may trigger the single structured repair.
 
+Protected dialogue accepts Chinese or English half-width/full-width colons together with straight, full-width, or curly double quotes. Curly quote pairs are accepted in either IME orientation, so both `“台词”` and `”台词“` preserve the same literal. A quote is treated as spoken dialogue only when nearby wording explicitly indicates speech; ordinary signs, screens and other visible quoted text remain preserved literals rather than dialogue.
+
 Reference images may contribute directly observable identity, clothing, environment and visible-prop facts. Initial pose and prop state are not assumed to persist across later shots unless the Director requires them. Retention prose must remain consistent with every generated Shot.
 
 ## Mode contracts

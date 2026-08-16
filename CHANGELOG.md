@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.3
+
+- Expanded protected-dialogue detection to accept half-width/full-width colons, straight/full-width double quotes, and curly double quotes in either IME orientation.
+- Added Chinese pleading verbs and English `beg` / `plead` forms to the explicit speech-hint vocabulary while keeping ordinary quoted visible text out of dialogue blocks.
+- Added Director PIPE regression coverage proving reversed curly-quoted Chinese dialogue is preserved byte-exactly through Prompt Optimizer formatting.
+
 ## 0.8.2
 
 - Added deterministic normalization for the known semantic reference aliases `reference_label`, `visible_retention`, and `audio_retention` before strict validation.

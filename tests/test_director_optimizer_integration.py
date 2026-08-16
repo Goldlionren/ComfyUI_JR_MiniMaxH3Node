@@ -146,6 +146,41 @@ def test_empty_media_pip_routes_to_t2va_and_returns_pipe(monkeypatch):
     assert all(item["type"] != "image_url" for item in captured["payload"]["messages"][1]["content"])
 
 
+def test_director_pipe_protects_reversed_curly_quoted_dialogue(monkeypatch):
+    literal = "求求你，饶了我吧"
+    raw = json.loads(DEFAULT_DIRECTOR_STATE_JSON)
+    raw["timeline"]["duration_seconds"] = 5
+    raw["shots"] = [{
+        "id": "shot-1",
+        "start": 0,
+        "end": 5,
+        "direction": "女生慌张地后退。",
+        "notes": f"女生慌张的恳求说：”{literal}“",
+    }]
+    pipe = build_director_pipe(director_state_from_dict(raw))
+    response = base_semantic(
+        ("The woman steps backward and pleads anxiously.",),
+        dialogues=(({
+            "literal_index": 1,
+            "speaker_key": "woman",
+            "speaker_description": "The woman",
+            "delivery": "pleads anxiously",
+        },),),
+    )
+    captured = {}
+    _install(monkeypatch, response, captured)
+
+    optimized, _, status, _ = JR_H3_OpenAICompatiblePromptOptimizer().optimize(
+        **_args(pip=pipe)
+    )
+
+    assert status == "Success: model=test-model, mode=T2VA, repaired=0, source=pip"
+    assert optimized.count(literal) == 1
+    assert f"<d>[Chinese] {literal}</d>" in optimized
+    request_text = captured["payload"]["messages"][1]["content"][0]["text"]
+    assert f"literal_index=1: {literal}" in request_text
+
+
 @pytest.mark.parametrize(
     "conflict",
     [
