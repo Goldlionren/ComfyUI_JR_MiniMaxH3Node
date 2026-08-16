@@ -83,6 +83,32 @@ JR MiniMax H3 Hybrid Loader
 
 Hybrid Loader 直接选择 `diffusion_models` 下的一份 FL2VA checkpoint 和一份 REF2VA checkpoint。Hybrid profile 始终只完整加载 FL：FL state dict 走当前 ComfyUI 原生 `load_torch_file`，因此会继承当前 AIMDO/mmap 或 stock fallback；REF 先扫描 safetensors header，再只读取计划内的 AdaLN tensor family，复制为自有 CPU tensor后立即关闭 REF，最终由 stock `load_diffusion_model_state_dict` 构造唯一 MODEL。它不会实例化两个完整 H3 MODEL。
 
+#### 方法论：Hybrid 是参数来源策略，不是双模型拼接
+
+这个节点把一次 Hybrid 加载拆成“规划、验证、选择性读取、原生构造”四个阶段：
+
+```text
+FL header ─┐
+           ├─> HybridPlan：确定每个 selected tensor family 来自 FL 还是 REF
+REF header ┘                    │
+                                ├─> selected family 兼容性验证
+FL ── ComfyUI native full load ─┤
+REF ─ selected-only read/copy ──┘
+                                ↓
+                   stock ComfyUI MODEL construction
+```
+
+核心原则如下：
+
+1. **FL 是唯一完整基座。** 模型架构、未选择参数、output heads 和默认 metadata 都以 FL 为权威；REF 只提供 profile 明确选中的参数，不会生成第二个完整 MODEL。
+2. **先看 header，再读 tensor。** 节点先用两个 checkpoint 的 safetensors header 生成确定性的 `HybridPlan`，在读取大规模数据前完成 H3 layout、block 范围、key、shape、dtype 和量化表示验证。
+3. **替换完整 tensor family，而不是孤立 weight。** 一个量化 linear 的 `weight`、`bias`、`weight_scale`、`.comfy_quant` 及 header 中实际存在的同族 metadata 必须保持同一来源，避免产生半 FL、半 REF 的无效量化表示。
+4. **只要求被替换的 family 兼容。** FL/REF 全局 key set 可以因为剪枝或量化 metadata 而不同；只有真正选中的 family 必须拥有相同成员、shape 与 dtype。未证明安全的跨格式组合会 fail-closed，不做隐式反量化、重铸或猜测。
+5. **REF 生命周期在 MODEL 构造前结束。** 计划内 REF tensor 被读取为独立 owned CPU copy 后立即关闭 REF handle；未选 REF tensor 从不调用 `get_tensor()`。这些 copy 覆盖进原生 FL state dict，未替换的 FL storage 不由插件 clone。
+6. **最后仍交回 ComfyUI。** Hybrid state dict 和 FL metadata 交给 stock `load_diffusion_model_state_dict`，从而保留当前 ComfyUI 的模型识别、ModelPatcher、Dynamic VRAM 与缓存重建路径，而不是由插件自行实例化 MiniMax H3。
+
+因此，`Recommended` 应理解为一个可复现、可审计的**实验性参数来源假设**：让 REF 的后半段 block AdaLN 参与条件调制，同时保留 FL 的主体与输出端。它不代表把 FL/REF 能力按固定比例相加，也不保证所有量化版本都有相同的质量或内存收益。日志中的 plan fingerprint、family 数、tensor 数和 selected bytes 才是本次加载实际发生了什么的依据。
+
 - `Recommended`：REF blocks 25–49 AdaLN；Final AdaLN、video/audio output heads 及其余权重来自 FL。
 - `All Block AdaLN`：REF blocks 0–49 AdaLN，Final AdaLN 来自 FL。
 - `All Block AdaLN + Final`：REF blocks 0–49 AdaLN 加 Final AdaLN。
