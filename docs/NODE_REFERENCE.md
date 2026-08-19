@@ -1,6 +1,6 @@
 # 节点参数参考
 
-本页按当前 `main` 的 Python 定义记录全部 12 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 `main` 的 Python 定义记录全部 13 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
 
 ## Hybrid Loader
 
@@ -111,6 +111,21 @@ Node ID：`JR_H3_DirectedVideoConditioning`
 | `audio_vae` | VAE | 未连接 | optional；PIPE 含任意 Reference/Driving Audio 时必须连接 |
 
 节点按 `reviewed > optimized > compiled director` 选择提示词，并直接调用当前 ComfyUI 原生 MiniMax H3 I2V/Ref2V conditioning。详情见 [DIRECTOR_PIPELINE.md](DIRECTOR_PIPELINE.md)。
+
+## AV Latent Builder
+
+Node ID：`JR_MiniMaxH3AVLatentBuilder`
+
+分类：`JR MiniMax H3/Latent`
+
+输出：`latent: LATENT`、`status: STRING`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `video_latent` | LATENT | 必须连接 | `samples` 必须是 floating tensor `[B,24,T,H,W]`，且 `T=5k+2` |
+| `audio_latent` | LATENT | 必须连接 | `samples` 必须是 floating tensor `[B,32,2,T_audio]` |
+
+两流必须具有相同 batch、dtype 和 device，并且全部数值 finite。节点按官方 24 fps / 40 Hz 时间结构检查同一 timeline，只封装官方 `NestedTensor((video, audio))`，不进行编码、clone、cast、设备迁移或文件 I/O。详见 [H3_AV_LATENT_BUILDER.md](H3_AV_LATENT_BUILDER.md)。
 
 ## Cache Config Router
 

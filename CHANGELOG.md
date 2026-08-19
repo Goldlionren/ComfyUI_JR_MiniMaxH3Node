@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.10.0
+
+- Added `JR_MiniMaxH3AVLatentBuilder` to assemble separately encoded H3 video `[B,24,T,H,W]` and audio `[B,32,2,T]` latents into ComfyUI's official two-stream `NestedTensor` LATENT.
+- Added fail-closed rank/channel/batch/device/dtype/finite-value validation and official H3 `17k+5` frame-grid versus 40 Hz audio temporal checks with clear prefixed errors.
+- Added focused success/failure tests, node registration, status diagnostics, node reference documentation and a dedicated workflow guide without adding encoding, file I/O or dependencies.
+
 ## 0.9.1
 
 - Fixed Director Shot/Visual/Audio move and edge-resize gestures being cancelled when timeline preview rendering replaced the original pointer target.

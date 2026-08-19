@@ -1,8 +1,8 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 12 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 13 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.9.1`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.10.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -13,6 +13,7 @@
 | JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态、派生 PIPE |
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
+| JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
 | JR H3 Cache Config Router | `JR_H3_CacheConfigRouter` | Cache | 缓存配置、建议档位、分析 |
 | JR H3 Adaptive Cache | `JR_H3_AdaptiveCache` | Cache | 已 patch 的 MODEL、实际档位、状态 |
 | H3 Unified Acceleration | `JR_H3_UnifiedAcceleration` | Optimization | 已 patch 的 MODEL |
@@ -264,6 +265,18 @@ Auto 模式优先级：
 - 时间线 `start/end` 会保留在 PIPE 和提示词中；当前原生 H3 conditioning 不支持按 clip 区间对 tensor 条件做任意启停。
 
 完整映射和限制见 [Director Pipeline](docs/DIRECTOR_PIPELINE.md)。
+
+## AV Latent Builder
+
+`JR_MiniMaxH3AVLatentBuilder` 将上游分别编码好的 H3 video latent 与 audio latent 组装成官方两流 `NestedTensor` LATENT，适合 video-to-video 和 latent-to-latent 工作流。它不是 VAE 编码器、文件读取器、音频处理器或采样器。
+
+```text
+IMAGE frames -> H3 Video VAE Encode -> video_latent ┐
+                                                     ├-> JR MiniMax H3 AV Latent Builder -> H3 sampler
+AUDIO -> H3 Audio VAE Encode -> audio_latent        ┘
+```
+
+节点严格要求 video 为 `[B,24,T,H,W]`、audio 为 `[B,32,2,T_audio]`，batch、dtype 和 device 完全一致，数值全部 finite。官方 H3 时间网格为 `T_video=5k+2`，对应 `17k+5` 个 24 fps 原始帧；音频按 40 latent ticks/s 校验，并只容许 ±1 tick 的编码边界差异。节点不会 clone、cast 或移动输入 tensor。详见 [H3 AV Latent Builder](docs/H3_AV_LATENT_BUILDER.md)。
 
 ## H3 Adaptive Cache
 
