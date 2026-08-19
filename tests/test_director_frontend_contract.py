@@ -16,6 +16,9 @@ def test_frontend_uses_properties_hidden_state_and_lifecycle_cleanup():
         "instance.activeDragCancel?.()",
         "flushInspectorEditor(instance)",
         "instance.pendingInspectorFlush",
+        "instance.inspectorDraft",
+        "saveInspectorDraft(instance, editor)",
+        "cancelInspectorDraft(instance, editor)",
         "assetFingerprint",
         "lane_order",
         "instance.mediaElements",
@@ -29,7 +32,9 @@ def test_frontend_uses_properties_hidden_state_and_lifecycle_cleanup():
 
 
 def test_frontend_commits_drag_once_and_keeps_node_resize_user_controlled():
-    assert 'globalThis.addEventListener("pointermove", move)' in SOURCE
+    assert 'globalThis.addEventListener("pointermove", move, true)' in SOURCE
+    assert 'globalThis.removeEventListener("pointermove", move, true)' in SOURCE
+    assert "setPointerCapture" not in SOURCE
     assert "commit(instance, draft)" in SOURCE
     assert "graph?.beforeChange?.(node)" in SOURCE
     assert "graph?.afterChange?.(node)" in SOURCE
@@ -52,10 +57,14 @@ def test_frontend_has_required_sections_actions_media_and_security_boundaries():
     assert "file://" not in SOURCE.lower()
 
 
-def test_inspector_edits_flush_before_timeline_selection_without_forced_rerender():
+def test_inspector_uses_atomic_save_cancel_and_blocks_silent_navigation_loss():
     select_start = SOURCE.index("function selectItem")
     clone_start = SOURCE.index("const next = deepClone(instance.state);", select_start)
     flush_start = SOURCE.index("flushInspectorEditor(instance)", select_start)
     assert flush_start < clone_start
-    assert 'change(value, { render: false })' in SOURCE
+    assert 'button("Save", () => saveInspectorDraft(instance, editor)' in SOURCE
+    assert 'button("Cancel", () => cancelInspectorDraft(instance, editor)' in SOURCE
+    assert '"Unsaved Inspector changes. Click Save or Cancel before leaving this item."' in SOURCE
+    assert 'const applied = updateItem(instance, editor.itemId, changes);' in SOURCE
+    assert 'for (const actionButton of editor.actionButtons || []) actionButton.disabled = editor.dirty;' in SOURCE
     assert 'if (!selectItem(instance, item.id, { render: false })) return;' in SOURCE

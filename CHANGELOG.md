@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.1
+
+- Fixed Director Shot/Visual/Audio move and edge-resize gestures being cancelled when timeline preview rendering replaced the original pointer target.
+- Increased the visible resize hit area and moved drag tracking to window capture listeners so start/end handles remain responsive throughout redraws.
+- Replaced per-field Inspector blur commits with an explicit item-level `Save` / `Cancel` draft, atomic validation and one undo transaction; unsaved changes now block navigation and timeline actions instead of disappearing.
+
 ## 0.9.0
 
 - Added `JR_H3_HybridLoader`, a single-MODEL FL2VA-base loader with header-first, selected-only REF2VA AdaLN overlays.

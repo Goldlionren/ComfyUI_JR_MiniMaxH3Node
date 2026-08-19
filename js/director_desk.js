@@ -432,7 +432,6 @@ function startDrag(instance, event, item, mode) {
     if (event.button !== 0 || isPointAnchor(item)) return;
     if (!flushInspectorEditor(instance)) return;
     event.preventDefault(); event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
     const before = deepClone(instance.state);
     const draft = deepClone(instance.state);
     const found = findItem(draft, item.id);
@@ -458,9 +457,9 @@ function startDrag(instance, event, item, mode) {
         renderTimeline(instance);
     };
     const detach = () => {
-        globalThis.removeEventListener("pointermove", move);
-        globalThis.removeEventListener("pointerup", finish);
-        globalThis.removeEventListener("pointercancel", cancel);
+        globalThis.removeEventListener("pointermove", move, true);
+        globalThis.removeEventListener("pointerup", finish, true);
+        globalThis.removeEventListener("pointercancel", cancel, true);
         instance.activeDragCancel = null;
     };
     const finish = () => {
@@ -480,9 +479,12 @@ function startDrag(instance, event, item, mode) {
     };
     instance.activeDragCancel?.();
     instance.activeDragCancel = cancel;
-    globalThis.addEventListener("pointermove", move);
-    globalThis.addEventListener("pointerup", finish, { once: true });
-    globalThis.addEventListener("pointercancel", cancel, { once: true });
+    // Timeline rendering replaces the dragged DOM element on every preview
+    // frame. Window capture listeners survive that replacement; element-level
+    // pointer capture does not and caused browsers to cancel the drag.
+    globalThis.addEventListener("pointermove", move, true);
+    globalThis.addEventListener("pointerup", finish, { once: true, capture: true });
+    globalThis.addEventListener("pointercancel", cancel, { once: true, capture: true });
 }
 
 function itemTitle(item) {
@@ -511,6 +513,7 @@ function itemElement(instance, item, lane) {
     if (!isPointAnchor(item)) {
         for (const side of ["start", "end"]) {
             const handle = document.createElement("i"); handle.className = `jr-dd-handle ${side}`;
+            handle.title = side === "start" ? "Drag to change start time" : "Drag to change end time";
             handle.addEventListener("pointerdown", (event) => startDrag(instance, event, item, side));
             element.append(handle);
         }
@@ -564,47 +567,94 @@ function field(labelText, input) {
     label.append(span, input); return label;
 }
 
-function registerInspectorEditor(instance, input, readValue, normalizeValue, change, { refreshTimeline = false } = {}) {
-    let lastCommitted = normalizeValue(readValue());
-    const flush = () => {
-        if (instance.destroyed) return false;
-        let value;
-        try { value = normalizeValue(readValue()); }
-        catch (error) { setStatus(instance, error?.message || "Inspector value is invalid.", true); return false; }
-        if (Object.is(value, lastCommitted)) return true;
-        const applied = change(value, { render: false });
-        if (!applied) { instance.pendingInspectorFlush = flush; return false; }
-        lastCommitted = value;
-        if (refreshTimeline) renderTimeline(instance);
-        return true;
+function refreshInspectorDraftState(instance, editor) {
+    if (instance.inspectorDraft !== editor) return;
+    const changed = JSON.stringify(editor.item) !== JSON.stringify(editor.original);
+    editor.dirty = changed || editor.errors.size > 0;
+    editor.guard ||= () => {
+        if (instance.inspectorDraft !== editor || !editor.dirty) return true;
+        const message = editor.errors.values().next().value || "Unsaved Inspector changes. Click Save or Cancel before leaving this item.";
+        setStatus(instance, message, editor.errors.size > 0);
+        editor.saveButton?.focus();
+        return false;
     };
-    const arm = () => { instance.pendingInspectorFlush = flush; };
-    const finish = () => {
-        if (instance.pendingInspectorFlush === flush) instance.pendingInspectorFlush = null;
-        flush();
+    if (editor.dirty) instance.pendingInspectorFlush = editor.guard;
+    else if (instance.pendingInspectorFlush === editor.guard) instance.pendingInspectorFlush = null;
+    if (editor.saveButton) editor.saveButton.disabled = !editor.dirty || editor.errors.size > 0;
+    if (editor.cancelButton) editor.cancelButton.disabled = !editor.dirty;
+    for (const actionButton of editor.actionButtons || []) actionButton.disabled = editor.dirty;
+    if (editor.errors.size) setStatus(instance, editor.errors.values().next().value, true);
+    else if (editor.dirty) setStatus(instance, "Unsaved Inspector changes. Click Save to apply them as one undo step.");
+}
+
+function inspectorNumberInput(instance, editor, key, value, { min = 0, max = 3600 } = {}) {
+    const input = document.createElement("input"); input.type = "number"; input.step = "0.1";
+    input.min = String(min); input.max = String(max); input.value = fmt(value);
+    const update = () => {
+        const raw = input.value.trim();
+        const parsed = Number(raw);
+        if (!raw || !Number.isFinite(parsed) || parsed < min || parsed > max) {
+            editor.errors.set(key, `Enter ${key.replaceAll("_", " ")} from ${min} to ${max}.`);
+            input.setAttribute("aria-invalid", "true");
+        } else {
+            editor.errors.delete(key);
+            input.removeAttribute("aria-invalid");
+            editor.item[key] = snap(parsed);
+        }
+        refreshInspectorDraftState(instance, editor);
     };
-    input.addEventListener("focus", arm);
-    input.addEventListener("input", arm);
-    input.addEventListener("change", finish);
-    input.addEventListener("blur", finish);
+    input.addEventListener("input", update);
+    input.addEventListener("change", update);
     return input;
 }
 
-function numberInput(instance, value, change, { min = 0, max = 3600, refreshTimeline = false } = {}) {
-    const input = document.createElement("input"); input.type = "number"; input.step = "0.1";
-    input.min = String(min); input.max = String(max); input.value = fmt(value);
-    return registerInspectorEditor(instance, input, () => input.value, (raw) => {
-        const parsed = Number(raw);
-        if (!Number.isFinite(parsed) || parsed < min || parsed > max) throw new Error(`Enter a value from ${min} to ${max}.`);
-        return snap(parsed);
-    }, change, { refreshTimeline });
+function inspectorTextArea(instance, editor, key, placeholder) {
+    const area = document.createElement("textarea"); area.value = editor.item[key] || ""; area.placeholder = placeholder;
+    area.maxLength = 32768;
+    area.addEventListener("input", () => {
+        editor.item[key] = area.value;
+        refreshInspectorDraftState(instance, editor);
+    });
+    return area;
 }
 
-function textArea(value, change, placeholder, instance = null) {
+function saveInspectorDraft(instance, editor) {
+    if (instance.inspectorDraft !== editor || !editor.dirty) return true;
+    if (editor.errors.size) {
+        setStatus(instance, editor.errors.values().next().value, true);
+        return false;
+    }
+    const found = findItem(instance.state, editor.itemId);
+    if (!found) return false;
+    const keys = found.key === "shots"
+        ? ["start", "end", "direction", "notes"]
+        : ["role", "start", "end", "source_in", "source_out", "direction", "notes"];
+    const changes = Object.fromEntries(keys.filter((key) => key in editor.item).map((key) => [key, editor.item[key]]));
+    instance.pendingInspectorFlush = null;
+    instance.inspectorDraft = null;
+    const applied = updateItem(instance, editor.itemId, changes);
+    if (!applied) {
+        const validationMessage = instance.status.textContent;
+        instance.inspectorDraft = editor;
+        refreshInspectorDraftState(instance, editor);
+        setStatus(instance, validationMessage || "Inspector changes are invalid.", true);
+        return false;
+    }
+    return true;
+}
+
+function cancelInspectorDraft(instance, editor) {
+    if (instance.inspectorDraft !== editor) return;
+    instance.pendingInspectorFlush = null;
+    instance.inspectorDraft = null;
+    setStatus(instance, "Inspector changes discarded.");
+    renderInspector(instance);
+}
+
+function textArea(value, change, placeholder) {
     const area = document.createElement("textarea"); area.value = value || ""; area.placeholder = placeholder;
     area.maxLength = 32768;
-    if (instance) registerInspectorEditor(instance, area, () => area.value, String, change);
-    else area.addEventListener("blur", () => change(area.value));
+    area.addEventListener("blur", () => change(area.value));
     return area;
 }
 
@@ -686,10 +736,22 @@ function renderInspector(instance) {
     const found = findItem(instance.state, instance.state.ui.selected_item_id);
     const title = document.createElement("h4"); title.textContent = "Inspector"; inspector.append(title);
     if (!found) {
+        instance.inspectorDraft = null;
+        instance.pendingInspectorFlush = null;
         const empty = document.createElement("p"); empty.textContent = "Select an item to edit its role, timing, direction and notes.";
         inspector.append(empty); return;
     }
     const item = found.item;
+    let editor = instance.inspectorDraft;
+    if (!editor || editor.itemId !== item.id) {
+        editor = { itemId: item.id, original: deepClone(item), item: deepClone(item), errors: new Map(), dirty: false };
+        instance.inspectorDraft = editor;
+        instance.pendingInspectorFlush = null;
+    } else if (!editor.dirty && editor.errors.size === 0) {
+        editor.original = deepClone(item);
+        editor.item = deepClone(item);
+    }
+    const draft = editor.item;
     const badge = document.createElement("div"); badge.className = "jr-dd-badge"; badge.textContent = itemTitle(item); inspector.append(badge);
     if (item.asset) inspector.append(mediaPreview(instance, item));
     if (found.key !== "shots") {
@@ -698,21 +760,26 @@ function renderInspector(instance) {
             ? (item.kind === "image" ? ["reference_image", "first_frame", "last_frame"] : ["reference_video"])
             : ["reference_audio", "driving_audio"];
         for (const role of roles) { const option = document.createElement("option"); option.value = role; option.textContent = role.replaceAll("_", " "); select.append(option); }
-        select.value = item.role;
-        select.addEventListener("change", () => updateItem(instance, item.id, { role: select.value }));
+        select.value = draft.role;
+        select.addEventListener("change", () => { draft.role = select.value; refreshInspectorDraftState(instance, editor); });
         inspector.append(field("Role", select));
     }
     if (!isPointAnchor(item)) {
-        inspector.append(field("Timeline start (s)", numberInput(instance, item.start, (value, options) => updateItem(instance, item.id, { start: value }, options), { max: instance.state.timeline.duration_seconds, refreshTimeline: true })));
-        inspector.append(field("Timeline end (s)", numberInput(instance, item.end, (value, options) => updateItem(instance, item.id, { end: value }, options), { max: instance.state.timeline.duration_seconds, refreshTimeline: true })));
+        inspector.append(field("Timeline start (s)", inspectorNumberInput(instance, editor, "start", draft.start, { max: instance.state.timeline.duration_seconds })));
+        inspector.append(field("Timeline end (s)", inspectorNumberInput(instance, editor, "end", draft.end, { max: instance.state.timeline.duration_seconds })));
     }
     if (item.asset && item.kind !== "image") {
         const sourceMax = item.asset.duration_seconds ?? 3600;
-        inspector.append(field("Source in (s)", numberInput(instance, item.source_in ?? 0, (value, options) => updateItem(instance, item.id, { source_in: value }, options), { max: sourceMax })));
-        inspector.append(field("Source out (s)", numberInput(instance, item.source_out ?? item.asset.duration_seconds ?? item.end - item.start, (value, options) => updateItem(instance, item.id, { source_out: value }, options), { max: sourceMax })));
+        inspector.append(field("Source in (s)", inspectorNumberInput(instance, editor, "source_in", draft.source_in ?? 0, { max: sourceMax })));
+        inspector.append(field("Source out (s)", inspectorNumberInput(instance, editor, "source_out", draft.source_out ?? item.asset.duration_seconds ?? draft.end - draft.start, { max: sourceMax })));
     }
-    inspector.append(field("Direction", textArea(item.direction, (value, options) => updateItem(instance, item.id, { direction: value }, options), "What should happen or be preserved here?", instance)));
-    inspector.append(field("Notes", textArea(item.notes, (value, options) => updateItem(instance, item.id, { notes: value }, options), "Production notes, continuity, caveats…", instance)));
+    inspector.append(field("Direction", inspectorTextArea(instance, editor, "direction", "What should happen or be preserved here?")));
+    inspector.append(field("Notes", inspectorTextArea(instance, editor, "notes", "Production notes, continuity, caveats…")));
+    const saveActions = document.createElement("div"); saveActions.className = "jr-dd-savebar";
+    editor.saveButton = button("Save", () => saveInspectorDraft(instance, editor), "primary", "Apply all Inspector fields as one undo step.");
+    editor.cancelButton = button("Cancel", () => cancelInspectorDraft(instance, editor), "", "Discard the current Inspector draft.");
+    saveActions.append(editor.saveButton, editor.cancelButton);
+    inspector.append(saveActions);
     const actions = document.createElement("div"); actions.className = "jr-dd-actions";
     const shotActions = found.key === "shots";
     const earlierTitle = shotActions
@@ -728,7 +795,9 @@ function renderInspector(instance) {
         button(shotActions ? "Later" : "Lane ↓", () => reorderItem(instance, item.id, 1), "", laterTitle),
         button("Delete", () => deleteItem(instance, item.id), "danger"),
     );
+    editor.actionButtons = [...actions.querySelectorAll("button")];
     inspector.append(actions);
+    refreshInspectorDraftState(instance, editor);
 }
 
 function renderAll(instance) {
@@ -751,7 +820,10 @@ function showContextMenu(instance, event, item) {
         if (dismiss) document.removeEventListener("pointerdown", dismiss);
         menu.remove(); instance.contextMenu = null; instance.closeContextMenu = null;
     };
-    const action = (label, fn) => menu.append(button(label, () => { close(); fn(); }));
+    const action = (label, fn) => menu.append(button(label, () => {
+        if (!flushInspectorEditor(instance)) return;
+        close(); fn();
+    }));
     action("Edit in Inspector", () => selectItem(instance, item.id));
     action("Duplicate", () => duplicateItem(instance, item.id));
     if (!isPointAnchor(item)) action("Split at midpoint", () => splitItem(instance, item.id));
@@ -867,11 +939,12 @@ function buildPanel(node, stateWidget) {
     const zoomInput = document.createElement("input"); zoomInput.type = "range"; zoomInput.min = "0.75"; zoomInput.max = "3"; zoomInput.step = "0.25";
     toolbar.append(
         field("Duration", durationInput), field("FPS", fpsInput), field("Zoom", zoomInput),
-        button("+ Shot", () => addShot(instance)),
-        button("+ Image", () => chooseAsset(instance, "image")),
-        button("+ Video", () => chooseAsset(instance, "video")),
-        button("+ Audio", () => chooseAsset(instance, "audio")),
+        button("+ Shot", () => { if (flushInspectorEditor(instance)) addShot(instance); }),
+        button("+ Image", () => { if (flushInspectorEditor(instance)) chooseAsset(instance, "image"); }),
+        button("+ Video", () => { if (flushInspectorEditor(instance)) chooseAsset(instance, "video"); }),
+        button("+ Audio", () => { if (flushInspectorEditor(instance)) chooseAsset(instance, "audio"); }),
         button("Reset", () => {
+            if (!flushInspectorEditor(instance)) return;
             if (!globalThis.confirm?.("Reset all Director Desk timeline state?")) return;
             instance.loadError = "";
             commit(instance, defaultState());
@@ -909,9 +982,10 @@ function buildPanel(node, stateWidget) {
         toolbar, durationInput, fpsInput, zoomInput, globalInput, status, main, timelineScroll,
         timelineInner, ruler, shotTrack, visualTrack, audioTrack, inspector,
         syncing: false, dragging: false, destroyed: false, contextMenu: null,
-        closeContextMenu: null, activeDragCancel: null, pendingInspectorFlush: null, mediaElements: new Set(), cleanup: [],
+        closeContextMenu: null, activeDragCancel: null, pendingInspectorFlush: null, inspectorDraft: null, mediaElements: new Set(), cleanup: [],
     };
     durationInput.addEventListener("change", () => {
+        if (!flushInspectorEditor(instance)) { durationInput.value = fmt(instance.state.timeline.duration_seconds); return; }
         const next = deepClone(instance.state); const value = Math.max(SNAP, snap(durationInput.value));
         const previous = next.timeline.duration_seconds; next.timeline.duration_seconds = value;
         for (const item of [...next.shots, ...next.visual_items, ...next.audio_items]) {
@@ -920,12 +994,19 @@ function buildPanel(node, stateWidget) {
         }
         commit(instance, next);
     });
-    fpsInput.addEventListener("change", () => { const next = deepClone(instance.state); next.timeline.fps = clamp(Number(fpsInput.value) || 24, 1, 240); commit(instance, next); });
-    zoomInput.addEventListener("change", () => { const next = deepClone(instance.state); next.ui.zoom = clamp(Number(zoomInput.value) || 1, .75, 3); commit(instance, next, { undo: false }); });
+    fpsInput.addEventListener("change", () => {
+        if (!flushInspectorEditor(instance)) { fpsInput.value = String(instance.state.timeline.fps); return; }
+        const next = deepClone(instance.state); next.timeline.fps = clamp(Number(fpsInput.value) || 24, 1, 240); commit(instance, next);
+    });
+    zoomInput.addEventListener("change", () => {
+        if (!flushInspectorEditor(instance)) { zoomInput.value = String(instance.state.ui.zoom); return; }
+        const next = deepClone(instance.state); next.ui.zoom = clamp(Number(zoomInput.value) || 1, .75, 3); commit(instance, next, { undo: false });
+    });
     for (const type of ["pointerdown", "mousedown", "touchstart", "wheel", "keydown"]) panel.addEventListener(type, (event) => event.stopPropagation());
     panel.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
     panel.addEventListener("drop", (event) => {
         event.preventDefault(); event.stopPropagation();
+        if (!flushInspectorEditor(instance)) return;
         const file = event.dataTransfer?.files?.[0]; if (!file) return;
         const kind = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : null;
         if (!kind) return setStatus(instance, "Drop an image, video, or audio file.", true);
@@ -974,6 +1055,8 @@ function syncFromNode(instance) {
         setStatus(instance, `Persisted Director state was not overwritten: ${instance.loadError}`, true);
         return;
     }
+    instance.pendingInspectorFlush = null;
+    instance.inspectorDraft = null;
     instance.state = normalized;
     instance.loadError = "";
     instance.syncing = true;
@@ -988,7 +1071,7 @@ function installStyles() {
     if (document.getElementById("jr-h3-director-desk-styles")) return;
     const style = document.createElement("style"); style.id = "jr-h3-director-desk-styles";
     style.textContent = `
-.jr-dd{box-sizing:border-box;width:100%;height:100%;min-height:620px;padding:8px;color:#e7edf7;background:#151a22;font:12px system-ui;overflow:auto;display:flex;flex-direction:column;gap:7px}.jr-dd *{box-sizing:border-box}.jr-dd button,.jr-dd input,.jr-dd select,.jr-dd textarea{font:inherit;color:#e7edf7;background:#242b36;border:1px solid #46536a;border-radius:4px}.jr-dd button{padding:5px 8px;cursor:pointer}.jr-dd button:hover{background:#34435a}.jr-dd button.danger{color:#ffb8b8;border-color:#8d4242}.jr-dd-toolbar{display:flex;align-items:end;gap:6px;flex-wrap:wrap}.jr-dd-toolbar label{width:90px}.jr-dd-toolbar label span,.jr-dd-inspector label span{display:block;color:#aeb9ca;margin-bottom:2px}.jr-dd-toolbar input{width:100%;padding:4px}.jr-dd-global{width:100%;height:68px;resize:vertical;padding:6px}.jr-dd-status{min-height:20px;padding:3px 6px;background:#1c2531;color:#86d5aa;border-left:3px solid #3baf77}.jr-dd-status.error{color:#ffb4b4;border-color:#e05c5c}.jr-dd-main{min-height:0;min-width:928px;flex:1;display:grid;grid-template-columns:minmax(620px,1fr) 300px;gap:8px}.jr-dd-timeline-scroll{min-width:0;overflow:auto;border:1px solid #303a49;background:#10141b}.jr-dd-timeline{position:relative;min-width:100%;padding-top:30px}.jr-dd-ruler{position:absolute;left:82px;right:0;top:0;height:28px;border-bottom:1px solid #384356}.jr-dd-ruler span{position:absolute;bottom:2px;transform:translateX(-50%);color:#8995a8}.jr-dd-ruler span:before{content:"";position:absolute;left:50%;bottom:-6px;height:5px;border-left:1px solid #59677d}.jr-dd-row{display:grid;grid-template-columns:82px 1fr;border-bottom:1px solid #283140;min-height:40px}.jr-dd-row>b{padding:12px 7px;color:#9bacbf;background:#171d26}.jr-dd-track{position:relative;min-width:500px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#242c39 calc(10% - 1px),#242c39 10%)}.jr-dd-item{position:absolute;height:29px;min-width:16px;border:1px solid #6e87ad;border-radius:4px;background:#344866;color:#fff;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:6px 9px;cursor:grab;user-select:none;z-index:1}.jr-dd-item.selected{outline:2px solid #f5c451;z-index:2}.jr-dd-item.reference_image{background:#365b52}.jr-dd-item.reference_video{background:#563f70}.jr-dd-item.reference_audio{background:#3f526d}.jr-dd-item.driving_audio{background:#7a4c34}.jr-dd-item.point{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border-radius:0;padding:0;background:#e2b441;color:transparent}.jr-dd-handle{position:absolute;top:0;bottom:0;width:7px;background:#aec1dd55;cursor:ew-resize}.jr-dd-handle.start{left:0}.jr-dd-handle.end{right:0}.jr-dd-inspector{overflow:auto;border:1px solid #303a49;background:#1a202a;padding:8px}.jr-dd-inspector h4{margin:0 0 7px}.jr-dd-inspector label{display:block;margin:7px 0}.jr-dd-inspector input,.jr-dd-inspector select,.jr-dd-inspector textarea{width:100%;padding:5px}.jr-dd-inspector textarea{height:84px;resize:vertical}.jr-dd-badge{padding:5px;background:#2c3748;border-radius:4px;overflow:hidden;text-overflow:ellipsis}.jr-dd-preview{display:flex;flex-direction:column;gap:4px;margin:7px 0}.jr-dd-preview img,.jr-dd-preview video{width:100%;max-height:170px;object-fit:contain;background:#090b10}.jr-dd-preview audio{width:100%}.jr-dd-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}.jr-dd-menu{position:fixed;z-index:100000;display:flex;flex-direction:column;min-width:170px;padding:4px;background:#202731;border:1px solid #56647a;box-shadow:0 8px 24px #0008}.jr-dd-menu button{text-align:left;color:#eee;background:transparent;border:0;padding:6px}.jr-dd-menu button:hover{background:#34435a}
+.jr-dd{box-sizing:border-box;width:100%;height:100%;min-height:620px;padding:8px;color:#e7edf7;background:#151a22;font:12px system-ui;overflow:auto;display:flex;flex-direction:column;gap:7px}.jr-dd *{box-sizing:border-box}.jr-dd button,.jr-dd input,.jr-dd select,.jr-dd textarea{font:inherit;color:#e7edf7;background:#242b36;border:1px solid #46536a;border-radius:4px}.jr-dd button{padding:5px 8px;cursor:pointer}.jr-dd button:hover{background:#34435a}.jr-dd button:disabled{cursor:not-allowed;opacity:.45}.jr-dd button.primary{background:#316c55;border-color:#54ad86}.jr-dd button.danger{color:#ffb8b8;border-color:#8d4242}.jr-dd-toolbar{display:flex;align-items:end;gap:6px;flex-wrap:wrap}.jr-dd-toolbar label{width:90px}.jr-dd-toolbar label span,.jr-dd-inspector label span{display:block;color:#aeb9ca;margin-bottom:2px}.jr-dd-toolbar input{width:100%;padding:4px}.jr-dd-global{width:100%;height:68px;resize:vertical;padding:6px}.jr-dd-status{min-height:20px;padding:3px 6px;background:#1c2531;color:#86d5aa;border-left:3px solid #3baf77}.jr-dd-status.error{color:#ffb4b4;border-color:#e05c5c}.jr-dd-main{min-height:0;min-width:928px;flex:1;display:grid;grid-template-columns:minmax(620px,1fr) 300px;gap:8px}.jr-dd-timeline-scroll{min-width:0;overflow:auto;border:1px solid #303a49;background:#10141b}.jr-dd-timeline{position:relative;min-width:100%;padding-top:30px}.jr-dd-ruler{position:absolute;left:82px;right:0;top:0;height:28px;border-bottom:1px solid #384356}.jr-dd-ruler span{position:absolute;bottom:2px;transform:translateX(-50%);color:#8995a8}.jr-dd-ruler span:before{content:"";position:absolute;left:50%;bottom:-6px;height:5px;border-left:1px solid #59677d}.jr-dd-row{display:grid;grid-template-columns:82px 1fr;border-bottom:1px solid #283140;min-height:40px}.jr-dd-row>b{padding:12px 7px;color:#9bacbf;background:#171d26}.jr-dd-track{position:relative;min-width:500px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#242c39 calc(10% - 1px),#242c39 10%)}.jr-dd-item{position:absolute;height:29px;min-width:16px;border:1px solid #6e87ad;border-radius:4px;background:#344866;color:#fff;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:6px 12px;cursor:grab;user-select:none;touch-action:none;z-index:1}.jr-dd-item.selected{outline:2px solid #f5c451;z-index:2}.jr-dd-item.reference_image{background:#365b52}.jr-dd-item.reference_video{background:#563f70}.jr-dd-item.reference_audio{background:#3f526d}.jr-dd-item.driving_audio{background:#7a4c34}.jr-dd-item.point{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border-radius:0;padding:0;background:#e2b441;color:transparent}.jr-dd-handle{position:absolute;top:0;bottom:0;width:13px;background:#aec1dd44;cursor:ew-resize;touch-action:none;z-index:4}.jr-dd-handle:hover{background:#d7e5fa99}.jr-dd-handle.start{left:0}.jr-dd-handle.end{right:0}.jr-dd-inspector{overflow:auto;border:1px solid #303a49;background:#1a202a;padding:8px}.jr-dd-inspector h4{margin:0 0 7px}.jr-dd-inspector label{display:block;margin:7px 0}.jr-dd-inspector input,.jr-dd-inspector select,.jr-dd-inspector textarea{width:100%;padding:5px}.jr-dd-inspector [aria-invalid=true]{border-color:#e05c5c}.jr-dd-inspector textarea{height:84px;resize:vertical}.jr-dd-badge{padding:5px;background:#2c3748;border-radius:4px;overflow:hidden;text-overflow:ellipsis}.jr-dd-preview{display:flex;flex-direction:column;gap:4px;margin:7px 0}.jr-dd-preview img,.jr-dd-preview video{width:100%;max-height:170px;object-fit:contain;background:#090b10}.jr-dd-preview audio{width:100%}.jr-dd-savebar,.jr-dd-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}.jr-dd-savebar{padding-top:8px;border-top:1px solid #394558}.jr-dd-menu{position:fixed;z-index:100000;display:flex;flex-direction:column;min-width:170px;padding:4px;background:#202731;border:1px solid #56647a;box-shadow:0 8px 24px #0008}.jr-dd-menu button{text-align:left;color:#eee;background:transparent;border:0;padding:6px}.jr-dd-menu button:hover{background:#34435a}
 `;
     style.textContent += ".jr-dd-item.missing{outline:2px dashed #ef6565;filter:saturate(.45)}";
     document.head.append(style);
@@ -1037,6 +1120,8 @@ app.registerExtension({
                     const validationError = validateState(normalized);
                     if (validationError) throw new Error(validationError);
                     instance.syncing = true;
+                    instance.pendingInspectorFlush = null;
+                    instance.inspectorDraft = null;
                     instance.state = normalized;
                     this.properties ||= {};
                     this.properties[PROP_KEY] = deepClone(normalized);
@@ -1056,6 +1141,7 @@ app.registerExtension({
             if (instance) {
                 instance.destroyed = true;
                 instance.pendingInspectorFlush = null;
+                instance.inspectorDraft = null;
                 instance.activeDragCancel?.();
                 instance.closeContextMenu?.();
                 for (const media of instance.mediaElements) releaseMediaElement(instance, media);
