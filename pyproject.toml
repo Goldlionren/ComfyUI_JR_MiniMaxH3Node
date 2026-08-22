@@ -16,6 +16,10 @@ Repository = "https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node"
 Documentation = "https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node#readme"
 Issues = "https://github.com/Goldlionren/ComfyUI_JR_MiniMaxH3Node/issues"
 
+[tool.comfy]
+PublisherId = "goldlionren"
+DisplayName = "JR MiniMax H3"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

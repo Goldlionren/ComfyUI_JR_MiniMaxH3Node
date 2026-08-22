@@ -1,0 +1,10 @@
+tests/
+.reference/
+.test-tools/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.pytest-tmp-*/
+test-output/
+*.py[cod]
