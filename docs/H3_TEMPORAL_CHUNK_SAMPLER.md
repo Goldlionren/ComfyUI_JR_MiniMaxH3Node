@@ -112,8 +112,8 @@ plan timeline
 节点采用以下确定性策略：
 
 - 单块：原样把输入 NOISE 对象交给原生 sampler，不改变对象或 seed，状态为 `noise_mode=native_single`。
-- 多块 + 官方 RandomNoise：使用 base seed 与块的绝对全局 `frame_start` 通过 uint64 SplitMix64 permutation 派生 seed，再实例化当前 ComfyUI 官方 `Noise_RandomNoise`。相同 workflow/plan 可重复，不同时间起点的 seed 不同，状态为 `noise_mode=chunk_derived`。
-- 多块 + 官方 DisableNoise：原样保持全零 noise，状态为 `noise_mode=native_zero`。
+- 多块 + 官方 RandomNoise：以 ComfyUI 当前 `NODE_CLASS_MAPPINGS["RandomNoise"]` 的实际运行时输出类型和工厂为准，使用 base seed 与块的绝对全局 `frame_start` 通过 uint64 SplitMix64 permutation 派生 seed。这样既兼容核心 extra node 的路径模块加载身份，也保证相同 workflow/plan 可重复、不同时间起点的 seed 不同，状态为 `noise_mode=chunk_derived`。
+- 多块 + 官方 DisableNoise：以实时注册的 `DisableNoise` 输出类型识别，原样保持全零 noise，状态为 `noise_mode=native_zero`。
 - 多块 + generic/custom NOISE：采样前 fail closed。节点不假设它存在 `.seed`、不 clone、不 mutate，也不把标准 RandomNoise 实现复制进本项目。
 
 派生只创建当前块的官方 NOISE provider 和当前块 noise；不会预生成完整长视频 noise，因此 bounded-memory 架构不变。它也不承诺等价于“生成一份整段 noise 再按时间切片”。

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import math
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -273,31 +274,92 @@ def _guider_has_temporal_keyframes(guider: Any) -> bool:
     return False
 
 
+def _unwrap_noise_node_output(node_output: Any, node_id: str) -> Any:
+    values = node_output.result if hasattr(node_output, "result") else node_output
+    if not isinstance(values, (tuple, list)) or len(values) != 1:
+        raise RuntimeError(f"{ERROR_PREFIX}\nThe registered ComfyUI {node_id} node returned an unexpected result.")
+    provider = values[0]
+    if not callable(getattr(provider, "generate_noise", None)):
+        raise RuntimeError(f"{ERROR_PREFIX}\nThe registered ComfyUI {node_id} node returned an invalid NOISE provider.")
+    return provider
+
+
+def _registered_noise_factory(node_id: str) -> Callable[..., Any] | None:
+    """Return the factory from ComfyUI's live node registry, if initialized.
+
+    ComfyUI loads built-in extra nodes through ``load_custom_node`` under a
+    path-derived module name.  Importing the same file through its package name
+    can therefore create a second, non-identical Python class object.  The live
+    registry is authoritative for objects arriving through a workflow.
+    """
+
+    comfy_nodes = sys.modules.get("nodes")
+    mappings = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", None)
+    if not isinstance(mappings, Mapping):
+        return None
+    node_class = mappings.get(node_id)
+    execute = getattr(node_class, "execute", None)
+    if not callable(execute):
+        return None
+
+    def factory(*args: Any) -> Any:
+        return _unwrap_noise_node_output(execute(*args), node_id)
+
+    return factory
+
+
+def _append_noise_factory(
+    candidates: list[tuple[type[Any], Callable[..., Any]]],
+    factory: Callable[..., Any] | None,
+    *probe_args: Any,
+) -> None:
+    if factory is None:
+        return
+    provider = factory(*probe_args)
+    provider_type = type(provider)
+    if all(existing_type is not provider_type for existing_type, _existing_factory in candidates):
+        candidates.append((provider_type, factory))
+
+
 def _resolve_chunk_noise(noise: Any, plan: H3TemporalChunkPlan) -> tuple[ChunkNoiseFactory, str]:
     """Select a safe native NOISE strategy without inspecting custom internals."""
 
     if len(plan.chunks) == 1:
         return lambda _chunk: noise, "native_single"
 
-    try:
-        from comfy_extras.nodes_custom_sampler import Noise_EmptyNoise, Noise_RandomNoise
-    except ImportError:
-        raise RuntimeError(
-            f"{ERROR_PREFIX}\nThe installed ComfyUI does not provide its standard NOISE implementations."
-        ) from None
+    random_factories: list[tuple[type[Any], Callable[..., Any]]] = []
+    empty_factories: list[tuple[type[Any], Callable[..., Any]]] = []
+    _append_noise_factory(random_factories, _registered_noise_factory("RandomNoise"), 0)
+    _append_noise_factory(empty_factories, _registered_noise_factory("DisableNoise"))
 
-    if type(noise) is Noise_RandomNoise:
-        base_seed = noise.seed
+    if not random_factories or not empty_factories:
+        try:
+            from comfy_extras.nodes_custom_sampler import Noise_EmptyNoise, Noise_RandomNoise
+        except ImportError:
+            raise RuntimeError(
+                f"{ERROR_PREFIX}\nThe installed ComfyUI does not provide its standard NOISE implementations."
+            ) from None
+        if not random_factories:
+            _append_noise_factory(random_factories, Noise_RandomNoise, 0)
+        if not empty_factories:
+            _append_noise_factory(empty_factories, Noise_EmptyNoise)
 
-        def chunk_random_noise(chunk: H3TemporalChunk):
-            return Noise_RandomNoise(derive_chunk_seed(base_seed, chunk.frame_start))
+    for random_type, random_factory in random_factories:
+        if type(noise) is random_type:
+            base_seed = noise.seed
+            derive_chunk_seed(base_seed, plan.chunks[0].frame_start)
 
-        return chunk_random_noise, "chunk_derived"
-    if type(noise) is Noise_EmptyNoise:
+            def chunk_random_noise(chunk: H3TemporalChunk):
+                return random_factory(derive_chunk_seed(base_seed, chunk.frame_start))
+
+            return chunk_random_noise, "chunk_derived"
+    if any(type(noise) is empty_type for empty_type, _empty_factory in empty_factories):
         return lambda _chunk: noise, "native_zero"
 
+    noise_type = f"{type(noise).__module__}.{type(noise).__qualname__}"
     raise _error(
-        "multi-chunk sampling cannot safely derive temporal substreams for this generic/custom NOISE object. "
+        f"multi-chunk sampling cannot safely derive temporal substreams for generic/custom NOISE type "
+        f"{noise_type!r}. "
         "The current ComfyUI NOISE contract exposes no standard clone, seed-derivation, offset or substream API. "
         "Use the official RandomNoise or DisableNoise node, or use the native monolithic sampler."
     )

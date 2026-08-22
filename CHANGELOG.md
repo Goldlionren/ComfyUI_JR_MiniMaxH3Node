@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.11.2
+
+- Fixed official core `RandomNoise` and `DisableNoise` being rejected when ComfyUI loaded `nodes_custom_sampler.py` under its path-derived runtime module identity while the sampler imported the same source through its package identity.
+- Resolve standard NOISE types and factories from ComfyUI's authoritative live `NODE_CLASS_MAPPINGS`, while retaining exact-type checks and fail-closed behavior for genuine generic/custom NOISE providers.
+- Added regression coverage for runtime-registry RandomNoise/DisableNoise identities and for seeded custom providers that must remain unsupported.
+
 ## 0.11.1
 
 - Fixed identical stochastic noise being reused by same-shaped H3 temporal chunks when the official fixed-seed `RandomNoise` object was called repeatedly.

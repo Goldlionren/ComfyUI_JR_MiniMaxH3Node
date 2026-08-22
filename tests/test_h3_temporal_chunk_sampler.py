@@ -283,6 +283,86 @@ def test_chunk_derived_random_noise_is_deterministic_across_runs():
         assert torch.equal(first[1], second[1])
 
 
+def test_registered_runtime_random_noise_identity_is_supported(monkeypatch):
+    import nodes as comfy_nodes
+
+    class RuntimeRandomNoise:
+        def __init__(self, seed):
+            self.seed = seed
+
+        def generate_noise(self, input_latent):
+            return _random_noise(self.seed).generate_noise(input_latent)
+
+    class RegisteredRandomNoiseNode:
+        @classmethod
+        def execute(cls, noise_seed):
+            return (RuntimeRandomNoise(noise_seed),)
+
+    monkeypatch.setattr(comfy_nodes, "NODE_CLASS_MAPPINGS", {}, raising=False)
+    monkeypatch.setitem(comfy_nodes.NODE_CLASS_MAPPINGS, "RandomNoise", RegisteredRandomNoiseNode)
+    original_noise = RuntimeRandomNoise(123456789)
+    seen = []
+
+    def sampled(**kwargs):
+        seen.append(kwargs["noise"])
+        return _identity_native(**kwargs)
+
+    _, status = sample_h3_temporal_chunks(
+        noise=original_noise,
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=_latent(),
+        chunk_duration_seconds=1.0,
+        sample_chunk=sampled,
+    )
+
+    plan = plan_h3_temporal_chunks(22, 122, 1.0)
+    assert [provider.seed for provider in seen] == [
+        derive_chunk_seed(original_noise.seed, chunk.frame_start) for chunk in plan.chunks
+    ]
+    assert all(type(provider) is RuntimeRandomNoise for provider in seen)
+    assert "noise_mode=chunk_derived" in status
+
+
+def test_registered_runtime_disable_noise_identity_is_supported(monkeypatch):
+    import nodes as comfy_nodes
+
+    class RuntimeEmptyNoise:
+        def __init__(self):
+            self.seed = 0
+
+        def generate_noise(self, input_latent):
+            return _empty_noise().generate_noise(input_latent)
+
+    class RegisteredDisableNoiseNode:
+        @classmethod
+        def execute(cls):
+            return (RuntimeEmptyNoise(),)
+
+    monkeypatch.setattr(comfy_nodes, "NODE_CLASS_MAPPINGS", {}, raising=False)
+    monkeypatch.setitem(comfy_nodes.NODE_CLASS_MAPPINGS, "DisableNoise", RegisteredDisableNoiseNode)
+    original_noise = RuntimeEmptyNoise()
+    seen = []
+
+    def sampled(**kwargs):
+        seen.append(kwargs["noise"])
+        return _identity_native(**kwargs)
+
+    _, status = sample_h3_temporal_chunks(
+        noise=original_noise,
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=_latent(),
+        chunk_duration_seconds=1.0,
+        sample_chunk=sampled,
+    )
+
+    assert seen == [original_noise] * 4
+    assert "noise_mode=native_zero" in status
+
+
 def test_derived_seed_uses_stable_absolute_temporal_identity():
     first_plan = plan_h3_temporal_chunks(427, 2417, 15.0)
     second_plan = plan_h3_temporal_chunks(427, 2417, 15.0)
@@ -334,6 +414,26 @@ def test_multi_chunk_generic_noise_fails_closed_without_mutation():
             sample_chunk=_identity_native,
         )
     assert not hasattr(custom_noise, "seed")
+
+
+def test_seeded_custom_noise_is_not_mistaken_for_registered_random_noise():
+    class Noise_RandomNoise:
+        def __init__(self):
+            self.seed = 123
+
+        def generate_noise(self, input_latent):
+            return _empty_noise().generate_noise(input_latent)
+
+    with pytest.raises(H3TemporalChunkSamplerError, match="generic/custom NOISE"):
+        sample_h3_temporal_chunks(
+            noise=Noise_RandomNoise(),
+            guider=None,
+            sampler=None,
+            sigmas=torch.tensor([1.0, 0.0]),
+            latent_image=_latent(),
+            chunk_duration_seconds=1.0,
+            sample_chunk=_identity_native,
+        )
 
 
 def test_detected_absolute_h3_keyframes_fail_closed_for_multiple_chunks():
