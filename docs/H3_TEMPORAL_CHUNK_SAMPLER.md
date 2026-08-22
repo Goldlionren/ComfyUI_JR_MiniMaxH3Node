@@ -107,9 +107,16 @@ plan timeline
 
 ## Noise 语义
 
-节点对传入的通用 `NOISE` 对象保持透明：每个块由原生 `SamplerCustomAdvanced` 调用一次 `noise.generate_noise(chunk_latent)`。这保证同一工作流配置可重复，但不承诺与“先生成一份整段 noise 再切片”相同。
+当前 ComfyUI 的标准 `Noise_RandomNoise` 只保存 `seed`。每次 `generate_noise()` 都调用 `comfy.sample.prepare_noise()`，而该函数每次从同一 seed 重新创建 CPU generator。因此，相同 seed 与相同 latent shape 的连续调用会生成逐位相同的 noise；ComfyUI 的通用 `NOISE` 类型没有公共 clone、offset、skip 或 substream 协议。
 
-特别是标准固定 seed `RandomNoise`，多个形状相同的块可能得到重复布局。节点不会通过读取私有字段或偷偷改 seed 来伪造全局噪声流，因为通用 `NOISE` 类型没有统一的 skip/offset 契约。需要逐块独立 seed 语义的用户应在后续版本有明确接口后再使用，而不是依赖隐式行为。
+节点采用以下确定性策略：
+
+- 单块：原样把输入 NOISE 对象交给原生 sampler，不改变对象或 seed，状态为 `noise_mode=native_single`。
+- 多块 + 官方 RandomNoise：使用 base seed 与块的绝对全局 `frame_start` 通过 uint64 SplitMix64 permutation 派生 seed，再实例化当前 ComfyUI 官方 `Noise_RandomNoise`。相同 workflow/plan 可重复，不同时间起点的 seed 不同，状态为 `noise_mode=chunk_derived`。
+- 多块 + 官方 DisableNoise：原样保持全零 noise，状态为 `noise_mode=native_zero`。
+- 多块 + generic/custom NOISE：采样前 fail closed。节点不假设它存在 `.seed`、不 clone、不 mutate，也不把标准 RandomNoise 实现复制进本项目。
+
+派生只创建当前块的官方 NOISE provider 和当前块 noise；不会预生成完整长视频 noise，因此 bounded-memory 架构不变。它也不承诺等价于“生成一份整段 noise 再按时间切片”。
 
 ## Phase 1 限制
 

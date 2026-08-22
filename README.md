@@ -2,7 +2,7 @@
 
 面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 14 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.11.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.11.1`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -297,7 +297,7 @@ H3 视频和音频 latent 的时间长度本来就不同。内部切点先对齐
 
 - 目标是限制采样期间随时间长度增长的 latent 与中间激活峰值；模型权重、conditioning、上游仍持有的整段 latent，以及当前块的原生 preview/x0 内存不包含在这项节省中。
 - 不存在跨块 hidden-state carry、全局时间位置偏移、overlap/blending 或边界重采样；各块会被原生 sampler 当作独立短片段处理，因此不承诺与整段单次采样数值等价，也不保证边界连续性。
-- 通用 `NOISE` 对象会对每个块独立调用。标准固定 seed RandomNoise 在相同形状块上可能重复噪声布局；结果可重复，但不等于从一次整段噪声中切片。
+- 单块执行原样使用输入 NOISE，不改变原生 seed 语义。多块执行时，官方 RandomNoise 使用 `base seed + absolute frame_start` 的稳定 uint64 派生子流，使相同 shape 的块可重复但不再逐位相同；官方 DisableNoise 保持原生全零语义。其他 generic/custom NOISE 因 ComfyUI 没有公共 clone/offset/substream 协议而明确拒绝，不会静默读取或修改私有属性。状态输出会报告 `noise_mode=native_single`、`chunk_derived` 或 `native_zero`。
 - `aggressive_memory_cleanup=false` 默认只依赖引用释放和 ComfyUI 正常内存管理；打开后才在每块结束调用 `soft_empty_cache`，通常更慢。
 - Phase 1 明确拒绝 `noise_mask`，因为不能安全猜测它在 H3 packed AV 双流中的时间映射。
 - 多块执行会检测并拒绝 `minimax_keyframes`：当前原生 keyframe 使用完整时间线的绝对帧号，却没有公开的 chunk position-offset 契约；静默重复或移动首尾帧条件都会改变含义。Reference conditioning 不使用这类目标帧锚点，可继续按原生路径传入每块。

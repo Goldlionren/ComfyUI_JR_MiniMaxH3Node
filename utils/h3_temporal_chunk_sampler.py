@@ -25,6 +25,7 @@ AUDIO_TEMPORAL_TOLERANCE = 1
 FRAMES_PER_VIDEO_TOKEN = (1, 4, 4, 4, 4)
 FRAMES_PER_CYCLE = sum(FRAMES_PER_VIDEO_TOKEN)
 VIDEO_TOKENS_PER_CYCLE = len(FRAMES_PER_VIDEO_TOKEN)
+UINT64_MASK = (1 << 64) - 1
 
 
 class H3TemporalChunkSamplerError(ValueError):
@@ -73,6 +74,7 @@ class H3TemporalChunkPlan:
 SampleChunk = Callable[..., Mapping[str, Any]]
 NestedFactory = Callable[[tuple[torch.Tensor, torch.Tensor]], Any]
 CleanupCallback = Callable[[], None]
+ChunkNoiseFactory = Callable[[H3TemporalChunk], Any]
 
 
 def _error(message: str) -> H3TemporalChunkSamplerError:
@@ -92,6 +94,26 @@ def frame_boundary_for_video_token(video_token_index: int) -> int:
         raise ValueError("video_token_index must be non-negative")
     cycles, remainder = divmod(video_token_index, VIDEO_TOKENS_PER_CYCLE)
     return cycles * FRAMES_PER_CYCLE + sum(FRAMES_PER_VIDEO_TOKEN[:remainder])
+
+
+def derive_chunk_seed(base_seed: int, frame_start: int) -> int:
+    """Derive a stable uint64 seed from the base seed and absolute H3 frame start.
+
+    SplitMix64's finalizer is a permutation over uint64.  For one base seed,
+    distinct frame starts therefore produce distinct derived seeds without
+    addition overflow or dependence on Python's randomized hash function.
+    """
+
+    if isinstance(base_seed, bool) or not isinstance(base_seed, int) or not 0 <= base_seed <= UINT64_MASK:
+        raise _error(f"standard RandomNoise seed must be an integer in [0, {UINT64_MASK}].")
+    if isinstance(frame_start, bool) or not isinstance(frame_start, int) or not 0 <= frame_start <= UINT64_MASK:
+        raise _error(f"chunk frame_start must be an integer in [0, {UINT64_MASK}].")
+
+    mixed = (frame_start + 0x9E3779B97F4A7C15) & UINT64_MASK
+    mixed = ((mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9) & UINT64_MASK
+    mixed = ((mixed ^ (mixed >> 27)) * 0x94D049BB133111EB) & UINT64_MASK
+    mixed ^= mixed >> 31
+    return (base_seed ^ mixed) & UINT64_MASK
 
 
 def _validate_full_timeline(video_t: int, audio_t: int) -> tuple[int, int, int]:
@@ -251,6 +273,36 @@ def _guider_has_temporal_keyframes(guider: Any) -> bool:
     return False
 
 
+def _resolve_chunk_noise(noise: Any, plan: H3TemporalChunkPlan) -> tuple[ChunkNoiseFactory, str]:
+    """Select a safe native NOISE strategy without inspecting custom internals."""
+
+    if len(plan.chunks) == 1:
+        return lambda _chunk: noise, "native_single"
+
+    try:
+        from comfy_extras.nodes_custom_sampler import Noise_EmptyNoise, Noise_RandomNoise
+    except ImportError:
+        raise RuntimeError(
+            f"{ERROR_PREFIX}\nThe installed ComfyUI does not provide its standard NOISE implementations."
+        ) from None
+
+    if type(noise) is Noise_RandomNoise:
+        base_seed = noise.seed
+
+        def chunk_random_noise(chunk: H3TemporalChunk):
+            return Noise_RandomNoise(derive_chunk_seed(base_seed, chunk.frame_start))
+
+        return chunk_random_noise, "chunk_derived"
+    if type(noise) is Noise_EmptyNoise:
+        return lambda _chunk: noise, "native_zero"
+
+    raise _error(
+        "multi-chunk sampling cannot safely derive temporal substreams for this generic/custom NOISE object. "
+        "The current ComfyUI NOISE contract exposes no standard clone, seed-derivation, offset or substream API. "
+        "Use the official RandomNoise or DisableNoise node, or use the native monolithic sampler."
+    )
+
+
 def _make_official_nested(streams: tuple[torch.Tensor, torch.Tensor]):
     try:
         from comfy.nested_tensor import NestedTensor
@@ -318,7 +370,12 @@ def _validate_sampled_chunk(
     return video, audio
 
 
-def _format_status(plan: H3TemporalChunkPlan, source_device: torch.device, output_video: torch.Tensor) -> str:
+def _format_status(
+    plan: H3TemporalChunkPlan,
+    source_device: torch.device,
+    output_video: torch.Tensor,
+    noise_mode: str,
+) -> str:
     chunk_ranges = ", ".join(
         f"#{chunk.index + 1} v[{chunk.video_start}:{chunk.video_end}] "
         f"a[{chunk.audio_start}:{chunk.audio_end}]"
@@ -331,6 +388,7 @@ def _format_status(plan: H3TemporalChunkPlan, source_device: torch.device, outpu
             f"chunks: {len(plan.chunks)} (requested {plan.requested_chunk_seconds:g}s)",
             f"source device: {source_device}",
             f"output: CPU preallocated, dtype={output_video.dtype}",
+            f"noise_mode={noise_mode}",
             f"audio timeline delta: {plan.audio_delta:+d} tick(s)",
             f"ranges: {chunk_ranges}",
             "phase 1: no overlap, no temporal hidden-state carry, no global position offset",
@@ -361,6 +419,7 @@ def sample_h3_temporal_chunks(
             "full-timeline frame indices, while the native sampler exposes no public per-chunk position-offset "
             "contract. Use text/reference conditioning without keyframes or the native monolithic sampler."
         )
+    chunk_noise_factory, noise_mode = _resolve_chunk_noise(noise, plan)
     sample_chunk = sample_chunk or _sample_with_native_advanced_sampler
     nested_factory = nested_factory or _make_official_nested
     cleanup = cleanup or _default_cleanup
@@ -369,13 +428,14 @@ def sample_h3_temporal_chunks(
     output_audio: torch.Tensor | None = None
 
     for chunk in plan.chunks:
+        chunk_noise = chunk_noise_factory(chunk)
         chunk_video = video[:, :, chunk.video_start : chunk.video_end, :, :]
         chunk_audio = audio[:, :, :, chunk.audio_start : chunk.audio_end]
         chunk_latent = dict(latent_image)
         chunk_latent["samples"] = nested_factory((chunk_video, chunk_audio))
 
         sampled_latent = sample_chunk(
-            noise=noise,
+            noise=chunk_noise,
             guider=guider,
             sampler=sampler,
             sigmas=sigmas,
@@ -393,7 +453,7 @@ def sample_h3_temporal_chunks(
         output_audio[:, :, :, chunk.audio_start : chunk.audio_end].copy_(sampled_audio)
 
         del sampled_video, sampled_audio, sampled_latent
-        del chunk_latent, chunk_video, chunk_audio
+        del chunk_latent, chunk_video, chunk_audio, chunk_noise
         if aggressive_memory_cleanup:
             gc.collect()
             cleanup()
@@ -405,7 +465,7 @@ def sample_h3_temporal_chunks(
     output.pop("downscale_ratio_spacial", None)
     output.pop("downscale_ratio_temporal", None)
     output["samples"] = nested_factory((output_video, output_audio))
-    return output, _format_status(plan, video.device, output_video)
+    return output, _format_status(plan, video.device, output_video, noise_mode)
 
 
 __all__ = [
@@ -416,6 +476,7 @@ __all__ = [
     "H3TemporalChunk",
     "H3TemporalChunkPlan",
     "H3TemporalChunkSamplerError",
+    "derive_chunk_seed",
     "frame_boundary_for_video_token",
     "plan_h3_temporal_chunks",
     "sample_h3_temporal_chunks",

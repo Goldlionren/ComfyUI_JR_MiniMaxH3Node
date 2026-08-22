@@ -10,6 +10,7 @@ from ComfyUI_JR_MiniMaxH3Node.nodes.h3_temporal_chunk_sampler import JR_H3_Tempo
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_temporal_chunk_sampler import (
     ERROR_PREFIX,
     H3TemporalChunkSamplerError,
+    derive_chunk_seed,
     frame_boundary_for_video_token,
     plan_h3_temporal_chunks,
     sample_h3_temporal_chunks,
@@ -26,6 +27,31 @@ def _identity_native(**kwargs):
     latent = kwargs["latent_image"]
     video, audio = latent["samples"].unbind()
     return {"samples": NestedTensor((video.clone(), audio.clone()))}
+
+
+def _empty_noise():
+    from comfy_extras.nodes_custom_sampler import Noise_EmptyNoise
+
+    return Noise_EmptyNoise()
+
+
+def _random_noise(seed):
+    from comfy_extras.nodes_custom_sampler import Noise_RandomNoise
+
+    return Noise_RandomNoise(seed)
+
+
+def test_native_standard_random_noise_repeats_same_shape_with_same_seed():
+    latent = _latent(video_t=7, audio_t=37)
+    noise = _random_noise(123456789)
+
+    first = noise.generate_noise(latent)
+    second = noise.generate_noise(latent)
+
+    first_video, first_audio = first.unbind()
+    second_video, second_audio = second.unbind()
+    assert torch.equal(first_video, second_video)
+    assert torch.equal(first_audio, second_audio)
 
 
 @pytest.mark.parametrize(
@@ -115,7 +141,7 @@ def test_sequential_sampling_reassembles_without_mutating_input_or_metadata(monk
 
     monkeypatch.setattr(torch, "cat", forbidden_cat)
     output, status = sample_h3_temporal_chunks(
-        noise=object(),
+        noise=_empty_noise(),
         guider=object(),
         sampler=object(),
         sigmas=torch.tensor([1.0, 0.0]),
@@ -138,6 +164,7 @@ def test_sequential_sampling_reassembles_without_mutating_input_or_metadata(monk
     assert torch.equal(original_audio, original_audio_copy)
     assert "chunks: 4" in status
     assert "CPU preallocated" in status
+    assert "noise_mode=native_zero" in status
     assert "no temporal hidden-state carry" in status
 
 
@@ -159,7 +186,7 @@ def test_completed_sampled_chunks_are_not_retained_between_calls():
         return {"samples": NestedTensor((sampled_video, sampled_audio))}
 
     output, _ = sample_h3_temporal_chunks(
-        noise=None,
+        noise=_empty_noise(),
         guider=None,
         sampler=None,
         sigmas=torch.tensor([1.0, 0.0]),
@@ -175,7 +202,7 @@ def test_completed_sampled_chunks_are_not_retained_between_calls():
 def test_aggressive_cleanup_runs_only_after_each_completed_chunk():
     cleanup_calls = []
     sample_h3_temporal_chunks(
-        noise=None,
+        noise=_empty_noise(),
         guider=None,
         sampler=None,
         sigmas=torch.tensor([1.0, 0.0]),
@@ -207,13 +234,115 @@ def test_output_preallocation_uses_native_sample_dtype():
     assert audio.dtype == torch.float16
 
 
+def _capture_chunk_random_noise(base_seed=123456789):
+    generated = []
+    derived_seeds = []
+
+    def sampled(**kwargs):
+        chunk_noise = kwargs["noise"]
+        noise_samples = chunk_noise.generate_noise(kwargs["latent_image"])
+        video_noise, audio_noise = noise_samples.unbind()
+        generated.append((video_noise.clone(), audio_noise.clone()))
+        derived_seeds.append(chunk_noise.seed)
+        return _identity_native(**kwargs)
+
+    _, status = sample_h3_temporal_chunks(
+        noise=_random_noise(base_seed),
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=_latent(),
+        chunk_duration_seconds=1.0,
+        sample_chunk=sampled,
+    )
+    return generated, derived_seeds, status
+
+
+def test_standard_random_noise_is_distinct_across_equal_shape_chunks_and_remainder():
+    generated, derived_seeds, status = _capture_chunk_random_noise()
+
+    assert len(generated) == 4
+    assert len(set(derived_seeds)) == 4
+    for left, right in zip(generated[:3], generated[1:3]):
+        assert left[0].shape == right[0].shape
+        assert not torch.equal(left[0], right[0])
+    assert generated[0][1].shape == generated[2][1].shape
+    assert not torch.equal(generated[0][1], generated[2][1])
+    assert generated[-1][0].shape[2] == 7
+    assert generated[-1][1].shape[3] == 37
+    assert "noise_mode=chunk_derived" in status
+
+
+def test_chunk_derived_random_noise_is_deterministic_across_runs():
+    first_noise, first_seeds, _ = _capture_chunk_random_noise()
+    second_noise, second_seeds, _ = _capture_chunk_random_noise()
+
+    assert first_seeds == second_seeds
+    for first, second in zip(first_noise, second_noise):
+        assert torch.equal(first[0], second[0])
+        assert torch.equal(first[1], second[1])
+
+
+def test_derived_seed_uses_stable_absolute_temporal_identity():
+    first_plan = plan_h3_temporal_chunks(427, 2417, 15.0)
+    second_plan = plan_h3_temporal_chunks(427, 2417, 15.0)
+    first = [derive_chunk_seed(0xFFFFFFFFFFFFFFFF, chunk.frame_start) for chunk in first_plan.chunks]
+    second = [derive_chunk_seed(0xFFFFFFFFFFFFFFFF, chunk.frame_start) for chunk in second_plan.chunks]
+
+    assert first == second
+    assert len(set(first)) == len(first_plan.chunks)
+    assert all(0 <= seed <= 0xFFFFFFFFFFFFFFFF for seed in first)
+
+
+def test_single_chunk_keeps_original_random_noise_object_and_native_seed():
+    original_noise = _random_noise(987654321)
+    seen = []
+
+    def sampled(**kwargs):
+        seen.append(kwargs["noise"])
+        return _identity_native(**kwargs)
+
+    _, status = sample_h3_temporal_chunks(
+        noise=original_noise,
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=_latent(),
+        chunk_duration_seconds=99.0,
+        sample_chunk=sampled,
+    )
+
+    assert seen == [original_noise]
+    assert seen[0].seed == 987654321
+    assert "noise_mode=native_single" in status
+
+
+def test_multi_chunk_generic_noise_fails_closed_without_mutation():
+    class CustomNoise:
+        def generate_noise(self, input_latent):
+            return _empty_noise().generate_noise(input_latent)
+
+    custom_noise = CustomNoise()
+    with pytest.raises(H3TemporalChunkSamplerError, match="generic/custom NOISE"):
+        sample_h3_temporal_chunks(
+            noise=custom_noise,
+            guider=None,
+            sampler=None,
+            sigmas=torch.tensor([1.0, 0.0]),
+            latent_image=_latent(),
+            chunk_duration_seconds=1.0,
+            sample_chunk=_identity_native,
+        )
+    assert not hasattr(custom_noise, "seed")
+
+
 def test_detected_absolute_h3_keyframes_fail_closed_for_multiple_chunks():
     class Guider:
         original_conds = {"positive": [{"minimax_keyframes": [{"resolved_frame_index": 0}]}]}
 
     with pytest.raises(H3TemporalChunkSamplerError, match="cannot safely consume minimax_keyframes"):
         sample_h3_temporal_chunks(
-            noise=None,
+            noise=_empty_noise(),
             guider=Guider(),
             sampler=None,
             sigmas=torch.tensor([1.0, 0.0]),
@@ -238,7 +367,7 @@ def test_detected_absolute_h3_keyframes_fail_closed_for_multiple_chunks():
 def test_invalid_h3_latents_fail_closed(latent, expected):
     with pytest.raises(H3TemporalChunkSamplerError) as exc:
         sample_h3_temporal_chunks(
-            noise=None,
+            noise=_empty_noise(),
             guider=None,
             sampler=None,
             sigmas=torch.tensor([1.0, 0.0]),
@@ -284,7 +413,7 @@ def test_native_output_shape_change_is_rejected():
 
     with pytest.raises(H3TemporalChunkSamplerError, match="changed the video shape"):
         sample_h3_temporal_chunks(
-            noise=None,
+            noise=_empty_noise(),
             guider=None,
             sampler=None,
             sigmas=torch.tensor([1.0, 0.0]),

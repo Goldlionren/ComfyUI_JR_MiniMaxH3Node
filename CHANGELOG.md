@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.11.1
+
+- Fixed identical stochastic noise being reused by same-shaped H3 temporal chunks when the official fixed-seed `RandomNoise` object was called repeatedly.
+- Added stable uint64 chunk seed derivation from the base seed and absolute global frame start while preserving the original native NOISE object and seed for single-chunk sampling.
+- Kept official `DisableNoise` native for multi-chunk sampling and made unsupported generic/custom NOISE objects fail closed before partial sampling because ComfyUI exposes no common clone, offset or substream contract.
+- Added native behavior reproduction, distinctness, determinism, temporal-identity, remainder, single-chunk and generic-NOISE regression coverage.
+
 ## 0.11.0
 
 - Added `JR_H3_TemporalChunkSampler`, a sequential H3 AV temporal sampler with the native Advanced Sampler input contract.

@@ -137,7 +137,7 @@ Node ID：`JR_H3_TemporalChunkSampler`
 
 | 输入 | 类型 | 默认值 | 范围或说明 |
 | --- | --- | --- | --- |
-| `noise` | NOISE | 必须连接 | 与原生 Advanced Sampler 相同的 noise provider；每块独立调用 |
+| `noise` | NOISE | 必须连接 | 单块保持原生；多块支持官方 RandomNoise 的绝对时间派生子流及官方 DisableNoise，其他 custom NOISE fail closed |
 | `guider` | GUIDER | 必须连接 | 原生 ComfyUI guider |
 | `sampler` | SAMPLER | 必须连接 | 原生 sampler object |
 | `sigmas` | SIGMAS | 必须连接 | 每块使用同一完整 sigma schedule |
