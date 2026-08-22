@@ -1,8 +1,8 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前 `main` 注册 13 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 14 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.10.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.11.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -14,6 +14,7 @@
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
 | JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
+| JR MiniMax H3 Temporal Chunk Sampler | `JR_H3_TemporalChunkSampler` | Sampling | 分块采样后的 H3 AV `LATENT`、状态 |
 | JR H3 Cache Config Router | `JR_H3_CacheConfigRouter` | Cache | 缓存配置、建议档位、分析 |
 | JR H3 Adaptive Cache | `JR_H3_AdaptiveCache` | Cache | 已 patch 的 MODEL、实际档位、状态 |
 | H3 Unified Acceleration | `JR_H3_UnifiedAcceleration` | Optimization | 已 patch 的 MODEL |
@@ -277,6 +278,31 @@ AUDIO -> H3 Audio VAE Encode -> audio_latent        ┘
 ```
 
 节点严格要求 video 为 `[B,24,T,H,W]`、audio 为 `[B,32,2,T_audio]`，batch、dtype 和 device 完全一致，数值全部 finite。官方 H3 时间网格为 `T_video=5k+2`，对应 `17k+5` 个 24 fps 原始帧；音频按 40 latent ticks/s 校验，并只容许 ±1 tick 的编码边界差异。节点不会 clone、cast 或移动输入 tensor。详见 [H3 AV Latent Builder](docs/H3_AV_LATENT_BUILDER.md)。
+
+## Temporal Chunk Sampler
+
+```text
+Random Noise ───────┐
+Guider ─────────────┤
+Sampler ────────────┼-> JR MiniMax H3 Temporal Chunk Sampler -> sampled H3 AV LATENT
+Sigmas ─────────────┤
+H3 AV LATENT ───────┘
+```
+
+`JR_H3_TemporalChunkSampler` 与原生 `SamplerCustomAdvanced` 使用相同的 `NOISE / GUIDER / SAMPLER / SIGMAS / LATENT` 接口。它不改写扩散算法：每次只构造当前 H3 视频/音频时间片并调用当前 ComfyUI 原生 `SamplerCustomAdvanced`，完成后立刻把两个结果流复制到预分配的 CPU 全长缓冲区、删除当前块引用，再处理下一块。实现不会先收集所有块再 `torch.cat`，也不会并行启动多个块。
+
+H3 视频和音频 latent 的时间长度本来就不同。内部切点先对齐视频的 5-token / 17-frame 周期，再从同一个全局 24 fps 帧边界换算 40 Hz 音频边界；最后一个音频边界保留合法的编码 ±1 tick 差异。因此，它切的是一条共享时间线，不是假设 `T_video == T_audio`。
+
+这个 Phase 1 方案的真实边界：
+
+- 目标是限制采样期间随时间长度增长的 latent 与中间激活峰值；模型权重、conditioning、上游仍持有的整段 latent，以及当前块的原生 preview/x0 内存不包含在这项节省中。
+- 不存在跨块 hidden-state carry、全局时间位置偏移、overlap/blending 或边界重采样；各块会被原生 sampler 当作独立短片段处理，因此不承诺与整段单次采样数值等价，也不保证边界连续性。
+- 通用 `NOISE` 对象会对每个块独立调用。标准固定 seed RandomNoise 在相同形状块上可能重复噪声布局；结果可重复，但不等于从一次整段噪声中切片。
+- `aggressive_memory_cleanup=false` 默认只依赖引用释放和 ComfyUI 正常内存管理；打开后才在每块结束调用 `soft_empty_cache`，通常更慢。
+- Phase 1 明确拒绝 `noise_mask`，因为不能安全猜测它在 H3 packed AV 双流中的时间映射。
+- 多块执行会检测并拒绝 `minimax_keyframes`：当前原生 keyframe 使用完整时间线的绝对帧号，却没有公开的 chunk position-offset 契约；静默重复或移动首尾帧条件都会改变含义。Reference conditioning 不使用这类目标帧锚点，可继续按原生路径传入每块。
+
+完整算法、输入校验、60 秒规划示例和内存口径见 [H3 Temporal Chunk Sampler](docs/H3_TEMPORAL_CHUNK_SAMPLER.md)。
 
 ## H3 Adaptive Cache
 

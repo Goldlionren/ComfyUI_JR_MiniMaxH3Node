@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.11.0
+
+- Added `JR_H3_TemporalChunkSampler`, a sequential H3 AV temporal sampler with the native Advanced Sampler input contract.
+- Added deterministic 5-video-token / 17-frame chunk planning and separate 24 fps video to 40 Hz audio boundary mapping, including the official final ±1 audio tick tolerance.
+- Delegated every chunk to ComfyUI's current `SamplerCustomAdvanced`, then copied it directly into CPU-preallocated full-length video/audio buffers before releasing the chunk; no retained output list, final `cat`, parallel chunk execution, decoder, overlap or core monkey patching.
+- Added fail-closed H3 NestedTensor validation, explicit phase-1 `noise_mask` rejection, optional post-chunk `soft_empty_cache`, lifecycle tests, documentation and node registration.
+
 ## 0.10.0
 
 - Added `JR_MiniMaxH3AVLatentBuilder` to assemble separately encoded H3 video `[B,24,T,H,W]` and audio `[B,32,2,T]` latents into ComfyUI's official two-stream `NestedTensor` LATENT.

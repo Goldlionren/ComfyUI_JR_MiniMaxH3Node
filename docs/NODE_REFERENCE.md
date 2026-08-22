@@ -1,6 +1,6 @@
 # 节点参数参考
 
-本页按当前 `main` 的 Python 定义记录全部 13 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 Python 定义记录全部 14 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
 
 ## Hybrid Loader
 
@@ -126,6 +126,26 @@ Node ID：`JR_MiniMaxH3AVLatentBuilder`
 | `audio_latent` | LATENT | 必须连接 | `samples` 必须是 floating tensor `[B,32,2,T_audio]` |
 
 两流必须具有相同 batch、dtype 和 device，并且全部数值 finite。节点按官方 24 fps / 40 Hz 时间结构检查同一 timeline，只封装官方 `NestedTensor((video, audio))`，不进行编码、clone、cast、设备迁移或文件 I/O。详见 [H3_AV_LATENT_BUILDER.md](H3_AV_LATENT_BUILDER.md)。
+
+## Temporal Chunk Sampler
+
+Node ID：`JR_H3_TemporalChunkSampler`
+
+分类：`JR MiniMax H3/Sampling`
+
+输出：`output: LATENT`、`status: STRING`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `noise` | NOISE | 必须连接 | 与原生 Advanced Sampler 相同的 noise provider；每块独立调用 |
+| `guider` | GUIDER | 必须连接 | 原生 ComfyUI guider |
+| `sampler` | SAMPLER | 必须连接 | 原生 sampler object |
+| `sigmas` | SIGMAS | 必须连接 | 每块使用同一完整 sigma schedule |
+| `latent_image` | LATENT | 必须连接 | 官方 H3 两流 NestedTensor；video `[B,24,5k+2,H,W]`、audio `[B,32,2,T]` |
+| `chunk_duration_seconds` | FLOAT | `15.0` | 1..3600，step 0.5；实际内部边界按 5 video tokens / 17 frames 对齐 |
+| `aggressive_memory_cleanup` | BOOLEAN | `false` | 每块结束后调用 ComfyUI `soft_empty_cache`；更慢，通常保持关闭 |
+
+节点只负责时间规划、切片、顺序编排、CPU 预分配回填和生命周期控制；每块扩散采样委托给当前 ComfyUI 原生 `SamplerCustomAdvanced`。Phase 1 没有 overlap、跨块状态或全局 position offset，并拒绝 `noise_mask`；多块执行还会拒绝带绝对目标帧索引的 `minimax_keyframes`。详见 [H3_TEMPORAL_CHUNK_SAMPLER.md](H3_TEMPORAL_CHUNK_SAMPLER.md)。
 
 ## Cache Config Router
 

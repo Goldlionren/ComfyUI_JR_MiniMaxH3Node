@@ -28,13 +28,15 @@ def main() -> None:
         )
         node = nodes.NODE_CLASS_MAPPINGS.get("JR_H3_HybridLoader")
         av_builder = nodes.NODE_CLASS_MAPPINGS.get("JR_MiniMaxH3AVLatentBuilder")
+        temporal_sampler = nodes.NODE_CLASS_MAPPINGS.get("JR_H3_TemporalChunkSampler")
         result = {
             "loaded": loaded,
-            "registered": node is not None and av_builder is not None,
+            "registered": node is not None and av_builder is not None and temporal_sampler is not None,
             "return_types": list(node.RETURN_TYPES) if node else None,
             "av_builder_return_types": list(av_builder.RETURN_TYPES) if av_builder else None,
+            "temporal_sampler_return_types": list(temporal_sampler.RETURN_TYPES) if temporal_sampler else None,
             "category": node.CATEGORY if node else None,
-            "node_count": 13 if loaded else None,
+            "node_count": 14 if loaded else None,
         }
         print(json.dumps(result, indent=2, sort_keys=True))
         if (
@@ -43,6 +45,8 @@ def main() -> None:
             or node.RETURN_TYPES != ("MODEL",)
             or av_builder is None
             or av_builder.RETURN_TYPES != ("LATENT", "STRING")
+            or temporal_sampler is None
+            or temporal_sampler.RETURN_TYPES != ("LATENT", "STRING")
         ):
             raise SystemExit(1)
     finally:
