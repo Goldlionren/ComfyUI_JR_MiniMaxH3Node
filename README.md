@@ -1,8 +1,8 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 14 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 16 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.11.2`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.13.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -14,6 +14,8 @@
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
 | JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
+| JR MiniMax H3 Split AV Latent | `JR_H3_SplitAVLatent` | Latent | 独立 video/audio `LATENT` |
+| JR MiniMax H3 Neural Latent Upscaler | `JR_MiniMaxH3NeuralLatentUpscaler` | Latent | neural 放大后的 video `LATENT`、状态 |
 | JR MiniMax H3 Temporal Chunk Sampler | `JR_H3_TemporalChunkSampler` | Sampling | 分块采样后的 H3 AV `LATENT`、状态 |
 | JR H3 Cache Config Router | `JR_H3_CacheConfigRouter` | Cache | 缓存配置、建议档位、分析 |
 | JR H3 Adaptive Cache | `JR_H3_AdaptiveCache` | Cache | 已 patch 的 MODEL、实际档位、状态 |
@@ -267,7 +269,7 @@ Auto 模式优先级：
 
 完整映射和限制见 [Director Pipeline](docs/DIRECTOR_PIPELINE.md)。
 
-## AV Latent Builder
+## AV Latent Builder 与 Split AV Latent
 
 `JR_MiniMaxH3AVLatentBuilder` 将上游分别编码好的 H3 video latent 与 audio latent 组装成官方两流 `NestedTensor` LATENT，适合 video-to-video 和 latent-to-latent 工作流。它不是 VAE 编码器、文件读取器、音频处理器或采样器。
 
@@ -278,6 +280,34 @@ AUDIO -> H3 Audio VAE Encode -> audio_latent        ┘
 ```
 
 节点严格要求 video 为 `[B,24,T,H,W]`、audio 为 `[B,32,2,T_audio]`，batch、dtype 和 device 完全一致，数值全部 finite。官方 H3 时间网格为 `T_video=5k+2`，对应 `17k+5` 个 24 fps 原始帧；音频按 40 latent ticks/s 校验，并只容许 ±1 tick 的编码边界差异。节点不会 clone、cast 或移动输入 tensor。详见 [H3 AV Latent Builder](docs/H3_AV_LATENT_BUILDER.md)。
+
+`JR_H3_SplitAVLatent` 执行相反方向：它只接受 `samples` 为当前 ComfyUI 官方 `NestedTensor` 的 H3 AV LATENT，通过公开的 `unbind()` 按固定 `video, audio` 顺序拆成两个标准 LATENT 字典。节点检查两流数量、Tensor 类型、video `[B,24,T,H,W]`、audio `[B,32,2,T]`、batch 和 finite 值；输出直接引用原始 Tensor，不 clone、不 cast、不迁移 device，也不主动调用 `contiguous()`。因此两个输出均可直接接原生 `Save Latent`，由保存节点按自身标准路径处理连续布局。
+
+```text
+Load Latent / H3 sampler -> JR MiniMax H3 Split AV Latent
+                              ├-> video_latent -> video latent workflow / Save Latent
+                              └-> audio_latent -> audio latent workflow / Save Latent
+```
+
+跨工作流可先分别 `Load Latent` 两个输出，再接回 `JR MiniMax H3 AV Latent Builder` 重建官方 H3 AV LATENT。video 与 audio 是不同结构：图像/video latent 的空间放大、插值或 resize 节点只能处理 `video_latent`；`audio_latent` 没有 H/W 空间轴，绝不能送入空间放大链。详见 [H3 Split AV Latent](docs/H3_SPLIT_AV_LATENT.md)。
+
+## Neural Latent Upscaler
+
+```text
+H3 AV LATENT -> JR MiniMax H3 Split AV Latent
+                  ├-> video_latent -> JR MiniMax H3 Neural Latent Upscaler ┐
+                  └-> audio_latent (unchanged) -----------------------------├-> AV Latent Builder -> Pass-2 sampler
+```
+
+`JR_MiniMaxH3NeuralLatentUpscaler` 只接受普通 H3 video LATENT `[B,24,T,H,W]`，不接受完整 AV `NestedTensor`，也不处理 audio、conditioning、noise、sigmas、MODEL 或 sampler。它使用用户单独放入 `ComfyUI/models/latent_upscale_models/` 的 H3-specific 3D neural checkpoint；节点不联网下载，缺少 checkpoint 时明确报错，绝不会悄悄退回 nearest/bilinear/bicubic。
+
+- `scale`：宽和高各乘线性倍率，例如 `1.5x` 会使像素面积约乘 `2.25`。
+- `megapixels`：目标是 VAE decode 后的 pixel-space MP，不是 latent-grid MP；保持输入宽高比并选择最接近目标 MP 的合法尺寸。
+- 节点从当前 ComfyUI 原生 H3 类发现 VAE 16x 空间压缩和 DiT latent 2x2 patch，因而输出 latent H/W 对齐 2、pixel W/H 对齐 32。
+- B/C/T、输入 dtype/device 和 LATENT 额外 metadata 保持不变；长时间 latent 内部按时间分块执行 3D 网络，但绝不做 temporal interpolation。
+- 推理结束使用 ComfyUI 的 model-specific unload API 把 upscaler 移出 GPU，不调用全局卸载，也不把 `torch.cuda.empty_cache()` 当成模型管理方案。
+
+例如 0.9 MP 一采可用 `scale=1.5` 得到约 2.0 MP，或直接选择 `megapixels=2.0`。checkpoint、license、尺寸算法和限制见 [H3 Neural Latent Upscaler](docs/H3_NEURAL_LATENT_UPSCALER.md)。
 
 ## Temporal Chunk Sampler
 

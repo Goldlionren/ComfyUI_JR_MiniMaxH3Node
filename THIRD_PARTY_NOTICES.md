@@ -1,5 +1,16 @@
 # Third-party notices
 
+## LBH-123-AI MiniMax H3 latent-upscaler checkpoint
+
+- Model repository: https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler
+- Companion code repository: https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler
+- Audit date: 2026-08-25
+- Model-card license statement: Apache-2.0
+- Explicit license found in the audited GitHub code tree: **NO**
+- Source or weights vendored by this repository: **NO**
+
+The JR Neural Latent Upscaler is an independently written checkpoint-compatible 3D inference implementation. It uses factual H3 tensor shapes, public checkpoint state-dict interoperability keys, and canonical normalization/spatial facts discovered from the installed ComfyUI MiniMax H3 implementation. It does not copy the LBH custom-node source, comments, UI, examples, weights or files. Users obtain any checkpoint separately and remain responsible for verifying its current model terms.
+
 ## Scott Mudge — ComfyUI_MinimaxH3HybridLoader
 
 - Repository: https://github.com/scottmudge/ComfyUI_MinimaxH3HybridLoader

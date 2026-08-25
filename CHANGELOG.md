@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.13.0
+
+- Added `JR_MiniMaxH3NeuralLatentUpscaler`, a single-purpose 3D neural spatial upscaler for plain MiniMax H3 video LATENT tensors between Split and Builder.
+- Added deterministic linear-scale and decoded pixel-space megapixel planning using the installed native H3 VAE compression and DiT spatial patch grids, preserving B/C/T, dtype, device and unrelated LATENT metadata.
+- Added strict checkpoint signature loading from ComfyUI's `latent_upscale_models` folder, canonical H3 normalization from the installed ComfyUI implementation, temporal chunking for long latent sequences, and model-specific ComfyUI offload after inference.
+- Added explicit no-checkpoint/no-network/no-interpolation-fallback behavior, license provenance, synthetic neural-checkpoint tests and Split → Upscaler → Builder compatibility coverage.
+
+## 0.12.0
+
+- Added `JR_H3_SplitAVLatent` to split the official MiniMax H3 two-stream `NestedTensor` LATENT into standard video and audio LATENT mappings through the public `unbind()` API.
+- Added fail-closed official-type, stream-count, tensor-shape, batch and finite-value validation while preserving the exact input Tensor objects without clone, cast, device transfer or eager contiguous conversion.
+- Documented Builder/Split round trips, native Save Latent compatibility, cross-workflow save/load wiring and the requirement to keep audio latent out of spatial video-latent upscaling chains.
+
 ## 0.11.2
 
 - Fixed official core `RandomNoise` and `DisableNoise` being rejected when ComfyUI loaded `nodes_custom_sampler.py` under its path-derived runtime module identity while the sampler imported the same source through its package identity.

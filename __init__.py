@@ -7,7 +7,9 @@ from .nodes.h3_av_latent_builder import JR_MiniMaxH3AVLatentBuilder
 from .nodes.h3_cache_config_router import JR_H3_CacheConfigRouter
 from .nodes.h3_directed_video_conditioning import JR_H3_DirectedVideoConditioning
 from .nodes.h3_hybrid_loader import JR_H3_HybridLoader
+from .nodes.h3_neural_latent_upscaler import JR_MiniMaxH3NeuralLatentUpscaler
 from .nodes.h3_openai_prompt_optimizer import JR_H3_OpenAICompatiblePromptOptimizer
+from .nodes.h3_split_av_latent import JR_H3_SplitAVLatent
 from .nodes.h3_temporal_chunk_sampler import JR_H3_TemporalChunkSampler
 from .nodes.h3_unified_acceleration import JR_H3_UnifiedAcceleration
 from .nodes.last_frame import JR_H3_LastFrame
@@ -16,7 +18,7 @@ from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
 from .nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner
 from .server import register_director_media_routes, register_prompt_review_routes
 
-__version__ = "0.11.2"
+__version__ = "0.13.0"
 WEB_DIRECTORY = "./js"
 
 register_prompt_review_routes()
@@ -25,6 +27,8 @@ register_director_media_routes()
 NODE_CLASS_MAPPINGS = {
     "JR_H3_DirectorDesk": JR_H3_DirectorDesk,
     "JR_MiniMaxH3AVLatentBuilder": JR_MiniMaxH3AVLatentBuilder,
+    "JR_H3_SplitAVLatent": JR_H3_SplitAVLatent,
+    "JR_MiniMaxH3NeuralLatentUpscaler": JR_MiniMaxH3NeuralLatentUpscaler,
     "JR_H3_OpenAICompatiblePromptOptimizer": JR_H3_OpenAICompatiblePromptOptimizer,
     "JR_H3_DirectedVideoConditioning": JR_H3_DirectedVideoConditioning,
     "JR_H3_HybridLoader": JR_H3_HybridLoader,
@@ -42,6 +46,8 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_DirectorDesk": "JR MiniMax H3 Director Desk",
     "JR_MiniMaxH3AVLatentBuilder": "JR MiniMax H3 AV Latent Builder",
+    "JR_H3_SplitAVLatent": "JR MiniMax H3 Split AV Latent",
+    "JR_MiniMaxH3NeuralLatentUpscaler": "JR MiniMax H3 Neural Latent Upscaler",
     "JR_H3_OpenAICompatiblePromptOptimizer": "JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)",
     "JR_H3_DirectedVideoConditioning": "JR MiniMax H3 Directed Video Conditioning",
     "JR_H3_HybridLoader": "JR MiniMax H3 Hybrid Loader",

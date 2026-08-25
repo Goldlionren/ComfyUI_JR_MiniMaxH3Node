@@ -127,6 +127,37 @@ Node ID：`JR_MiniMaxH3AVLatentBuilder`
 
 两流必须具有相同 batch、dtype 和 device，并且全部数值 finite。节点按官方 24 fps / 40 Hz 时间结构检查同一 timeline，只封装官方 `NestedTensor((video, audio))`，不进行编码、clone、cast、设备迁移或文件 I/O。详见 [H3_AV_LATENT_BUILDER.md](H3_AV_LATENT_BUILDER.md)。
 
+## Split AV Latent
+
+Node ID：`JR_H3_SplitAVLatent`
+
+分类：`JR MiniMax H3/Latent`
+
+输出：`video_latent: LATENT`、`audio_latent: LATENT`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `av_latent` | LATENT | 必须连接 | `samples` 必须是当前 ComfyUI 官方、恰含 video/audio 两流的 `NestedTensor` |
+
+节点通过官方 `unbind()` 拆出 video `[B,24,T,H,W]` 与 audio `[B,32,2,T]`，验证 batch 与 finite 值，然后以新的标准 LATENT 字典返回原始 Tensor 引用；不 clone、cast、设备迁移或主动 contiguous。输出可直接连接原生 `Save Latent`。audio 没有图像空间轴，不得进入 video latent 的空间放大/resize 链。详见 [H3_SPLIT_AV_LATENT.md](H3_SPLIT_AV_LATENT.md)。
+
+## Neural Latent Upscaler
+
+Node ID：`JR_MiniMaxH3NeuralLatentUpscaler`
+
+分类：`JR MiniMax H3/Latent`
+
+输出：`video_latent: LATENT`、`status: STRING`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `video_latent` | LATENT | 必须连接 | 普通 H3 video tensor `[B,24,T,H,W]`；不能是完整 AV NestedTensor |
+| `resize_mode` | COMBO | `scale` | `scale`、`megapixels` |
+| `scale` | FLOAT | `1.5` | 1.0..4.0；宽高线性倍率，仅 scale 模式使用 |
+| `target_megapixels` | FLOAT | `2.0` | 0.01..64.0；decode 后 pixel-space MP，仅 megapixels 模式使用 |
+
+节点自动从 `models/latent_upscale_models/` 选择 H3 neural checkpoint，不联网下载且没有插值 fallback。输出只改变 H/W，保持 B/C/T、metadata、dtype/device；尺寸根据当前 ComfyUI 原生 H3 VAE 和 DiT patch 合同对齐。audio 必须绕过本节点后直接回到 Builder。详见 [H3_NEURAL_LATENT_UPSCALER.md](H3_NEURAL_LATENT_UPSCALER.md)。
+
 ## Temporal Chunk Sampler
 
 Node ID：`JR_H3_TemporalChunkSampler`
