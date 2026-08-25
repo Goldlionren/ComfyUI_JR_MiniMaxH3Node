@@ -415,6 +415,17 @@ python -m ruff check . --exclude .reference
 
 import 阶段不会访问网络、加载模型、初始化 CUDA/RTX SDK 或运行 FFmpeg。真实 GPU、真实 H3、网络服务和编码器能力仍需在目标 ComfyUI 环境中单独验证。
 
+## 发布到 Comfy Registry
+
+Release process:
+
+1. 在 `pyproject.toml` 中递增版本号。
+2. 按 workflow 触发规则提交并 push 到 `main`。
+3. GitHub Action 自动发布该不可变版本到 Comfy Registry。
+4. 仓库 Actions Secrets 中必须存在 `REGISTRY_ACCESS_TOKEN`。
+
+普通 Git commit 不等于 Registry release；没有版本号变更时不得覆盖已发布版本。
+
 ## 许可证与归属
 
 本项目代码使用 [Apache License 2.0](LICENSE)。FFmpeg、ComfyUI、NVIDIA SDK/binding、KJNodes、SageAttention、Sol-Attn、Turbo LoRA、MiniMax H3 模型与提示词资料保留各自许可与使用条款。
