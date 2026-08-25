@@ -1,6 +1,6 @@
 # 节点参数参考
 
-本页按当前 Python 定义记录全部 14 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 Python 定义记录全部 18 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
 
 ## Hybrid Loader
 
@@ -37,6 +37,46 @@ Node ID：`JR_H3_DirectorDesk`
 | `director_state_json` | STRING | 内置 10 秒/24 fps/1 Shot state | 前端隐藏的 schema-versioned 执行 state；实际编辑数据同步保存在 `node.properties.jr_h3_director_state` |
 
 节点本身不调用 LLM。它在执行期验证时间轴、解析限定在 ComfyUI input/temp/output 根目录内的媒体 descriptor、只把 IMAGE 解码为 runtime tensor，并确定性地产生两个输出。First Frame 是唯一 0 秒点锚；Shot 不可重叠；Visual/Reference Audio 可重叠；Driving Audio 不可重叠。
+
+## Director PIPE Builder
+
+Node ID：`JR_H3_DirectorPipeBuilder`
+
+分类：`JR MiniMax H3/Director`
+
+输出：`pip: JR_H3_DIRECTOR_PIPE`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `prompt` | STRING | 空 | 必须非空；逐字写入当前 optimized stage |
+| `duration_seconds` | FLOAT | 10.0 | 0.1..3600，step 0.1 |
+| `fps` | FLOAT | 24.0 | 1..240；编辑 metadata，不改变 H3 原生 24 fps |
+| `first_frame` | IMAGE | 未连接 | optional；必须恰含 1 张 RGB IMAGE |
+| `last_frame` | IMAGE | 未连接 | optional；必须恰含 1 张 RGB IMAGE |
+| `reference_images` | IMAGE | 未连接 | optional；batch 每项成为独立 Picture；含 anchors 总计最多 9 |
+| `reference_video` | VIDEO | 未连接 | optional；标准 ComfyUI VIDEO，runtime-only |
+| `reference_audio` | AUDIO | 未连接 | optional；标准 `[1,1|2,T]` AUDIO |
+| `driving_audio` | AUDIO | 未连接 | optional；标准 `[1,1|2,T]` AUDIO |
+
+Builder 创建单 Shot 合法 PIPE，不写 Tensor、waveform 或 VIDEO bytes 到 workflow JSON。详见 [DIRECTOR_PIPE_IO.md](DIRECTOR_PIPE_IO.md)。
+
+## Director PIPE Unpack
+
+Node ID：`JR_H3_DirectorPipeUnpack`
+
+分类：`JR MiniMax H3/Director`
+
+主要输出：原样 `pip`、final/director/optimized/reviewed prompt、duration/fps/width/height、首尾帧、选定的 Reference Image/Video/Audio/Driving Audio、`registry_json`、`status`。
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `pip` | JR_H3_DIRECTOR_PIPE | 必须连接 | 任何合法来源的 PIPE |
+| `reference_image_index` | INT | 1 | 1..9；只在 reference_image 角色内计数 |
+| `reference_video_index` | INT | 1 | 1..3 |
+| `reference_audio_index` | INT | 1 | 1..3；只在 reference_audio 角色内计数 |
+| `driving_audio_index` | INT | 1 | 1..3；只在 driving_audio 角色内计数 |
+
+不存在的索引返回 `None`，但第一输出的 PIPE 始终保持完整且对象身份不变。若要同时拆出多个同类媒体，可并联多个 Unpack 并选择不同索引。
 
 ## Prompt Optimizer
 

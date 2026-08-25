@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 16 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 18 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
 当前包版本：`0.13.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
@@ -10,6 +10,8 @@
 | --- | --- | --- | --- |
 | JR MiniMax H3 Hybrid Loader | `JR_H3_HybridLoader` | Loaders | 一个原生 `MODEL` |
 | JR MiniMax H3 Director Desk | `JR_H3_DirectorDesk` | Director | 原始 Director Prompt、`JR_H3_DIRECTOR_PIPE` |
+| JR MiniMax H3 Director PIPE Builder | `JR_H3_DirectorPipeBuilder` | Director | 标准 STRING/IMAGE/VIDEO/AUDIO 组装的 PIPE |
+| JR MiniMax H3 Director PIPE Unpack | `JR_H3_DirectorPipeUnpack` | Director | 透传 PIPE、prompt stages、选定的标准媒体 |
 | JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态、派生 PIPE |
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
@@ -135,6 +137,8 @@ Director Desk.pip
 ```
 
 Director Desk 是不调用 LLM 的时间线编辑器。它把 Global Direction、Shot、图片、视频、音频和每项 Direction/Notes 确定性地编译为 raw `director_prompt`，并通过一根自定义类型的 `pip` 线把完整结构交给现有 Prompt Optimizer。Optimizer 将 `optimized_prompt` 写入一个新 PIPE，Review 将最终批准文本写入另一个新 PIPE，最后由 Directed Video Conditioning 直接调用当前 ComfyUI 原生 MiniMax H3 I2V/Ref2V conditioning。三个节点都不会原地修改上游 PIPE。
+
+不需要 Director Desk 时间线时，可以用 `Director PIPE Builder` 把最终 prompt、duration/fps、首尾帧、Reference IMAGE batch、标准 VIDEO、Reference AUDIO 和 Driving AUDIO 直接组装为同一种 PIPE；输入 prompt 会逐字保存为当前 optimized stage，同时保留一个确定性的单 Shot Director context。`Director PIPE Unpack` 接受任何来源的 PIPE，原样透传总线，并按 1-based index 输出选定的标准 Reference Image/Video/Audio、首尾帧、prompt stages、时长、fps、尺寸和不含二进制的 registry JSON。索引不存在时对应媒体输出为 `None`，完整媒体仍保留在透传 PIPE 中。详见 [Director PIPE Builder / Unpack](docs/DIRECTOR_PIPE_IO.md)。
 
 `director_prompt`、`optimized_prompt`、`reviewed_prompt` 等 STRING 输出用于监控、检查和调试；`JR_H3_DIRECTOR_PIPE` 才是 Director 主链唯一权威数据总线。最终提示词优先级固定为 `reviewed > optimized > director`。
 

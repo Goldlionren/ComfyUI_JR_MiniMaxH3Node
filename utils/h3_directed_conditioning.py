@@ -38,7 +38,9 @@ def _media_map(pipe: DirectorPipe) -> dict[str, RuntimeMedia]:
     return {media.item_id: media for media in pipe.runtime_media}
 
 
-def _runtime(pipe: DirectorPipe, item_id: str, family: str) -> RuntimeMedia:
+def validated_runtime_media(pipe: DirectorPipe, item_id: str, family: str) -> RuntimeMedia:
+    """Return one runtime payload after revalidating file-backed media."""
+
     media = _media_map(pipe).get(item_id)
     if media is None:
         raise ValueError(f"Director PIP {family} item {item_id!r} has no runtime media payload.")
@@ -69,6 +71,12 @@ def _runtime(pipe: DirectorPipe, item_id: str, family: str) -> RuntimeMedia:
     return media
 
 
+def _runtime(pipe: DirectorPipe, item_id: str, family: str) -> RuntimeMedia:
+    """Backward-compatible private alias retained for focused adapter tests."""
+
+    return validated_runtime_media(pipe, item_id, family)
+
+
 def _visual_item(pipe: DirectorPipe, item_id: str):
     return next(item for item in pipe.visual_items if item.id == item_id)
 
@@ -85,11 +93,7 @@ def _source_window(item: Any) -> tuple[float, float]:
 
 def _load_video(media: RuntimeMedia, item: Any, max_duration: float = MAX_REFERENCE_VIDEO_SECONDS) -> Any:
     payload = media.payload
-    if not isinstance(payload, RuntimeMediaFile):
-        if payload is None:
-            raise ValueError(f"Reference video {item.asset.display_name!r} has no runtime payload.")
-        frames = payload
-    else:
+    if isinstance(payload, RuntimeMediaFile):
         if payload.kind != "video":
             raise ValueError(f"Reference video {item.asset.display_name!r} has an invalid runtime kind.")
         start, duration = _source_window(item)
@@ -129,6 +133,41 @@ def _load_video(media: RuntimeMedia, item: Any, max_duration: float = MAX_REFERE
                 f"MiniMax H3 reference video {item.asset.display_name!r} must be 24 fps; got {frame_rate:g} fps."
             )
         frames = components.images
+    elif callable(getattr(payload, "get_components", None)):
+        start, duration = _source_window(item)
+        source_duration = float(media.metadata_dict().get("duration_seconds", 0.0) or 0.0)
+        if duration <= 0 and source_duration > start:
+            duration = source_duration - start
+        duration = min(
+            duration if duration > 0 else max_duration,
+            max_duration,
+            MAX_REFERENCE_VIDEO_SECONDS,
+        )
+        try:
+            selected = payload
+            if callable(getattr(payload, "as_trimmed", None)):
+                selected = payload.as_trimmed(
+                    start_time=start,
+                    duration=duration,
+                    strict_duration=False,
+                )
+                if selected is None:
+                    raise ValueError("trim produced no video")
+            components = selected.get_components()
+        except Exception as error:
+            raise RuntimeError(
+                f"Could not decode standard VIDEO {item.asset.display_name!r}: {type(error).__name__}."
+            ) from None
+        frame_rate = float(components.frame_rate)
+        if not math.isclose(frame_rate, NATIVE_FPS, rel_tol=0.0, abs_tol=1e-3):
+            raise ValueError(
+                f"MiniMax H3 reference video {item.asset.display_name!r} must be 24 fps; got {frame_rate:g} fps."
+            )
+        frames = components.images
+    else:
+        if payload is None:
+            raise ValueError(f"Reference video {item.asset.display_name!r} has no runtime payload.")
+        frames = payload
     shape = getattr(frames, "shape", ())
     if len(shape) != 4 or shape[0] < 5:
         raise ValueError(
@@ -193,6 +232,16 @@ def _load_audio(media: RuntimeMedia, item: Any) -> Any:
     elif shape[1] != 2:
         raise ValueError(f"MiniMax H3 reference audio must be mono or stereo; got {shape[1]} channels.")
     return {"waveform": waveform, "sample_rate": int(audio["sample_rate"])}
+
+
+def materialize_runtime_audio(pipe: DirectorPipe, item_id: str) -> Any:
+    """Return one standard AUDIO value from an in-memory or file-backed PIPE item."""
+
+    pipe = validate_director_pipe(pipe)
+    return _load_audio(
+        validated_runtime_media(pipe, item_id, "Audio"),
+        _audio_item(pipe, item_id),
+    )
 
 
 def _pipe_dimensions(pipe: DirectorPipe) -> tuple[int, int] | None:
@@ -282,7 +331,7 @@ def prepare_directed_inputs(
     )
     if mode == "Image to Video":
         frames = {
-            record.role: _runtime(pipe, record.item_id, "Picture")
+            record.role: validated_runtime_media(pipe, record.item_id, "Picture")
             for record in anchor_records
         }
         for role, media in frames.items():
@@ -312,7 +361,7 @@ def prepare_directed_inputs(
         raise ValueError(f"MiniMax H3 supports at most {MAX_REF_AUDIOS} standalone reference audios.")
     ref_images = []
     for index, record in enumerate(pictures):
-        media = _runtime(pipe, record.item_id, "Picture")
+        media = validated_runtime_media(pipe, record.item_id, "Picture")
         if media.payload is None:
             raise ValueError(f"Director PIP {record.label} has no runtime IMAGE payload.")
         shape = getattr(media.payload, "shape", ())
@@ -328,12 +377,15 @@ def prepare_directed_inputs(
         )
         ref_videos.append((
             f"ref_video_{index}",
-            _load_video(_runtime(pipe, record.item_id, "Video"), item, maximum_duration),
+            _load_video(validated_runtime_media(pipe, record.item_id, "Video"), item, maximum_duration),
         ))
     ref_audios = []
     for index, record in enumerate(audios):
         item = _audio_item(pipe, record.item_id)
-        ref_audios.append((f"ref_audio_{index}", _load_audio(_runtime(pipe, record.item_id, "Audio"), item)))
+        ref_audios.append((
+            f"ref_audio_{index}",
+            _load_audio(validated_runtime_media(pipe, record.item_id, "Audio"), item),
+        ))
     return DirectedInputs(
         mode=mode,
         prompt=prompt,
@@ -358,6 +410,8 @@ def normalize_native_output(output: Any) -> tuple[Any, Any]:
 __all__ = [
     "DirectedInputs",
     "NATIVE_FPS",
+    "materialize_runtime_audio",
     "normalize_native_output",
     "prepare_directed_inputs",
+    "validated_runtime_media",
 ]

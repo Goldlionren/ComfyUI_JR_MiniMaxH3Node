@@ -19,6 +19,12 @@ JR MiniMax H3 Director Desk
 
 STRING outputs expose each prompt stage for inspection. They are not the Director data bus. The PIPE is authoritative and keeps the timeline, registry, media descriptors, runtime media and prompt stages together.
 
+## Standard-item ingress and inspection
+
+`JR_H3_DirectorPipeBuilder` is an alternative P0 source for workflows that already have standard ComfyUI STRING/IMAGE/VIDEO/AUDIO values. It creates a deterministic single-Shot state, stores the exact input prompt as the current optimized stage and keeps all media runtime-only. It does not add a second PIPE schema and does not change Director Desk.
+
+`JR_H3_DirectorPipeUnpack` is a read-only observer. It passes the identical PIPE through and exposes prompt stages, duration/fps/dimensions, anchors, registry JSON and independently index-selected reference media. Selection affects only the standard media outputs; it never filters or mutates the passthrough PIPE. Full details are in [Director PIPE Builder / Unpack](DIRECTOR_PIPE_IO.md).
+
 ## Immutable stages
 
 - P0 from Director Desk contains `compiled_director_prompt`.
