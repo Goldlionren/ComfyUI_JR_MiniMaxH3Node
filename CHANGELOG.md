@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0
+
 - Added `JR_H3_DirectorPipeBuilder` to construct an immutable `JR_H3_DIRECTOR_PIPE` from standard prompt, IMAGE batch, VIDEO and AUDIO inputs without serializing runtime media into workflow JSON.
 - Added `JR_H3_DirectorPipeUnpack` to pass PIPE values through while exposing prompt stages, timeline metadata, inferred dimensions, registry JSON and index-selected standard media outputs.
 - Extended Directed Video Conditioning to consume standard ComfyUI VIDEO objects from Builder PIPE values through bounded trimming and the existing native 24 fps validation path.
