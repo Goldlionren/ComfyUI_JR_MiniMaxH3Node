@@ -11,6 +11,12 @@ from .nodes.h3_directed_video_conditioning import JR_H3_DirectedVideoConditionin
 from .nodes.h3_hybrid_loader import JR_H3_HybridLoader
 from .nodes.h3_neural_latent_upscaler import JR_MiniMaxH3NeuralLatentUpscaler
 from .nodes.h3_openai_prompt_optimizer import JR_H3_OpenAICompatiblePromptOptimizer
+from .nodes.h3_sequential_audio import (
+    JR_H3_SequentialAudioChunkDriver,
+    JR_H3_SequentialContinuationGuide,
+    JR_H3_SequentialLatentCheckpoint,
+    JR_H3_SequentialVideoOutput,
+)
 from .nodes.h3_split_av_latent import JR_H3_SplitAVLatent
 from .nodes.h3_temporal_chunk_sampler import JR_H3_TemporalChunkSampler
 from .nodes.h3_unified_acceleration import JR_H3_UnifiedAcceleration
@@ -20,7 +26,7 @@ from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
 from .nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner
 from .server import register_director_media_routes, register_prompt_review_routes
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 WEB_DIRECTORY = "./js"
 
 register_prompt_review_routes()
@@ -35,6 +41,10 @@ NODE_CLASS_MAPPINGS = {
     "JR_H3_SplitAVLatent": JR_H3_SplitAVLatent,
     "JR_MiniMaxH3NeuralLatentUpscaler": JR_MiniMaxH3NeuralLatentUpscaler,
     "JR_H3_OpenAICompatiblePromptOptimizer": JR_H3_OpenAICompatiblePromptOptimizer,
+    "JR_H3_SequentialAudioChunkDriver": JR_H3_SequentialAudioChunkDriver,
+    "JR_H3_SequentialContinuationGuide": JR_H3_SequentialContinuationGuide,
+    "JR_H3_SequentialLatentCheckpoint": JR_H3_SequentialLatentCheckpoint,
+    "JR_H3_SequentialVideoOutput": JR_H3_SequentialVideoOutput,
     "JR_H3_DirectedVideoConditioning": JR_H3_DirectedVideoConditioning,
     "JR_H3_HybridLoader": JR_H3_HybridLoader,
     "JR_H3_TemporalChunkSampler": JR_H3_TemporalChunkSampler,
@@ -57,6 +67,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_SplitAVLatent": "JR MiniMax H3 Split AV Latent",
     "JR_MiniMaxH3NeuralLatentUpscaler": "JR MiniMax H3 Neural Latent Upscaler",
     "JR_H3_OpenAICompatiblePromptOptimizer": "JR MiniMax H3 Prompt Optimizer (OpenAI Compatible)",
+    "JR_H3_SequentialAudioChunkDriver": "JR MiniMax H3 Sequential Audio Chunk Driver",
+    "JR_H3_SequentialContinuationGuide": "JR MiniMax H3 Sequential Continuation Guide",
+    "JR_H3_SequentialLatentCheckpoint": "JR MiniMax H3 Sequential Latent Checkpoint",
+    "JR_H3_SequentialVideoOutput": "JR MiniMax H3 Sequential Video Output",
     "JR_H3_DirectedVideoConditioning": "JR MiniMax H3 Directed Video Conditioning",
     "JR_H3_HybridLoader": "JR MiniMax H3 Hybrid Loader",
     "JR_H3_TemporalChunkSampler": "JR MiniMax H3 Temporal Chunk Sampler",

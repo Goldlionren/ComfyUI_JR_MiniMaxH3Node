@@ -1,6 +1,6 @@
 # 节点参数参考
 
-本页按当前 Python 定义记录全部 19 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 Python 定义记录全部 23 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
 
 ## Hybrid Loader
 
@@ -181,6 +181,55 @@ Node ID：`JR_H3_AudioDrivenLatentBuilder`
 | `audio_drive_latent` | LATENT | 必须连接 | 使用 MiniMax H3 Audio VAE 编码的普通 audio latent `[B,32,2,T]` |
 
 节点使用 template audio 的 T/device/dtype 为真值源，对外部 audio 做等长保留、过长尾截断或过短尾部补零；只允许 batch `N -> N` 或 `1 -> N`。输出保留原 video tensor 和有效的上游 video mask，将 audio mask 强制为零。节点不读取 waveform、不编解码且不 mux。详见 [H3_AUDIO_DRIVEN_LATENT_BUILDER.md](H3_AUDIO_DRIVEN_LATENT_BUILDER.md)。
+
+## Sequential Audio Chunk Driver
+
+Node ID：`JR_H3_SequentialAudioChunkDriver`
+
+分类：`JR MiniMax H3/Sequential Audio`
+
+输出：`audio_driven_av_latent: LATENT`、`chunk_context: JR_H3_AUDIO_CHUNK_CONTEXT`、`chunk_seed: INT`、`audio_slice: AUDIO`、`status: STRING`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `av_latent` | LATENT | 必须连接 | Directed Video Conditioning 输出；frame length 必须与 preset 相同 |
+| `audio` | AUDIO | 必须连接 | 完整连续源音频；仅 batch 1、mono/stereo |
+| `audio_vae` | VAE | 必须连接 | H3 Audio VAE；用于当前 slice 编码 |
+| `chunk_preset` | COMBO | 14.375s / 345 frames / 575 ticks | 另有 10.125s/243、8s/192、5.875s/141 |
+| `continuity_mode` | COMBO | Previous Last Frame | Previous Last Frame、Independent MV |
+| `seed_mode` | COMBO | Derived per chunk | Derived per chunk、Fixed |
+| `base_seed` | INT | 0 | unsigned 64-bit；建议连接 chunk_seed 到 Random Noise |
+| `cache_path` | STRING | `temp/JR_H3_audio_jobs` | 相对路径落在 output 下；也接受绝对路径 |
+| `job_name` | STRING | audio_sequence | 只作为清理后的安全目录名 |
+| `run_id` | INT | 1 | 递增后创建新 run；旧 run 不删除、不覆盖 |
+
+首次执行把原始 PCM 和全局一次性 resample 的 Audio VAE PCM 分开落盘；之后按全局 frame/sample 边界选择当前块。Driver 不前移 manifest，只有 Video Output 成功提交后才前移。默认 Same Audio Reactive Prompt 由上游保持不变。详见 [H3_SEQUENTIAL_AUDIO.md](H3_SEQUENTIAL_AUDIO.md)。
+
+## Sequential Continuation Guide
+
+Node ID：`JR_H3_SequentialContinuationGuide`
+
+分类：`JR MiniMax H3/Sequential Audio`
+
+输出：`positive: CONDITIONING`、`latent: LATENT`、原 `chunk_context`、`status`
+
+输入为 Directed positive、Driver latent/context、video VAE，以及 optional `initial_frame`。Previous Last Frame 模式下，chunk 1 使用 initial frame，后续 chunk 从已提交缓存读取上一块末帧，并调用当前 ComfyUI 原生 `MiniMaxH3AddGuide` 锚定本块 frame 0；Independent MV 原样透传。该节点必须位于 Basic Guider 之前。
+
+## Sequential Latent Checkpoint
+
+Node ID：`JR_H3_SequentialLatentCheckpoint`
+
+分类：`JR MiniMax H3/Sequential Audio`
+
+输入 sampled H3 AV LATENT 与 chunk context；输出 CPU-backed 官方 AV LATENT、原 context 和状态。video/audio 两流原子保存为 `latents/chunk_NNNNN.safetensors`，不使用 pickle，不把 tensor 写入 workflow JSON。应放在 KSampler 与 VAE Decode 之间。
+
+## Sequential Video Output
+
+Node ID：`JR_H3_SequentialVideoOutput`
+
+分类：`JR MiniMax H3/Sequential Audio`
+
+这是顺序分支的 OUTPUT 节点，输入 decoded IMAGE 与 chunk context；另有 H.264 quality、8/10-bit、最终 AAC bitrate、filename prefix、自动续跑和 aggressive cleanup 控件。它验证并提交静音 MP4 segment、保存末帧、在活动浏览器中排队下一 prompt；最后使用相同编码器的 segment stream-copy，并把完整源 PCM 编码/融合一次。该分支不要再连接 Enhanced Video Combine。
 
 ## Split AV Latent
 

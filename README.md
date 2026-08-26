@@ -16,6 +16,10 @@
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
 | JR MiniMax H3 Audio Driven Latent Builder | `JR_H3_AudioDrivenLatentBuilder` | Latent | 音频驱动并锁定 audio 分支的 H3 AV `LATENT`、状态 |
+| JR MiniMax H3 Sequential Audio Chunk Driver | `JR_H3_SequentialAudioChunkDriver` | Sequential Audio | 当前音频驱动 AV `LATENT`、chunk context、seed、AUDIO slice、状态 |
+| JR MiniMax H3 Sequential Continuation Guide | `JR_H3_SequentialContinuationGuide` | Sequential Audio | 末帧续接后的 `CONDITIONING` 与 `LATENT` |
+| JR MiniMax H3 Sequential Latent Checkpoint | `JR_H3_SequentialLatentCheckpoint` | Sequential Audio | CPU/磁盘 checkpoint 后的 H3 AV `LATENT` |
+| JR MiniMax H3 Sequential Video Output | `JR_H3_SequentialVideoOutput` | Sequential Audio | 分段提交状态与最终连续音频 MP4 路径 |
 | JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
 | JR MiniMax H3 Split AV Latent | `JR_H3_SplitAVLatent` | Latent | 独立 video/audio `LATENT` |
 | JR MiniMax H3 Neural Latent Upscaler | `JR_MiniMaxH3NeuralLatentUpscaler` | Latent | neural 放大后的 video `LATENT`、状态 |
@@ -347,6 +351,27 @@ H3 视频和音频 latent 的时间长度本来就不同。内部切点先对齐
 - 多块执行会检测并拒绝 `minimax_keyframes`：当前原生 keyframe 使用完整时间线的绝对帧号，却没有公开的 chunk position-offset 契约；静默重复或移动首尾帧条件都会改变含义。Reference conditioning 不使用这类目标帧锚点，可继续按原生路径传入每块。
 
 完整算法、输入校验、60 秒规划示例和内存口径见 [H3 Temporal Chunk Sampler](docs/H3_TEMPORAL_CHUNK_SAMPLER.md)。
+
+## Sequential Audio 长音频生成
+
+```text
+Directed Video Conditioning -> Sequential Audio Chunk Driver -> Sequential Continuation Guide
+Load Audio + Audio VAE ------^                         | positive/latent + per-chunk seed
+                                                        v
+                                                     Sampler
+                                                        v
+                                              Sequential Latent Checkpoint
+                                                        v
+                                                    VAE Decode
+                                                        v
+                                              Sequential Video Output
+```
+
+该流程不是在单次执行中循环 KSampler，而是每块建立一个独立 ComfyUI prompt：默认四个严格 H3 档位为 `345/243/192/141` 帧，对应 `14.375/10.125/8.000/5.875` 秒。音频从全局样本边界切分，Audio VAE 输入只对最后一块补零；最终视频使用同编码器的静音 MP4 分段做 stream concat，并只把完整原始 PCM 编码/融合一次，因此块边界不会发生独立音频编码造成的重复或缺口。
+
+默认 prompt 方法论是 `Same Audio Reactive Prompt`：Ref2VA 官方结构、单个开放式 `[Shot 1]`、不写块边界时间；所有块复用同一 reviewed/optimized prompt，真实变化来自当前 audio slice。`Previous Last Frame` 通过原生 `MiniMaxH3AddGuide` 把上一块末帧锚定到下一块局部第 0 帧；`Independent MV` 不强制续帧并允许不同派生 seed。
+
+缓存默认位于 `ComfyUI/output/temp/JR_H3_audio_jobs`，可配置绝对路径。manifest 只会在 segment 验证成功后前移；浏览器关闭会在当前块后安全暂停，重新打开并手动 Queue 即可恢复。顺序分支的最终节点替代 Enhanced Video Combine，不会把所有 decoded IMAGE 一次性装回内存。详见 [H3 Sequential Audio Generation](docs/H3_SEQUENTIAL_AUDIO.md)。
 
 ## H3 Adaptive Cache
 

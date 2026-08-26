@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.16.0
+
+- Added a disk-backed four-node sequential audio workflow that prepares exact H3 frame/tick chunks, applies native previous-frame continuation guides, checkpoints sampled AV latents to safetensors, and commits one decoded video segment per ComfyUI prompt.
+- Added global source-PCM and once-resampled Audio VAE spools, deterministic per-chunk seeds, atomic manifest recovery, active-browser automatic requeue, and final H.264 stream concat with one continuous AAC audio mux.
+- Added the default Same Audio Reactive Prompt methodology, exact 345/243/192/141-frame presets, fail-closed job/settings validation, and focused resume/duplicate/finalization regression coverage.
+
 ## 0.15.0
 
 - Added `JR_H3_AudioDrivenLatentBuilder` to inject an externally encoded MiniMax H3 audio latent into an official AV `NestedTensor`, preserve the video denoise mask, and lock the replacement audio branch with a zero mask.
