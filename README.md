@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 18 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 19 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
 当前包版本：`0.14.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
@@ -15,6 +15,7 @@
 | JR MiniMax H3 Prompt Optimizer (OpenAI Compatible) | `JR_H3_OpenAICompatiblePromptOptimizer` | Prompt | 优化提示词、原提示词、状态、派生 PIPE |
 | JR MiniMax H3 Prompt Review & Continue | `JR_H3_PromptReviewPause` | Prompt | 人工确认后的提示词、派生 PIPE |
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
+| JR MiniMax H3 Audio Driven Latent Builder | `JR_H3_AudioDrivenLatentBuilder` | Latent | 音频驱动并锁定 audio 分支的 H3 AV `LATENT`、状态 |
 | JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
 | JR MiniMax H3 Split AV Latent | `JR_H3_SplitAVLatent` | Latent | 独立 video/audio `LATENT` |
 | JR MiniMax H3 Neural Latent Upscaler | `JR_MiniMaxH3NeuralLatentUpscaler` | Latent | neural 放大后的 video `LATENT`、状态 |
@@ -273,7 +274,7 @@ Auto 模式优先级：
 
 完整映射和限制见 [Director Pipeline](docs/DIRECTOR_PIPELINE.md)。
 
-## AV Latent Builder 与 Split AV Latent
+## AV Latent Builder、Audio Driven 与 Split AV Latent
 
 `JR_MiniMaxH3AVLatentBuilder` 将上游分别编码好的 H3 video latent 与 audio latent 组装成官方两流 `NestedTensor` LATENT，适合 video-to-video 和 latent-to-latent 工作流。它不是 VAE 编码器、文件读取器、音频处理器或采样器。
 
@@ -284,6 +285,15 @@ AUDIO -> H3 Audio VAE Encode -> audio_latent        ┘
 ```
 
 节点严格要求 video 为 `[B,24,T,H,W]`、audio 为 `[B,32,2,T_audio]`，batch、dtype 和 device 完全一致，数值全部 finite。官方 H3 时间网格为 `T_video=5k+2`，对应 `17k+5` 个 24 fps 原始帧；音频按 40 latent ticks/s 校验，并只容许 ±1 tick 的编码边界差异。节点不会 clone、cast 或移动输入 tensor。详见 [H3 AV Latent Builder](docs/H3_AV_LATENT_BUILDER.md)。
+
+`JR_H3_AudioDrivenLatentBuilder` 用外部经 MiniMax H3 Audio VAE 编码的 audio latent 替换现有 H3 AV latent 的 audio 分支。它保留上游 video noise mask（缺失时才生成 `ones_like(video)`），并强制 audio mask 为 `zeros_like(audio)`，使采样时 video 可生成而 audio 被锁定。
+
+```text
+Load Audio -> VAE Encode Audio (MiniMax H3 Audio VAE) -> Audio Drive Latent ─┐
+JR MiniMax H3 Directed Video Conditioning -> AV Latent ------------------├-> Audio Driven Latent Builder -> KSampler
+```
+
+音频时长以 AV latent 内 template audio 为准：过长从尾部截断，过短在尾部补零，不插值、不循环、不生成尾部。该节点不读取 waveform、不运行 Audio VAE 编码、不 decode 且不 mux；最终输出音质仍可在 Video Combine 中单独 mux 原始 waveform。详见 [H3 Audio Driven Latent Builder](docs/H3_AUDIO_DRIVEN_LATENT_BUILDER.md)。
 
 `JR_H3_SplitAVLatent` 执行相反方向：它只接受 `samples` 为当前 ComfyUI 官方 `NestedTensor` 的 H3 AV LATENT，通过公开的 `unbind()` 按固定 `video, audio` 顺序拆成两个标准 LATENT 字典。节点检查两流数量、Tensor 类型、video `[B,24,T,H,W]`、audio `[B,32,2,T]`、batch 和 finite 值；输出直接引用原始 Tensor，不 clone、不 cast、不迁移 device，也不主动调用 `contiguous()`。因此两个输出均可直接接原生 `Save Latent`，由保存节点按自身标准路径处理连续布局。
 

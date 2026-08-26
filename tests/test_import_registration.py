@@ -5,6 +5,7 @@ EXPECTED = {
     "JR_H3_DirectorDesk",
     "JR_H3_DirectorPipeBuilder",
     "JR_H3_DirectorPipeUnpack",
+    "JR_H3_AudioDrivenLatentBuilder",
     "JR_MiniMaxH3AVLatentBuilder",
     "JR_H3_SplitAVLatent",
     "JR_MiniMaxH3NeuralLatentUpscaler",
@@ -38,5 +39,5 @@ def test_rtx_dependency_is_lazy(package_name):
 
 
 def test_modules_import_individually(package_name):
-    for name in ["director_desk", "director_pipe_io", "h3_av_latent_builder", "h3_directed_video_conditioning", "h3_hybrid_loader", "h3_neural_latent_upscaler", "h3_openai_prompt_optimizer", "h3_split_av_latent", "h3_temporal_chunk_sampler", "prompt_review_pause", "h3_cache_config_router", "h3_adaptive_cache", "h3_unified_acceleration", "rtx_upscaler_refiner", "resolution_scale_calculator", "enhanced_video_combine", "last_frame"]:
+    for name in ["director_desk", "director_pipe_io", "h3_audio_driven_latent_builder", "h3_av_latent_builder", "h3_directed_video_conditioning", "h3_hybrid_loader", "h3_neural_latent_upscaler", "h3_openai_prompt_optimizer", "h3_split_av_latent", "h3_temporal_chunk_sampler", "prompt_review_pause", "h3_cache_config_router", "h3_adaptive_cache", "h3_unified_acceleration", "rtx_upscaler_refiner", "resolution_scale_calculator", "enhanced_video_combine", "last_frame"]:
         importlib.import_module(f"{package_name}.nodes.{name}")

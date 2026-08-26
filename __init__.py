@@ -4,6 +4,7 @@ from .nodes.director_desk import JR_H3_DirectorDesk
 from .nodes.director_pipe_io import JR_H3_DirectorPipeBuilder, JR_H3_DirectorPipeUnpack
 from .nodes.enhanced_video_combine import JR_H3_EnhancedVideoCombine
 from .nodes.h3_adaptive_cache import JR_H3_AdaptiveCache
+from .nodes.h3_audio_driven_latent_builder import JR_H3_AudioDrivenLatentBuilder
 from .nodes.h3_av_latent_builder import JR_MiniMaxH3AVLatentBuilder
 from .nodes.h3_cache_config_router import JR_H3_CacheConfigRouter
 from .nodes.h3_directed_video_conditioning import JR_H3_DirectedVideoConditioning
@@ -29,6 +30,7 @@ NODE_CLASS_MAPPINGS = {
     "JR_H3_DirectorDesk": JR_H3_DirectorDesk,
     "JR_H3_DirectorPipeBuilder": JR_H3_DirectorPipeBuilder,
     "JR_H3_DirectorPipeUnpack": JR_H3_DirectorPipeUnpack,
+    "JR_H3_AudioDrivenLatentBuilder": JR_H3_AudioDrivenLatentBuilder,
     "JR_MiniMaxH3AVLatentBuilder": JR_MiniMaxH3AVLatentBuilder,
     "JR_H3_SplitAVLatent": JR_H3_SplitAVLatent,
     "JR_MiniMaxH3NeuralLatentUpscaler": JR_MiniMaxH3NeuralLatentUpscaler,
@@ -50,6 +52,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_DirectorDesk": "JR MiniMax H3 Director Desk",
     "JR_H3_DirectorPipeBuilder": "JR MiniMax H3 Director PIPE Builder",
     "JR_H3_DirectorPipeUnpack": "JR MiniMax H3 Director PIPE Unpack",
+    "JR_H3_AudioDrivenLatentBuilder": "JR MiniMax H3 Audio Driven Latent Builder",
     "JR_MiniMaxH3AVLatentBuilder": "JR MiniMax H3 AV Latent Builder",
     "JR_H3_SplitAVLatent": "JR MiniMax H3 Split AV Latent",
     "JR_MiniMaxH3NeuralLatentUpscaler": "JR MiniMax H3 Neural Latent Upscaler",

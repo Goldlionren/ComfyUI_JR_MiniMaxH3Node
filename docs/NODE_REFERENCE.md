@@ -1,6 +1,6 @@
 # 节点参数参考
 
-本页按当前 Python 定义记录全部 18 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 Python 定义记录全部 19 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
 
 ## Hybrid Loader
 
@@ -166,6 +166,21 @@ Node ID：`JR_MiniMaxH3AVLatentBuilder`
 | `audio_latent` | LATENT | 必须连接 | `samples` 必须是 floating tensor `[B,32,2,T_audio]` |
 
 两流必须具有相同 batch、dtype 和 device，并且全部数值 finite。节点按官方 24 fps / 40 Hz 时间结构检查同一 timeline，只封装官方 `NestedTensor((video, audio))`，不进行编码、clone、cast、设备迁移或文件 I/O。详见 [H3_AV_LATENT_BUILDER.md](H3_AV_LATENT_BUILDER.md)。
+
+## Audio Driven Latent Builder
+
+Node ID：`JR_H3_AudioDrivenLatentBuilder`
+
+分类：`JR MiniMax H3/Latent`
+
+输出：`audio_driven_av_latent: LATENT`、`status: STRING`
+
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `av_latent` | LATENT | 必须连接 | 官方 H3 `NestedTensor(video, template_audio)`，通常来自 Directed Video Conditioning |
+| `audio_drive_latent` | LATENT | 必须连接 | 使用 MiniMax H3 Audio VAE 编码的普通 audio latent `[B,32,2,T]` |
+
+节点使用 template audio 的 T/device/dtype 为真值源，对外部 audio 做等长保留、过长尾截断或过短尾部补零；只允许 batch `N -> N` 或 `1 -> N`。输出保留原 video tensor 和有效的上游 video mask，将 audio mask 强制为零。节点不读取 waveform、不编解码且不 mux。详见 [H3_AUDIO_DRIVEN_LATENT_BUILDER.md](H3_AUDIO_DRIVEN_LATENT_BUILDER.md)。
 
 ## Split AV Latent
 

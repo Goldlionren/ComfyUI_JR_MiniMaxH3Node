@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `JR_H3_AudioDrivenLatentBuilder` to inject an externally encoded MiniMax H3 audio latent into an official AV `NestedTensor`, preserve the video denoise mask, and lock the replacement audio branch with a zero mask.
+- Added deterministic audio time fitting (equal/trim/zero-pad), safe batch-1 expansion, template-authoritative dtype/device conversion, metadata preservation and fail-closed AV/mask validation.
+
 ## 0.14.0
 
 - Added `JR_H3_DirectorPipeBuilder` to construct an immutable `JR_H3_DIRECTOR_PIPE` from standard prompt, IMAGE batch, VIDEO and AUDIO inputs without serializing runtime media into workflow JSON.
