@@ -1,4 +1,4 @@
-"""ComfyUI node for sequential MiniMax H3 AV temporal chunk sampling."""
+"""ComfyUI node for guided sequential MiniMax H3 AV temporal chunk sampling."""
 
 from __future__ import annotations
 
@@ -12,16 +12,28 @@ class JR_H3_TemporalChunkSampler:
     RETURN_NAMES = ("output", "status")
     DESCRIPTION = (
         "Sequentially slices an official MiniMax H3 AV NestedTensor along its shared timeline, "
-        "delegates every chunk to ComfyUI's native SamplerCustomAdvanced, and reassembles directly "
-        "into CPU-preallocated output buffers. Phase 1 has no overlap or cross-chunk hidden-state carry."
+        "uses the original conditioning for chunk 1, then anchors every later chunk to the previous "
+        "decoded terminal frame through ComfyUI's native MiniMaxH3AddGuide at local frame 0. A fresh "
+        "Basic Guider is built for every chunk before native SamplerCustomAdvanced execution."
     )
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "model": (
+                    "MODEL",
+                    {"tooltip": "MiniMax H3 MODEL used to build a fresh Basic Guider for every chunk."},
+                ),
+                "positive": (
+                    "CONDITIONING",
+                    {"tooltip": "Original H3 positive conditioning. It is never mutated."},
+                ),
+                "vae": (
+                    "VAE",
+                    {"tooltip": "MiniMax H3 video VAE used to decode each previous terminal frame."},
+                ),
                 "noise": ("NOISE",),
-                "guider": ("GUIDER",),
                 "sampler": ("SAMPLER",),
                 "sigmas": ("SIGMAS",),
                 "latent_image": ("LATENT",),
@@ -47,8 +59,10 @@ class JR_H3_TemporalChunkSampler:
 
     def sample(
         self,
+        model,
+        positive,
+        vae,
         noise,
-        guider,
         sampler,
         sigmas,
         latent_image,
@@ -56,8 +70,10 @@ class JR_H3_TemporalChunkSampler:
         aggressive_memory_cleanup=False,
     ):
         return sample_h3_temporal_chunks(
+            model=model,
+            positive=positive,
+            vae=vae,
             noise=noise,
-            guider=guider,
             sampler=sampler,
             sigmas=sigmas,
             latent_image=latent_image,

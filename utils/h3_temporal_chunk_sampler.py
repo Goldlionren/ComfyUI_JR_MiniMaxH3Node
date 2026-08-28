@@ -27,6 +27,12 @@ FRAMES_PER_VIDEO_TOKEN = (1, 4, 4, 4, 4)
 FRAMES_PER_CYCLE = sum(FRAMES_PER_VIDEO_TOKEN)
 VIDEO_TOKENS_PER_CYCLE = len(FRAMES_PER_VIDEO_TOKEN)
 UINT64_MASK = (1 << 64) - 1
+TEMPORAL_MODE_A = "A - Legacy No Overlap"
+TEMPORAL_MODE_B = "B - Exact H3 Source Overlap"
+TEMPORAL_MODE_C = "C - Exact H3 Refined Overlap"
+TEMPORAL_MODES = (TEMPORAL_MODE_A, TEMPORAL_MODE_B, TEMPORAL_MODE_C)
+MIN_EXACT_WINDOW_INDEX = 2
+MAX_EXACT_WINDOW_INDEX = 6
 
 
 class H3TemporalChunkSamplerError(ValueError):
@@ -72,10 +78,52 @@ class H3TemporalChunkPlan:
     chunks: tuple[H3TemporalChunk, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class H3TemporalOverlapWindow:
+    """One exact local H3 AV sampling window and its non-duplicated keep range."""
+
+    sample: H3TemporalChunk
+    keep_video_start: int
+    keep_video_end: int
+    keep_audio_start: int
+    keep_audio_end: int
+
+    @property
+    def local_keep_video_start(self) -> int:
+        return self.keep_video_start - self.sample.video_start
+
+    @property
+    def local_keep_audio_start(self) -> int:
+        return self.keep_audio_start - self.sample.audio_start
+
+
+@dataclass(frozen=True, slots=True)
+class H3TemporalOverlapPlan:
+    """Validated exact-window overlap plan for the controlled B/C experiment."""
+
+    frame_count: int
+    video_latent_t: int
+    audio_latent_t: int
+    expected_audio_t: int
+    audio_delta: int
+    requested_chunk_seconds: float
+    stride_video_tokens: int
+    stride_frames: int
+    window_video_tokens: int
+    window_frames: int
+    window_audio_tokens: int
+    overlap_video_tokens: int
+    overlap_frames: int
+    windows: tuple[H3TemporalOverlapWindow, ...]
+
+
 SampleChunk = Callable[..., Mapping[str, Any]]
 NestedFactory = Callable[[tuple[torch.Tensor, torch.Tensor]], Any]
 CleanupCallback = Callable[[], None]
 ChunkNoiseFactory = Callable[[H3TemporalChunk], Any]
+BuildGuider = Callable[[Any, Any], Any]
+ApplyGuide = Callable[..., Any]
+DecodeLastFrame = Callable[[Any, torch.Tensor], torch.Tensor]
 
 
 def _error(message: str) -> H3TemporalChunkSamplerError:
@@ -206,6 +254,141 @@ def plan_h3_temporal_chunks(
     )
 
 
+def _exact_h3_av_window_for_stride(stride_video_tokens: int) -> tuple[int, int, int]:
+    """Return the smallest conservative, audio-exact H3 window above a stride.
+
+    Exact local windows follow ``T=15n+12``, ``frames=51n+39`` and
+    ``audio=85n+65``.  ``n=2..6`` is the subset inside the installed native
+    H3 node's documented approximately 124--362 frame trained range.
+    """
+
+    window_index = max(
+        MIN_EXACT_WINDOW_INDEX,
+        math.ceil((stride_video_tokens - 11) / 15),
+    )
+    if window_index > MAX_EXACT_WINDOW_INDEX:
+        raise _error(
+            "B/C exact-overlap mode cannot construct a non-zero-overlap local window inside the "
+            "conservative H3 trained range (maximum 102 video tokens / 345 frames / 14.375s). "
+            "Choose a smaller chunk_duration_seconds or use A - Legacy No Overlap."
+        )
+    window_video_tokens = 15 * window_index + 12
+    window_frames = 51 * window_index + 39
+    window_audio_tokens = 85 * window_index + 65
+    if window_video_tokens <= stride_video_tokens:
+        raise _error("B/C exact-overlap planning produced a zero-overlap window.")
+    return window_video_tokens, window_frames, window_audio_tokens
+
+
+def plan_h3_temporal_overlap_windows(
+    video_t: int,
+    audio_t: int,
+    chunk_duration_seconds: float,
+) -> H3TemporalOverlapPlan:
+    """Plan globally aligned exact H3 AV windows for modes B and C."""
+
+    if isinstance(chunk_duration_seconds, bool) or not isinstance(chunk_duration_seconds, (int, float)):
+        raise _error("chunk_duration_seconds must be a finite positive number.")
+    requested_seconds = float(chunk_duration_seconds)
+    if not math.isfinite(requested_seconds) or requested_seconds <= 0:
+        raise _error("chunk_duration_seconds must be a finite positive number.")
+    if isinstance(video_t, bool) or not isinstance(video_t, int) or video_t <= 0:
+        raise _error("video temporal length must be a positive integer.")
+    if isinstance(audio_t, bool) or not isinstance(audio_t, int) or audio_t <= 0:
+        raise _error("audio temporal length must be a positive integer.")
+
+    frame_count, expected_audio_t, audio_delta = _validate_full_timeline(video_t, audio_t)
+    cycles_per_stride = max(1, math.floor(requested_seconds * H3_FPS / FRAMES_PER_CYCLE))
+    stride_video_tokens = cycles_per_stride * VIDEO_TOKENS_PER_CYCLE
+    stride_frames = cycles_per_stride * FRAMES_PER_CYCLE
+    window_video_tokens, window_frames, window_audio_tokens = _exact_h3_av_window_for_stride(
+        stride_video_tokens
+    )
+    if video_t <= window_video_tokens:
+        raise _error(
+            "B/C exact-overlap mode requires a global timeline longer than its exact local window "
+            f"({window_video_tokens} video tokens / {window_frames} frames) so a real overlap seam exists. "
+            "Use A - Legacy No Overlap for this short timeline."
+        )
+
+    final_start = video_t - window_video_tokens
+    if final_start < 0 or final_start % VIDEO_TOKENS_PER_CYCLE != 0:
+        raise _error("the final exact H3 window cannot be aligned to the global token lattice.")
+    starts = [0]
+    while starts[-1] + window_video_tokens < video_t:
+        regular_start = starts[-1] + stride_video_tokens
+        next_start = min(regular_start, final_start)
+        if next_start <= starts[-1]:
+            raise _error("B/C exact-overlap planning could not advance the global timeline safely.")
+        starts.append(next_start)
+
+    windows: list[H3TemporalOverlapWindow] = []
+    committed_video_end = 0
+    committed_audio_end = 0
+    for index, video_start in enumerate(starts):
+        video_end = video_start + window_video_tokens
+        frame_start = frame_boundary_for_video_token(video_start)
+        frame_end = frame_boundary_for_video_token(video_end)
+        audio_start = round(frame_start * AUDIO_LATENT_FPS / H3_FPS)
+        audio_end = audio_t if video_end == video_t else round(frame_end * AUDIO_LATENT_FPS / H3_FPS)
+        keep_video_start = committed_video_end
+        keep_video_end = video_end
+        keep_audio_start = committed_audio_end
+        keep_audio_end = audio_end
+        if video_start % VIDEO_TOKENS_PER_CYCLE != 0:
+            raise _error("an exact H3 sampling window start is not on a five-token cycle boundary.")
+        if frame_end - frame_start != window_frames:
+            raise _error("an exact H3 sampling window does not preserve the expected frame length.")
+        expected_window_audio = window_audio_tokens + (audio_delta if video_end == video_t else 0)
+        if audio_end - audio_start != expected_window_audio:
+            raise _error("an exact H3 sampling window does not preserve the expected audio length.")
+        if not video_start <= keep_video_start < keep_video_end:
+            raise _error("a B/C keep range would create a video gap or fail to advance.")
+        if not audio_start <= keep_audio_start < keep_audio_end:
+            raise _error("a B/C keep range would create an audio gap or fail to advance.")
+        sample = H3TemporalChunk(
+            index=index,
+            video_start=video_start,
+            video_end=video_end,
+            audio_start=audio_start,
+            audio_end=audio_end,
+            frame_start=frame_start,
+            frame_end=frame_end,
+        )
+        windows.append(
+            H3TemporalOverlapWindow(
+                sample=sample,
+                keep_video_start=keep_video_start,
+                keep_video_end=keep_video_end,
+                keep_audio_start=keep_audio_start,
+                keep_audio_end=keep_audio_end,
+            )
+        )
+        committed_video_end = keep_video_end
+        committed_audio_end = keep_audio_end
+
+    if committed_video_end != video_t or committed_audio_end != audio_t:
+        raise _error("B/C exact-overlap windows did not cover the complete global AV timeline.")
+    overlap_video_tokens = window_video_tokens - stride_video_tokens
+    overlap_frames = window_frames - stride_frames
+    return H3TemporalOverlapPlan(
+        frame_count=frame_count,
+        video_latent_t=video_t,
+        audio_latent_t=audio_t,
+        expected_audio_t=expected_audio_t,
+        audio_delta=audio_delta,
+        requested_chunk_seconds=requested_seconds,
+        stride_video_tokens=stride_video_tokens,
+        stride_frames=stride_frames,
+        window_video_tokens=window_video_tokens,
+        window_frames=window_frames,
+        window_audio_tokens=window_audio_tokens,
+        overlap_video_tokens=overlap_video_tokens,
+        overlap_frames=overlap_frames,
+        windows=tuple(windows),
+    )
+
+
 def _extract_h3_streams(latent_image: Any) -> tuple[torch.Tensor, torch.Tensor]:
     if not isinstance(latent_image, Mapping):
         raise _error("latent_image must be a LATENT mapping containing 'samples'.")
@@ -271,6 +454,19 @@ def _guider_has_temporal_keyframes(guider: Any) -> bool:
         for cond in cond_group:
             if isinstance(cond, Mapping) and cond.get("minimax_keyframes"):
                 return True
+    return False
+
+
+def _positive_has_temporal_keyframes(positive: Any) -> bool:
+    """Return whether raw CONDITIONING already contains native H3 frame guides."""
+
+    if not isinstance(positive, (tuple, list)):
+        return False
+    for item in positive:
+        if not isinstance(item, (tuple, list)) or len(item) < 2 or not isinstance(item[1], Mapping):
+            continue
+        if item[1].get("minimax_keyframes"):
+            return True
     return False
 
 
@@ -392,6 +588,75 @@ def _sample_with_native_advanced_sampler(*, noise, guider, sampler, sigmas, late
     return sampled_latent
 
 
+def _build_native_basic_guider(model: Any, positive: Any) -> Any:
+    """Build a new official Basic Guider without mutating a guider from upstream."""
+
+    try:
+        from comfy_extras.nodes_custom_sampler import BasicGuider
+    except ImportError:
+        raise RuntimeError(
+            f"{ERROR_PREFIX}\nThe installed ComfyUI does not provide BasicGuider."
+        ) from None
+    node_output = BasicGuider.execute(model, positive)
+    values = node_output.result if hasattr(node_output, "result") else node_output
+    if not isinstance(values, (tuple, list)) or len(values) != 1:
+        raise RuntimeError(f"{ERROR_PREFIX}\nBasicGuider returned an unexpected result.")
+    guider = values[0]
+    if not callable(guider):
+        raise RuntimeError(f"{ERROR_PREFIX}\nBasicGuider returned an invalid GUIDER.")
+    return guider
+
+
+def _apply_native_previous_frame_guide(
+    *,
+    positive: Any,
+    latent: Mapping[str, Any],
+    vae: Any,
+    image: torch.Tensor,
+) -> Any:
+    """Apply the previous decoded terminal frame at local pixel frame zero."""
+
+    try:
+        from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
+    except ImportError:
+        raise RuntimeError(
+            f"{ERROR_PREFIX}\nCurrent ComfyUI MiniMax H3 guide implementation is unavailable."
+        ) from None
+    node_output = MiniMaxH3AddGuide.execute(
+        positive=positive,
+        latent=latent,
+        frame_idx=0,
+        vae=vae,
+        audio_vae=None,
+        image=image,
+        audio=None,
+    )
+    values = node_output.result if hasattr(node_output, "result") else node_output
+    if not isinstance(values, (tuple, list)) or len(values) != 1:
+        raise RuntimeError(f"{ERROR_PREFIX}\nMiniMaxH3AddGuide returned an unexpected result.")
+    return values[0]
+
+
+def _decode_terminal_frame(vae: Any, sampled_video: torch.Tensor) -> torch.Tensor:
+    """Decode one complete sampled chunk and retain only its final RGB frame on CPU."""
+
+    decode = getattr(vae, "decode", None)
+    if not callable(decode):
+        raise _error("vae must provide the standard ComfyUI decode(samples) API.")
+    images = decode(sampled_video)
+    if not isinstance(images, torch.Tensor) or images.ndim not in (4, 5):
+        shape = getattr(images, "shape", None)
+        raise _error(f"VAE decode returned an incompatible IMAGE tensor: {shape}.")
+    if images.ndim == 5:
+        images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
+    if images.shape[0] < 1 or images.shape[-1] < 3:
+        raise _error(f"VAE decode returned an empty or non-RGB IMAGE tensor: {_shape(images)}.")
+    frame = images[-1:, ..., :3].detach().to(device="cpu", dtype=torch.float32).contiguous()
+    if not bool(torch.isfinite(frame).all().item()):
+        raise _error("VAE decoded terminal frame contains NaN or Inf values.")
+    return frame
+
+
 def _default_cleanup() -> None:
     from comfy.model_management import soft_empty_cache
 
@@ -453,15 +718,212 @@ def _format_status(
             f"noise_mode={noise_mode}",
             f"audio timeline delta: {plan.audio_delta:+d} tick(s)",
             f"ranges: {chunk_ranges}",
+            f"temporal_mode={TEMPORAL_MODE_A}",
+            f"global: video T={plan.video_latent_t}, audio T={plan.audio_latent_t}, frames={plan.frame_count}",
+            f"planner stride target: {plan.target_video_tokens} video tokens / "
+            f"{frame_boundary_for_video_token(plan.target_video_tokens)} frames / "
+            f"{frame_boundary_for_video_token(plan.target_video_tokens) / H3_FPS:.3f}s",
+            "context=none",
             "phase 1: no overlap, no temporal hidden-state carry, no global position offset",
         )
     )
 
 
-def sample_h3_temporal_chunks(
+def _format_guided_status(
+    plan: H3TemporalChunkPlan,
+    source_device: torch.device,
+    output_video: torch.Tensor,
+    noise_mode: str,
+) -> str:
+    base = _format_status(plan, source_device, output_video, noise_mode).splitlines()
+    return "\n".join(
+        (
+            *base[:8],
+            "continuity=Previous Last Frame -> MiniMaxH3AddGuide(frame_idx=0)",
+            f"guides_applied={max(0, len(plan.chunks) - 1)}",
+            "guider=official BasicGuider rebuilt per chunk",
+            *base[9:11],
+            "context=decoded previous terminal frame; no latent overlap or hidden-state carry",
+        )
+    )
+
+
+def _format_overlap_status(
+    plan: H3TemporalOverlapPlan,
+    temporal_mode: str,
+    source_device: torch.device,
+    output_video: torch.Tensor,
+    noise_mode: str,
+) -> str:
+    context = "source" if temporal_mode == TEMPORAL_MODE_B else "previous_refined"
+    ranges = [
+        (
+            f"#{window.sample.index + 1} sample v[{window.sample.video_start}:{window.sample.video_end}] "
+            f"f[{window.sample.frame_start}:{window.sample.frame_end}] "
+            f"a[{window.sample.audio_start}:{window.sample.audio_end}] "
+            f"keep v[{window.keep_video_start}:{window.keep_video_end}] "
+            f"a[{window.keep_audio_start}:{window.keep_audio_end}]"
+        )
+        for window in plan.windows
+    ]
+    return "\n".join(
+        (
+            "Success: sequential native exact-overlap temporal sampling",
+            f"temporal_mode={temporal_mode}",
+            f"requested_chunk={plan.requested_chunk_seconds:g}s",
+            f"global: video T={plan.video_latent_t}, audio T={plan.audio_latent_t}, frames={plan.frame_count}",
+            f"stride: {plan.stride_video_tokens} video tokens / {plan.stride_frames} frames / "
+            f"{plan.stride_frames / H3_FPS:.3f}s",
+            f"window: {plan.window_video_tokens} video tokens / {plan.window_frames} frames / "
+            f"{plan.window_audio_tokens} audio ticks / {plan.window_frames / H3_FPS:.3f}s",
+            f"nominal overlap: {plan.overlap_video_tokens} video tokens / {plan.overlap_frames} frames / "
+            f"{plan.overlap_frames / H3_FPS:.3f}s",
+            f"windows: {len(plan.windows)}",
+            f"context={context}",
+            f"source device: {source_device}",
+            f"output: CPU preallocated, dtype={output_video.dtype}",
+            f"noise_mode={noise_mode}",
+            f"audio timeline delta: {plan.audio_delta:+d} tick(s)",
+            "ranges:",
+            *ranges,
+            "no overlap lock, no hidden-state carry, no global position offset",
+        )
+    )
+
+
+def _overlap_noise_plan(plan: H3TemporalOverlapPlan) -> H3TemporalChunkPlan:
+    """Adapt exact sampling windows to the existing, unchanged noise resolver."""
+
+    return H3TemporalChunkPlan(
+        frame_count=plan.frame_count,
+        video_latent_t=plan.video_latent_t,
+        audio_latent_t=plan.audio_latent_t,
+        expected_audio_t=plan.expected_audio_t,
+        audio_delta=plan.audio_delta,
+        requested_chunk_seconds=plan.requested_chunk_seconds,
+        target_video_tokens=plan.stride_video_tokens,
+        chunks=tuple(window.sample for window in plan.windows),
+    )
+
+
+def _sample_h3_temporal_overlap_windows(
     *,
     noise: Any,
     guider: Any,
+    sampler: Any,
+    sigmas: torch.Tensor,
+    latent_image: Mapping[str, Any],
+    chunk_duration_seconds: float,
+    aggressive_memory_cleanup: bool,
+    temporal_mode: str,
+    sample_chunk: SampleChunk | None,
+    nested_factory: NestedFactory | None,
+    cleanup: CleanupCallback | None,
+) -> tuple[dict[str, Any], str]:
+    video, audio = _extract_h3_streams(latent_image)
+    plan = plan_h3_temporal_overlap_windows(
+        int(video.shape[2]),
+        int(audio.shape[3]),
+        chunk_duration_seconds,
+    )
+    if _guider_has_temporal_keyframes(guider):
+        raise _error(
+            "multi-window sampling cannot safely consume minimax_keyframes. Current H3 keyframes store absolute "
+            "full-timeline frame indices, while the native sampler exposes no public per-window position-offset "
+            "contract. Use text/reference conditioning without keyframes or the native monolithic sampler."
+        )
+    chunk_noise_factory, noise_mode = _resolve_chunk_noise(noise, _overlap_noise_plan(plan))
+    sample_chunk = sample_chunk or _sample_with_native_advanced_sampler
+    nested_factory = nested_factory or _make_official_nested
+    cleanup = cleanup or _default_cleanup
+
+    output_video: torch.Tensor | None = None
+    output_audio: torch.Tensor | None = None
+
+    for window in plan.windows:
+        chunk = window.sample
+        chunk_noise = chunk_noise_factory(chunk)
+        source_video_window = video[:, :, chunk.video_start : chunk.video_end, :, :]
+        source_audio_window = audio[:, :, :, chunk.audio_start : chunk.audio_end]
+
+        if temporal_mode == TEMPORAL_MODE_C and chunk.index > 0:
+            if output_video is None or output_audio is None:
+                raise _error("refined overlap was requested before the CPU output range was initialized.")
+            if output_video.dtype != video.dtype or output_audio.dtype != audio.dtype:
+                raise _error(
+                    "C refined-overlap mode requires native sampled dtype to match the source dtype so previous "
+                    "context is not silently converted."
+                )
+            chunk_video = torch.empty_like(source_video_window)
+            chunk_audio = torch.empty_like(source_audio_window)
+            chunk_video.copy_(source_video_window)
+            chunk_audio.copy_(source_audio_window)
+            video_overlap = window.local_keep_video_start
+            audio_overlap = window.local_keep_audio_start
+            if video_overlap <= 0 or audio_overlap <= 0:
+                raise _error("C refined-overlap mode received an empty previous-context range.")
+            chunk_video[:, :, :video_overlap, :, :].copy_(
+                output_video[:, :, chunk.video_start : window.keep_video_start, :, :]
+            )
+            chunk_audio[:, :, :, :audio_overlap].copy_(
+                output_audio[:, :, :, chunk.audio_start : window.keep_audio_start]
+            )
+        else:
+            chunk_video = source_video_window
+            chunk_audio = source_audio_window
+
+        chunk_latent = dict(latent_image)
+        chunk_latent["samples"] = nested_factory((chunk_video, chunk_audio))
+        sampled_latent = sample_chunk(
+            noise=chunk_noise,
+            guider=guider,
+            sampler=sampler,
+            sigmas=sigmas,
+            latent_image=chunk_latent,
+        )
+        sampled_video, sampled_audio = _validate_sampled_chunk(sampled_latent, video, audio, chunk)
+        if temporal_mode == TEMPORAL_MODE_C and (
+            sampled_video.dtype != video.dtype or sampled_audio.dtype != audio.dtype
+        ):
+            raise _error(
+                "C refined-overlap mode requires native sampled dtype to match the source dtype across windows."
+            )
+
+        if output_video is None:
+            output_video_shape = list(video.shape)
+            output_audio_shape = list(audio.shape)
+            output_video = torch.empty(output_video_shape, dtype=sampled_video.dtype, device="cpu")
+            output_audio = torch.empty(output_audio_shape, dtype=sampled_audio.dtype, device="cpu")
+
+        output_video[:, :, window.keep_video_start : window.keep_video_end, :, :].copy_(
+            sampled_video[:, :, window.local_keep_video_start :, :, :]
+        )
+        output_audio[:, :, :, window.keep_audio_start : window.keep_audio_end].copy_(
+            sampled_audio[:, :, :, window.local_keep_audio_start :]
+        )
+
+        del sampled_video, sampled_audio, sampled_latent
+        del chunk_latent, chunk_video, chunk_audio, source_video_window, source_audio_window, chunk_noise
+        if aggressive_memory_cleanup:
+            gc.collect()
+            cleanup()
+
+    if output_video is None or output_audio is None:
+        raise _error("no exact temporal windows were produced.")
+
+    output = dict(latent_image)
+    output.pop("downscale_ratio_spacial", None)
+    output.pop("downscale_ratio_temporal", None)
+    output["samples"] = nested_factory((output_video, output_audio))
+    return output, _format_overlap_status(plan, temporal_mode, video.device, output_video, noise_mode)
+
+
+def sample_h3_temporal_chunks(
+    *,
+    model: Any = None,
+    positive: Any = None,
+    vae: Any = None,
+    noise: Any,
     sampler: Any,
     sigmas: torch.Tensor,
     latent_image: Mapping[str, Any],
@@ -470,24 +932,62 @@ def sample_h3_temporal_chunks(
     sample_chunk: SampleChunk | None = None,
     nested_factory: NestedFactory | None = None,
     cleanup: CleanupCallback | None = None,
+    build_guider: BuildGuider | None = None,
+    apply_guide: ApplyGuide | None = None,
+    decode_last_frame: DecodeLastFrame | None = None,
+    guider: Any = None,
+    temporal_mode: str = TEMPORAL_MODE_A,
 ) -> tuple[dict[str, Any], str]:
-    """Sample one H3 AV temporal chunk at a time and reassemble on CPU."""
+    """Sample H3 chunks with a fresh Basic Guider and previous-frame continuation."""
+
+    guided_inputs = (model is not None, positive is not None, vae is not None)
+    guided_mode = all(guided_inputs)
+    if any(guided_inputs) and not guided_mode:
+        raise _error("guided sampling requires model, positive, and vae together.")
+    if not guided_mode:
+        if temporal_mode not in TEMPORAL_MODES:
+            raise _error(f"temporal_mode must be one of {list(TEMPORAL_MODES)}, received {temporal_mode!r}.")
+        if temporal_mode != TEMPORAL_MODE_A:
+            return _sample_h3_temporal_overlap_windows(
+                noise=noise,
+                guider=guider,
+                sampler=sampler,
+                sigmas=sigmas,
+                latent_image=latent_image,
+                chunk_duration_seconds=chunk_duration_seconds,
+                aggressive_memory_cleanup=aggressive_memory_cleanup,
+                temporal_mode=temporal_mode,
+                sample_chunk=sample_chunk,
+                nested_factory=nested_factory,
+                cleanup=cleanup,
+            )
 
     video, audio = _extract_h3_streams(latent_image)
     plan = plan_h3_temporal_chunks(int(video.shape[2]), int(audio.shape[3]), chunk_duration_seconds)
-    if len(plan.chunks) > 1 and _guider_has_temporal_keyframes(guider):
-        raise _error(
-            "multi-chunk sampling cannot safely consume minimax_keyframes. Current H3 keyframes store absolute "
-            "full-timeline frame indices, while the native sampler exposes no public per-chunk position-offset "
-            "contract. Use text/reference conditioning without keyframes or the native monolithic sampler."
-        )
+    if len(plan.chunks) > 1:
+        if guided_mode and _positive_has_temporal_keyframes(positive):
+            raise _error(
+                "multi-chunk Previous Last Frame sampling requires original positive conditioning without existing "
+                "minimax_keyframes. Existing absolute/full-timeline guides cannot be safely combined with the local "
+                "frame-0 continuation guide. Use Reference-to-Video conditioning without image keyframes."
+            )
+        if not guided_mode and _guider_has_temporal_keyframes(guider):
+            raise _error(
+                "multi-chunk sampling cannot safely consume minimax_keyframes. Current H3 keyframes store absolute "
+                "full-timeline frame indices, while the native sampler exposes no public per-window position-offset "
+                "contract. Use text/reference conditioning without keyframes or the native monolithic sampler."
+            )
     chunk_noise_factory, noise_mode = _resolve_chunk_noise(noise, plan)
     sample_chunk = sample_chunk or _sample_with_native_advanced_sampler
     nested_factory = nested_factory or _make_official_nested
     cleanup = cleanup or _default_cleanup
+    build_guider = build_guider or _build_native_basic_guider
+    apply_guide = apply_guide or _apply_native_previous_frame_guide
+    decode_last_frame = decode_last_frame or _decode_terminal_frame
 
     output_video: torch.Tensor | None = None
     output_audio: torch.Tensor | None = None
+    previous_last_frame: torch.Tensor | None = None
 
     for chunk in plan.chunks:
         chunk_noise = chunk_noise_factory(chunk)
@@ -496,9 +996,26 @@ def sample_h3_temporal_chunks(
         chunk_latent = dict(latent_image)
         chunk_latent["samples"] = nested_factory((chunk_video, chunk_audio))
 
+        if not guided_mode:
+            chunk_positive = None
+            chunk_guider = guider
+        elif chunk.index == 0:
+            chunk_positive = positive
+            chunk_guider = build_guider(model, chunk_positive)
+        else:
+            if previous_last_frame is None:
+                raise _error("previous chunk terminal frame was not available for continuation.")
+            chunk_positive = apply_guide(
+                positive=positive,
+                latent=chunk_latent,
+                vae=vae,
+                image=previous_last_frame,
+            )
+            chunk_guider = build_guider(model, chunk_positive)
+
         sampled_latent = sample_chunk(
             noise=chunk_noise,
-            guider=guider,
+            guider=chunk_guider,
             sampler=sampler,
             sigmas=sigmas,
             latent_image=chunk_latent,
@@ -514,8 +1031,11 @@ def sample_h3_temporal_chunks(
         output_video[:, :, chunk.video_start : chunk.video_end, :, :].copy_(sampled_video)
         output_audio[:, :, :, chunk.audio_start : chunk.audio_end].copy_(sampled_audio)
 
+        if guided_mode and chunk.index + 1 < len(plan.chunks):
+            previous_last_frame = decode_last_frame(vae, sampled_video)
+
         del sampled_video, sampled_audio, sampled_latent
-        del chunk_latent, chunk_video, chunk_audio, chunk_noise
+        del chunk_latent, chunk_video, chunk_audio, chunk_noise, chunk_guider, chunk_positive
         if aggressive_memory_cleanup:
             gc.collect()
             cleanup()
@@ -527,7 +1047,12 @@ def sample_h3_temporal_chunks(
     output.pop("downscale_ratio_spacial", None)
     output.pop("downscale_ratio_temporal", None)
     output["samples"] = nested_factory((output_video, output_audio))
-    return output, _format_status(plan, video.device, output_video, noise_mode)
+    status = (
+        _format_guided_status(plan, video.device, output_video, noise_mode)
+        if guided_mode
+        else _format_status(plan, video.device, output_video, noise_mode)
+    )
+    return output, status
 
 
 __all__ = [
@@ -537,9 +1062,16 @@ __all__ = [
     "H3_FPS",
     "H3TemporalChunk",
     "H3TemporalChunkPlan",
+    "H3TemporalOverlapPlan",
+    "H3TemporalOverlapWindow",
     "H3TemporalChunkSamplerError",
+    "TEMPORAL_MODE_A",
+    "TEMPORAL_MODE_B",
+    "TEMPORAL_MODE_C",
+    "TEMPORAL_MODES",
     "derive_chunk_seed",
     "frame_boundary_for_video_token",
     "plan_h3_temporal_chunks",
+    "plan_h3_temporal_overlap_windows",
     "sample_h3_temporal_chunks",
 ]

@@ -272,15 +272,17 @@ Node ID：`JR_H3_TemporalChunkSampler`
 
 | 输入 | 类型 | 默认值 | 范围或说明 |
 | --- | --- | --- | --- |
+| `model` | MODEL | 必须连接 | MiniMax H3 model；节点为每段重新建立官方 Basic Guider |
+| `positive` | CONDITIONING | 必须连接 | original positive；Chunk 1 原样使用，Chunk 2+ 派生 frame-0 continuation conditioning；不会原地修改 |
+| `vae` | VAE | 必须连接 | MiniMax H3 video VAE；用于解码每个非末段的真实最终像素帧及编码下一段 guide |
 | `noise` | NOISE | 必须连接 | 单块保持原生；多块支持官方 RandomNoise 的绝对时间派生子流及官方 DisableNoise，其他 custom NOISE fail closed |
-| `guider` | GUIDER | 必须连接 | 原生 ComfyUI guider |
 | `sampler` | SAMPLER | 必须连接 | 原生 sampler object |
 | `sigmas` | SIGMAS | 必须连接 | 每块使用同一完整 sigma schedule |
 | `latent_image` | LATENT | 必须连接 | 官方 H3 两流 NestedTensor；video `[B,24,5k+2,H,W]`、audio `[B,32,2,T]` |
 | `chunk_duration_seconds` | FLOAT | `15.0` | 1..3600，step 0.5；实际内部边界按 5 video tokens / 17 frames 对齐 |
 | `aggressive_memory_cleanup` | BOOLEAN | `false` | 每块结束后调用 ComfyUI `soft_empty_cache`；更慢，通常保持关闭 |
 
-节点只负责时间规划、切片、顺序编排、CPU 预分配回填和生命周期控制；每块扩散采样委托给当前 ComfyUI 原生 `SamplerCustomAdvanced`。Phase 1 没有 overlap、跨块状态或全局 position offset，并拒绝 `noise_mask`；多块执行还会拒绝带绝对目标帧索引的 `minimax_keyframes`。详见 [H3_TEMPORAL_CHUNK_SAMPLER.md](H3_TEMPORAL_CHUNK_SAMPLER.md)。
+节点按无 overlap H3 时间网格切片。Chunk 1 使用 original positive；每个后续 chunk 使用上一段完整 VAE decode 的最终 RGB 帧调用官方 `MiniMaxH3AddGuide(frame_idx=0)`，随后重新建立 Basic Guider 并委托当前 ComfyUI 原生 `SamplerCustomAdvanced`。结果直接写入预分配 CPU AV 缓冲。节点没有 hidden-state/KV carry 或 global position offset，并拒绝 `noise_mask`；多块 original positive 若已有绝对 `minimax_keyframes` 也会 fail closed。详见 [H3_TEMPORAL_CHUNK_SAMPLER.md](H3_TEMPORAL_CHUNK_SAMPLER.md)。
 
 ## Cache Config Router
 
