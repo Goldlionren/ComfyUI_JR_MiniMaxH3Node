@@ -330,33 +330,34 @@ H3 AV LATENT -> JR MiniMax H3 Split AV Latent
 ## Temporal Chunk Sampler
 
 ```text
-Random Noise ───────┐
-Guider ─────────────┤
-Sampler ────────────┼-> JR MiniMax H3 Temporal Chunk Sampler -> sampled H3 AV LATENT
-Sigmas ─────────────┤
-H3 AV LATENT ───────┘
+MODEL ───────────────────────┐
+original positive ───────────┤
+MiniMax H3 video VAE ────────┤
+Random Noise ────────────────┤
+Sampler ─────────────────────┼-> JR MiniMax H3 Temporal Chunk Sampler -> sampled H3 AV LATENT
+Sigmas ──────────────────────┤
+H3 AV LATENT ────────────────┘
 ```
 
-`JR_H3_TemporalChunkSampler` 与原生 `SamplerCustomAdvanced` 使用相同的 `NOISE / GUIDER / SAMPLER / SIGMAS / LATENT` 接口。它不改写扩散算法：每次只构造当前 H3 视频/音频时间片并调用当前 ComfyUI 原生 `SamplerCustomAdvanced`，完成后立刻把两个结果流复制到预分配的 CPU 全长缓冲区、删除当前块引用，再处理下一块。实现不会先收集所有块再 `torch.cat`，也不会并行启动多个块。
+`JR_H3_TemporalChunkSampler` 不再接收外部 GUIDER。它必须拿到 original `positive`，以便为每一段建立真正独立的 conditioning 和 Basic Guider：Chunk 1 使用 original positive；Chunk 2+ 先把上一段完整 VAE decode 后的最终 RGB 帧通过官方 `MiniMaxH3AddGuide(frame_idx=0)` 加到 original positive，再用得到的 chunk-specific positive 新建 Basic Guider，最后调用原生 `SamplerCustomAdvanced`。
 
-H3 视频和音频 latent 的时间长度本来就不同。内部切点先对齐视频的 5-token / 17-frame 周期，再从同一个全局 24 fps 帧边界换算 40 Hz 音频边界；最后一个音频边界保留合法的编码 ±1 tick 差异。因此，它切的是一条共享时间线，不是假设 `T_video == T_audio`。
+```text
+Chunk 1: original positive -> new Basic Guider -> sample -> decoded final frame
+Chunk 2+: previous final frame -> AddGuide(frame_idx=0) -> chunk positive -> new Basic Guider -> sample
+```
 
-`temporal_mode` 提供严格受控的三种对照：
+节点仍只输出完整 H3 AV `LATENT + status`。每段 video/audio 结果直接复制到预分配的全长 CPU 缓冲区；处理中只额外保留一张上一段 CPU 末帧，不收集全部 chunk 后再 `torch.cat`。为了获得真实像素末帧，每个非末段都会多做一次完整 video VAE decode；下游最终再 decode 完整 latent 时会有额外 VAE 计算，这是保持现有 LATENT 输出链的明确代价。
 
-- `A - Legacy No Overlap`：完全保留原 planner、尾块合并、采样调用和 seed 语义，是旧工作流默认值。
-- `B - Exact H3 Source Overlap`：保持 legacy advance/stride，但把每次采样扩展为合法的 audio-exact H3 本地窗口；overlap 使用原始 source latent，重复区域采样后丢弃。
-- `C - Exact H3 Refined Overlap`：窗口、keep/discard 和 noise 与 B 相同，只把当前 video/audio overlap 换成 CPU 输出中已完成的 previous-refined slice。没有 hard lock 或 `noise_mask`。
+H3 video/audio latent 的时间长度不同。内部切点对齐 video 的 5-token / 17-frame 周期，并从同一全局 24 fps frame boundary 换算 40 Hz audio boundary；最终 audio boundary 保留官方编码容许的 ±1 tick。旧 0.17 的 B/C overlap 实验已从节点 UI 移除，因为当前连续性方案只采用无 overlap 分段 + 上一段像素末帧 guide。
 
-B/C 把 `chunk_duration_seconds` 解释为 requested advance。以 5 秒为例，stride 是 35 video tokens / 119 frames，实际 window 是 42 tokens / 141 frames / 235 audio ticks，普通 overlap 为 7 tokens / 22 frames。最终窗口会向全局末端回贴，keep range 根据已提交终点计算，确保完整时间线只写一次。若所需 exact window 超出保守的 345-frame H3 trained range，则明确报错并要求缩短 duration。
-
-真实边界：
+重要边界：
 
 - 目标是限制采样期间随时间长度增长的 latent 与中间激活峰值；模型权重、conditioning、上游仍持有的整段 latent，以及当前块的原生 preview/x0 内存不包含在这项节省中。
-- 不存在跨块 hidden-state carry、全局时间位置偏移、latent blending 或 decoded crossfade；B/C 只是 overlap context 实验，各 window 仍会被原生 sampler 当作独立短片段处理，因此不承诺与整段单次采样数值等价，也不保证边界连续性。
+- 不存在跨块 hidden-state/KV carry、全局时间位置偏移、latent blending 或 decoded crossfade；连续性来自官方 frame-0 image guide，不承诺与整段单次采样数值等价。
 - 单块执行原样使用输入 NOISE，不改变原生 seed 语义。多块执行时，从 ComfyUI 实时节点注册表识别并调用官方 RandomNoise/DisableNoise，因此兼容核心 extra node 的路径模块加载身份；RandomNoise 使用 `base seed + absolute frame_start` 的稳定 uint64 派生子流，使相同 shape 的块可重复但不再逐位相同，DisableNoise 保持原生全零语义。其他 generic/custom NOISE 因 ComfyUI 没有公共 clone/offset/substream 协议而明确拒绝，不会静默读取或修改私有属性。状态输出会报告 `noise_mode=native_single`、`chunk_derived` 或 `native_zero`。
 - `aggressive_memory_cleanup=false` 默认只依赖引用释放和 ComfyUI 正常内存管理；打开后才在每块结束调用 `soft_empty_cache`，通常更慢。
-- A/B/C 都明确拒绝 `noise_mask`，因为不能安全猜测它在 H3 packed AV 双流中的时间映射；C 本阶段也不做 overlap locking。
-- 多块执行会检测并拒绝 `minimax_keyframes`：当前原生 keyframe 使用完整时间线的绝对帧号，却没有公开的 chunk position-offset 契约；静默重复或移动首尾帧条件都会改变含义。Reference conditioning 不使用这类目标帧锚点，可继续按原生路径传入每块。
+- 明确拒绝 `noise_mask`，因为不能安全猜测它在 H3 packed AV 双流中的时间映射。
+- 多块 original positive 若已经含有 `minimax_keyframes` 会明确报错，避免绝对 full-timeline guide 与逐段局部 frame-0 guide 冲突；推荐使用没有目标帧 keyframe 的 Reference-to-Video positive。
 
 完整算法、输入校验、60 秒规划示例和内存口径见 [H3 Temporal Chunk Sampler](docs/H3_TEMPORAL_CHUNK_SAMPLER.md)。
 

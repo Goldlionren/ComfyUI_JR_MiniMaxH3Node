@@ -121,6 +121,9 @@ SampleChunk = Callable[..., Mapping[str, Any]]
 NestedFactory = Callable[[tuple[torch.Tensor, torch.Tensor]], Any]
 CleanupCallback = Callable[[], None]
 ChunkNoiseFactory = Callable[[H3TemporalChunk], Any]
+BuildGuider = Callable[[Any, Any], Any]
+ApplyGuide = Callable[..., Any]
+DecodeLastFrame = Callable[[Any, torch.Tensor], torch.Tensor]
 
 
 def _error(message: str) -> H3TemporalChunkSamplerError:
@@ -454,6 +457,19 @@ def _guider_has_temporal_keyframes(guider: Any) -> bool:
     return False
 
 
+def _positive_has_temporal_keyframes(positive: Any) -> bool:
+    """Return whether raw CONDITIONING already contains native H3 frame guides."""
+
+    if not isinstance(positive, (tuple, list)):
+        return False
+    for item in positive:
+        if not isinstance(item, (tuple, list)) or len(item) < 2 or not isinstance(item[1], Mapping):
+            continue
+        if item[1].get("minimax_keyframes"):
+            return True
+    return False
+
+
 def _unwrap_noise_node_output(node_output: Any, node_id: str) -> Any:
     values = node_output.result if hasattr(node_output, "result") else node_output
     if not isinstance(values, (tuple, list)) or len(values) != 1:
@@ -572,6 +588,75 @@ def _sample_with_native_advanced_sampler(*, noise, guider, sampler, sigmas, late
     return sampled_latent
 
 
+def _build_native_basic_guider(model: Any, positive: Any) -> Any:
+    """Build a new official Basic Guider without mutating a guider from upstream."""
+
+    try:
+        from comfy_extras.nodes_custom_sampler import BasicGuider
+    except ImportError:
+        raise RuntimeError(
+            f"{ERROR_PREFIX}\nThe installed ComfyUI does not provide BasicGuider."
+        ) from None
+    node_output = BasicGuider.execute(model, positive)
+    values = node_output.result if hasattr(node_output, "result") else node_output
+    if not isinstance(values, (tuple, list)) or len(values) != 1:
+        raise RuntimeError(f"{ERROR_PREFIX}\nBasicGuider returned an unexpected result.")
+    guider = values[0]
+    if not callable(guider):
+        raise RuntimeError(f"{ERROR_PREFIX}\nBasicGuider returned an invalid GUIDER.")
+    return guider
+
+
+def _apply_native_previous_frame_guide(
+    *,
+    positive: Any,
+    latent: Mapping[str, Any],
+    vae: Any,
+    image: torch.Tensor,
+) -> Any:
+    """Apply the previous decoded terminal frame at local pixel frame zero."""
+
+    try:
+        from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
+    except ImportError:
+        raise RuntimeError(
+            f"{ERROR_PREFIX}\nCurrent ComfyUI MiniMax H3 guide implementation is unavailable."
+        ) from None
+    node_output = MiniMaxH3AddGuide.execute(
+        positive=positive,
+        latent=latent,
+        frame_idx=0,
+        vae=vae,
+        audio_vae=None,
+        image=image,
+        audio=None,
+    )
+    values = node_output.result if hasattr(node_output, "result") else node_output
+    if not isinstance(values, (tuple, list)) or len(values) != 1:
+        raise RuntimeError(f"{ERROR_PREFIX}\nMiniMaxH3AddGuide returned an unexpected result.")
+    return values[0]
+
+
+def _decode_terminal_frame(vae: Any, sampled_video: torch.Tensor) -> torch.Tensor:
+    """Decode one complete sampled chunk and retain only its final RGB frame on CPU."""
+
+    decode = getattr(vae, "decode", None)
+    if not callable(decode):
+        raise _error("vae must provide the standard ComfyUI decode(samples) API.")
+    images = decode(sampled_video)
+    if not isinstance(images, torch.Tensor) or images.ndim not in (4, 5):
+        shape = getattr(images, "shape", None)
+        raise _error(f"VAE decode returned an incompatible IMAGE tensor: {shape}.")
+    if images.ndim == 5:
+        images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
+    if images.shape[0] < 1 or images.shape[-1] < 3:
+        raise _error(f"VAE decode returned an empty or non-RGB IMAGE tensor: {_shape(images)}.")
+    frame = images[-1:, ..., :3].detach().to(device="cpu", dtype=torch.float32).contiguous()
+    if not bool(torch.isfinite(frame).all().item()):
+        raise _error("VAE decoded terminal frame contains NaN or Inf values.")
+    return frame
+
+
 def _default_cleanup() -> None:
     from comfy.model_management import soft_empty_cache
 
@@ -640,6 +725,25 @@ def _format_status(
             f"{frame_boundary_for_video_token(plan.target_video_tokens) / H3_FPS:.3f}s",
             "context=none",
             "phase 1: no overlap, no temporal hidden-state carry, no global position offset",
+        )
+    )
+
+
+def _format_guided_status(
+    plan: H3TemporalChunkPlan,
+    source_device: torch.device,
+    output_video: torch.Tensor,
+    noise_mode: str,
+) -> str:
+    base = _format_status(plan, source_device, output_video, noise_mode).splitlines()
+    return "\n".join(
+        (
+            *base[:8],
+            "continuity=Previous Last Frame -> MiniMaxH3AddGuide(frame_idx=0)",
+            f"guides_applied={max(0, len(plan.chunks) - 1)}",
+            "guider=official BasicGuider rebuilt per chunk",
+            *base[9:11],
+            "context=decoded previous terminal frame; no latent overlap or hidden-state carry",
         )
     )
 
@@ -816,52 +920,74 @@ def _sample_h3_temporal_overlap_windows(
 
 def sample_h3_temporal_chunks(
     *,
+    model: Any = None,
+    positive: Any = None,
+    vae: Any = None,
     noise: Any,
-    guider: Any,
     sampler: Any,
     sigmas: torch.Tensor,
     latent_image: Mapping[str, Any],
     chunk_duration_seconds: float,
     aggressive_memory_cleanup: bool = False,
-    temporal_mode: str = TEMPORAL_MODE_A,
     sample_chunk: SampleChunk | None = None,
     nested_factory: NestedFactory | None = None,
     cleanup: CleanupCallback | None = None,
+    build_guider: BuildGuider | None = None,
+    apply_guide: ApplyGuide | None = None,
+    decode_last_frame: DecodeLastFrame | None = None,
+    guider: Any = None,
+    temporal_mode: str = TEMPORAL_MODE_A,
 ) -> tuple[dict[str, Any], str]:
-    """Sample one H3 AV temporal chunk at a time and reassemble on CPU."""
+    """Sample H3 chunks with a fresh Basic Guider and previous-frame continuation."""
 
-    if temporal_mode not in TEMPORAL_MODES:
-        raise _error(f"temporal_mode must be one of {list(TEMPORAL_MODES)}, received {temporal_mode!r}.")
-    if temporal_mode != TEMPORAL_MODE_A:
-        return _sample_h3_temporal_overlap_windows(
-            noise=noise,
-            guider=guider,
-            sampler=sampler,
-            sigmas=sigmas,
-            latent_image=latent_image,
-            chunk_duration_seconds=chunk_duration_seconds,
-            aggressive_memory_cleanup=aggressive_memory_cleanup,
-            temporal_mode=temporal_mode,
-            sample_chunk=sample_chunk,
-            nested_factory=nested_factory,
-            cleanup=cleanup,
-        )
+    guided_inputs = (model is not None, positive is not None, vae is not None)
+    guided_mode = all(guided_inputs)
+    if any(guided_inputs) and not guided_mode:
+        raise _error("guided sampling requires model, positive, and vae together.")
+    if not guided_mode:
+        if temporal_mode not in TEMPORAL_MODES:
+            raise _error(f"temporal_mode must be one of {list(TEMPORAL_MODES)}, received {temporal_mode!r}.")
+        if temporal_mode != TEMPORAL_MODE_A:
+            return _sample_h3_temporal_overlap_windows(
+                noise=noise,
+                guider=guider,
+                sampler=sampler,
+                sigmas=sigmas,
+                latent_image=latent_image,
+                chunk_duration_seconds=chunk_duration_seconds,
+                aggressive_memory_cleanup=aggressive_memory_cleanup,
+                temporal_mode=temporal_mode,
+                sample_chunk=sample_chunk,
+                nested_factory=nested_factory,
+                cleanup=cleanup,
+            )
 
     video, audio = _extract_h3_streams(latent_image)
     plan = plan_h3_temporal_chunks(int(video.shape[2]), int(audio.shape[3]), chunk_duration_seconds)
-    if len(plan.chunks) > 1 and _guider_has_temporal_keyframes(guider):
-        raise _error(
-            "multi-chunk sampling cannot safely consume minimax_keyframes. Current H3 keyframes store absolute "
-            "full-timeline frame indices, while the native sampler exposes no public per-chunk position-offset "
-            "contract. Use text/reference conditioning without keyframes or the native monolithic sampler."
-        )
+    if len(plan.chunks) > 1:
+        if guided_mode and _positive_has_temporal_keyframes(positive):
+            raise _error(
+                "multi-chunk Previous Last Frame sampling requires original positive conditioning without existing "
+                "minimax_keyframes. Existing absolute/full-timeline guides cannot be safely combined with the local "
+                "frame-0 continuation guide. Use Reference-to-Video conditioning without image keyframes."
+            )
+        if not guided_mode and _guider_has_temporal_keyframes(guider):
+            raise _error(
+                "multi-chunk sampling cannot safely consume minimax_keyframes. Current H3 keyframes store absolute "
+                "full-timeline frame indices, while the native sampler exposes no public per-window position-offset "
+                "contract. Use text/reference conditioning without keyframes or the native monolithic sampler."
+            )
     chunk_noise_factory, noise_mode = _resolve_chunk_noise(noise, plan)
     sample_chunk = sample_chunk or _sample_with_native_advanced_sampler
     nested_factory = nested_factory or _make_official_nested
     cleanup = cleanup or _default_cleanup
+    build_guider = build_guider or _build_native_basic_guider
+    apply_guide = apply_guide or _apply_native_previous_frame_guide
+    decode_last_frame = decode_last_frame or _decode_terminal_frame
 
     output_video: torch.Tensor | None = None
     output_audio: torch.Tensor | None = None
+    previous_last_frame: torch.Tensor | None = None
 
     for chunk in plan.chunks:
         chunk_noise = chunk_noise_factory(chunk)
@@ -870,9 +996,26 @@ def sample_h3_temporal_chunks(
         chunk_latent = dict(latent_image)
         chunk_latent["samples"] = nested_factory((chunk_video, chunk_audio))
 
+        if not guided_mode:
+            chunk_positive = None
+            chunk_guider = guider
+        elif chunk.index == 0:
+            chunk_positive = positive
+            chunk_guider = build_guider(model, chunk_positive)
+        else:
+            if previous_last_frame is None:
+                raise _error("previous chunk terminal frame was not available for continuation.")
+            chunk_positive = apply_guide(
+                positive=positive,
+                latent=chunk_latent,
+                vae=vae,
+                image=previous_last_frame,
+            )
+            chunk_guider = build_guider(model, chunk_positive)
+
         sampled_latent = sample_chunk(
             noise=chunk_noise,
-            guider=guider,
+            guider=chunk_guider,
             sampler=sampler,
             sigmas=sigmas,
             latent_image=chunk_latent,
@@ -888,8 +1031,11 @@ def sample_h3_temporal_chunks(
         output_video[:, :, chunk.video_start : chunk.video_end, :, :].copy_(sampled_video)
         output_audio[:, :, :, chunk.audio_start : chunk.audio_end].copy_(sampled_audio)
 
+        if guided_mode and chunk.index + 1 < len(plan.chunks):
+            previous_last_frame = decode_last_frame(vae, sampled_video)
+
         del sampled_video, sampled_audio, sampled_latent
-        del chunk_latent, chunk_video, chunk_audio, chunk_noise
+        del chunk_latent, chunk_video, chunk_audio, chunk_noise, chunk_guider, chunk_positive
         if aggressive_memory_cleanup:
             gc.collect()
             cleanup()
@@ -901,7 +1047,12 @@ def sample_h3_temporal_chunks(
     output.pop("downscale_ratio_spacial", None)
     output.pop("downscale_ratio_temporal", None)
     output["samples"] = nested_factory((output_video, output_audio))
-    return output, _format_status(plan, video.device, output_video, noise_mode)
+    status = (
+        _format_guided_status(plan, video.device, output_video, noise_mode)
+        if guided_mode
+        else _format_status(plan, video.device, output_video, noise_mode)
+    )
+    return output, status
 
 
 __all__ = [

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.18.0
+
+- Replaced the experimental Temporal Chunk Sampler B/C overlap UI with decoded previous-terminal-frame continuity on the non-overlapping H3 timeline.
+- The sampler now consumes MODEL, original positive CONDITIONING, and the H3 video VAE; chunk 1 uses the original positive, while every later chunk derives a fresh positive through the official `MiniMaxH3AddGuide(frame_idx=0)` and rebuilds an official Basic Guider.
+- Preserved full CPU-backed H3 AV LATENT output, deterministic H3 video/audio boundary math, per-chunk noise identity, metadata immutability, and explicit failure for pre-existing multi-chunk `minimax_keyframes` conflicts.
+
 ## 0.17.0
 
 - Added controlled A/B/C continuity modes to `JR MiniMax H3 Temporal Chunk Sampler`: unchanged legacy no-overlap, exact H3 source overlap, and exact H3 previous-refined AV overlap.

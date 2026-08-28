@@ -1,8 +1,8 @@
-"""ComfyUI node for sequential MiniMax H3 AV temporal chunk sampling."""
+"""ComfyUI node for guided sequential MiniMax H3 AV temporal chunk sampling."""
 
 from __future__ import annotations
 
-from ..utils.h3_temporal_chunk_sampler import TEMPORAL_MODE_A, TEMPORAL_MODES, sample_h3_temporal_chunks
+from ..utils.h3_temporal_chunk_sampler import sample_h3_temporal_chunks
 
 
 class JR_H3_TemporalChunkSampler:
@@ -12,17 +12,28 @@ class JR_H3_TemporalChunkSampler:
     RETURN_NAMES = ("output", "status")
     DESCRIPTION = (
         "Sequentially slices an official MiniMax H3 AV NestedTensor along its shared timeline, "
-        "delegates every chunk to ComfyUI's native SamplerCustomAdvanced, and reassembles directly "
-        "into CPU-preallocated output buffers. A preserves legacy no-overlap behavior; B/C provide "
-        "controlled exact H3 source/refined overlap experiments without hidden-state carry."
+        "uses the original conditioning for chunk 1, then anchors every later chunk to the previous "
+        "decoded terminal frame through ComfyUI's native MiniMaxH3AddGuide at local frame 0. A fresh "
+        "Basic Guider is built for every chunk before native SamplerCustomAdvanced execution."
     )
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "model": (
+                    "MODEL",
+                    {"tooltip": "MiniMax H3 MODEL used to build a fresh Basic Guider for every chunk."},
+                ),
+                "positive": (
+                    "CONDITIONING",
+                    {"tooltip": "Original H3 positive conditioning. It is never mutated."},
+                ),
+                "vae": (
+                    "VAE",
+                    {"tooltip": "MiniMax H3 video VAE used to decode each previous terminal frame."},
+                ),
                 "noise": ("NOISE",),
-                "guider": ("GUIDER",),
                 "sampler": ("SAMPLER",),
                 "sigmas": ("SIGMAS",),
                 "latent_image": ("LATENT",),
@@ -43,39 +54,31 @@ class JR_H3_TemporalChunkSampler:
                         "tooltip": "Run ComfyUI soft_empty_cache after each completed chunk. Slower; normally leave disabled.",
                     },
                 ),
-                "temporal_mode": (
-                    list(TEMPORAL_MODES),
-                    {
-                        "default": TEMPORAL_MODE_A,
-                        "tooltip": (
-                            "A keeps the legacy non-overlap planner. B uses exact local H3 windows with source "
-                            "overlap. C uses the same windows/noise but replaces overlap with previous refined AV context."
-                        ),
-                    },
-                ),
             }
         }
 
     def sample(
         self,
+        model,
+        positive,
+        vae,
         noise,
-        guider,
         sampler,
         sigmas,
         latent_image,
         chunk_duration_seconds=15.0,
         aggressive_memory_cleanup=False,
-        temporal_mode=TEMPORAL_MODE_A,
     ):
         return sample_h3_temporal_chunks(
+            model=model,
+            positive=positive,
+            vae=vae,
             noise=noise,
-            guider=guider,
             sampler=sampler,
             sigmas=sigmas,
             latent_image=latent_image,
             chunk_duration_seconds=chunk_duration_seconds,
             aggressive_memory_cleanup=aggressive_memory_cleanup,
-            temporal_mode=temporal_mode,
         )
 
 

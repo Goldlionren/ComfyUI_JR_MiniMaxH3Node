@@ -951,27 +951,30 @@ def test_native_output_shape_change_is_rejected():
         )
 
 
-def test_node_schema_matches_advanced_sampler_contract():
+def test_node_schema_matches_previous_frame_sampler_contract():
     node = JR_H3_TemporalChunkSampler()
     schema = node.INPUT_TYPES()["required"]
     assert list(schema) == [
+        "model",
+        "positive",
+        "vae",
         "noise",
-        "guider",
         "sampler",
         "sigmas",
         "latent_image",
         "chunk_duration_seconds",
         "aggressive_memory_cleanup",
-        "temporal_mode",
     ]
+    assert schema["model"][0] == "MODEL"
+    assert schema["positive"][0] == "CONDITIONING"
+    assert schema["vae"][0] == "VAE"
     assert schema["noise"] == ("NOISE",)
-    assert schema["guider"] == ("GUIDER",)
     assert schema["sampler"] == ("SAMPLER",)
     assert schema["sigmas"] == ("SIGMAS",)
     assert schema["latent_image"] == ("LATENT",)
     assert schema["chunk_duration_seconds"][1]["default"] == 15.0
     assert schema["aggressive_memory_cleanup"][1]["default"] is False
-    assert schema["temporal_mode"][0] == [TEMPORAL_MODE_A, TEMPORAL_MODE_B, TEMPORAL_MODE_C]
-    assert schema["temporal_mode"][1]["default"] == TEMPORAL_MODE_A
+    assert "temporal_mode" not in schema
+    assert "guider" not in schema
     assert node.RETURN_TYPES == ("LATENT", "STRING")
     assert node.RETURN_NAMES == ("output", "status")
