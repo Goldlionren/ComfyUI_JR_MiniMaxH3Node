@@ -73,6 +73,57 @@ chunk_duration_seconds = 15
 
 这里 video/audio 的块长度不同，但每一对边界来自同一全局时间点。
 
+## A/B/C 连续性实验
+
+`temporal_mode` 被追加在旧 widgets 之后，默认 `A - Legacy No Overlap`，所以旧 workflow 的输入槽、widget 位置和输出槽保持不变。
+
+### A - Legacy No Overlap
+
+A 继续直接使用原来的 `plan_h3_temporal_chunks()`。duration 换算、尾块合并、native 调用次数、每块 absolute `frame_start` seed、CPU 回填和 metadata 语义没有改动。以 `T_video=217 / T_audio=1227 / requested=5.0s` 为例，范围仍是：
+
+```text
+video [0:35] [35:70] [70:105] [105:140] [140:175] [175:217]
+audio [0:198] [198:397] [397:595] [595:793] [793:992] [992:1227]
+```
+
+### B/C exact window 数学
+
+B/C 保留 A 的 global advance：
+
+```text
+cycles = max(1, floor(requested_seconds * 24 / 17))
+stride_tokens = 5 * cycles
+stride_frames = 17 * cycles
+```
+
+本地 window 同时满足官方 `T=5k+2 / frames=17k+5` 和整数 40 Hz audio length。可写成：
+
+```text
+window_tokens = 15n + 12
+window_frames = 51n + 39
+window_audio  = 85n + 65
+```
+
+实现选择严格大于 stride 的最小 window，并保守限制在当前原生节点文档所述约 124--362 帧 trained range 内：42/141/235、57/192/320、72/243/405、87/294/490、102/345/575。超过 345 帧时 B/C fail closed；A 不受这个限制。
+
+Canonical 5 秒计划：
+
+| # | sample video | keep video | sample audio | keep audio |
+| ---: | --- | --- | --- | --- |
+| 1 | `[0:42]` | `[0:42]` | `[0:235]` | `[0:235]` |
+| 2 | `[35:77]` | `[42:77]` | `[198:433]` | `[235:433]` |
+| 3 | `[70:112]` | `[77:112]` | `[397:632]` | `[433:632]` |
+| 4 | `[105:147]` | `[112:147]` | `[595:830]` | `[632:830]` |
+| 5 | `[140:182]` | `[147:182]` | `[793:1028]` | `[830:1028]` |
+| 6 | `[175:217]` | `[182:217]` | `[992:1227]` | `[1028:1227]` |
+
+最后一个 window 若会越过 global end，会改为 `[T_global-window:T_global]`。它的 overlap 可能比普通 overlap 大，keep 起点始终由 `already_committed_global_end` 决定，因此 video/audio 全局范围没有 gap、duplicate 或额外 token。
+
+- B：完整 current window 都来自 original source latent；overlap 只提供 local attention context，重叠输出被丢弃。
+- C：新 suffix 仍来自 original source，但 video/audio overlap 都从已完成的 CPU global output 读取。只搬运当前 overlap，不把完整 output 放回 GPU。
+- B/C 使用相同 window、keep/discard、noise seed、guider、sampler 和 sigmas。C 没有 hard lock、mask 或 blending，因此唯一变量是 overlap context source。
+- 全局 audio 若处于官方容许的 expected ±1 tick，普通 window 仍严格 exact，贴尾 window 保留真实 terminal tick，不 pad 或截断；status 会报告 delta。
+
 ## 顺序执行与输出内存
 
 执行严格串行：
@@ -118,14 +169,14 @@ plan timeline
 
 派生只创建当前块的官方 NOISE provider 和当前块 noise；不会预生成完整长视频 noise，因此 bounded-memory 架构不变。它也不承诺等价于“生成一份整段 noise 再按时间切片”。
 
-## Phase 1 限制
+## 能力限制
 
-- 无 overlap、cross-fade、latent blending 或边界重采样。
+- A 无 overlap；B/C 只有 sampling-context overlap，没有 cross-fade、latent blending 或 decoded boundary blending。
 - 无跨块 hidden-state、KV 或 recurrent state carry。
 - H3 当前原生 sampler/conditioning 没有公开的“全局 chunk 时间偏移”输入；每块在模型看来是独立短片段。
 - 因此输出不与整段单次采样 bit-exact，也可能出现内容重启或块边界不连续。
 - 同一个完整 sigma schedule 会独立用于每块；这是真采样，不是把已经采样完的 latent 切开。
-- Phase 1 拒绝 `noise_mask`，不会猜测 packed AV 双流 mask 的时间映射。
+- A/B/C 都拒绝 `noise_mask`，不会猜测 packed AV 双流 mask 的时间映射；C 也不对 overlap hard lock。
 - 多块执行检测到 `minimax_keyframes` 时会明确拒绝。当前原生 keyframe 的 `resolved_frame_index` 以完整目标时间线为原点，而 sampler/guider 没有公开的 chunk offset 或无副作用重映射接口；把同一绝对索引直接交给每块会静默错位。普通 text 与 Ref2VA reference blocks 不使用这个目标帧锚点，可按原生 conditioning 继续传入。
 - 节点只输出 sampled H3 AV LATENT，不解码视频或音频，不保存文件。
 
@@ -133,7 +184,7 @@ plan timeline
 
 ## 建议起点
 
-- 先用 `chunk_duration_seconds=15`。
+- A 可先用 `chunk_duration_seconds=15`；B/C 建议从 `5.0` 开始做同 workflow 的肉眼对照。B/C 请求达到约 14.875 秒时会因下一 exact window 超出保守 trained range而明确拒绝。
 - 保持 `aggressive_memory_cleanup=false`，只有确认 allocator 缓存造成压力时再开启。
 - 用短 timeline 先比较原生单段与分块结果，检查工作流可运行性和边界质量。
 - 如果输入 full latent 已经常驻 GPU，先处理上游 offload；本节点不能释放其他节点仍持有的引用。

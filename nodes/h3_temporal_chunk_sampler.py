@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..utils.h3_temporal_chunk_sampler import sample_h3_temporal_chunks
+from ..utils.h3_temporal_chunk_sampler import TEMPORAL_MODE_A, TEMPORAL_MODES, sample_h3_temporal_chunks
 
 
 class JR_H3_TemporalChunkSampler:
@@ -13,7 +13,8 @@ class JR_H3_TemporalChunkSampler:
     DESCRIPTION = (
         "Sequentially slices an official MiniMax H3 AV NestedTensor along its shared timeline, "
         "delegates every chunk to ComfyUI's native SamplerCustomAdvanced, and reassembles directly "
-        "into CPU-preallocated output buffers. Phase 1 has no overlap or cross-chunk hidden-state carry."
+        "into CPU-preallocated output buffers. A preserves legacy no-overlap behavior; B/C provide "
+        "controlled exact H3 source/refined overlap experiments without hidden-state carry."
     )
 
     @classmethod
@@ -42,6 +43,16 @@ class JR_H3_TemporalChunkSampler:
                         "tooltip": "Run ComfyUI soft_empty_cache after each completed chunk. Slower; normally leave disabled.",
                     },
                 ),
+                "temporal_mode": (
+                    list(TEMPORAL_MODES),
+                    {
+                        "default": TEMPORAL_MODE_A,
+                        "tooltip": (
+                            "A keeps the legacy non-overlap planner. B uses exact local H3 windows with source "
+                            "overlap. C uses the same windows/noise but replaces overlap with previous refined AV context."
+                        ),
+                    },
+                ),
             }
         }
 
@@ -54,6 +65,7 @@ class JR_H3_TemporalChunkSampler:
         latent_image,
         chunk_duration_seconds=15.0,
         aggressive_memory_cleanup=False,
+        temporal_mode=TEMPORAL_MODE_A,
     ):
         return sample_h3_temporal_chunks(
             noise=noise,
@@ -63,6 +75,7 @@ class JR_H3_TemporalChunkSampler:
             latent_image=latent_image,
             chunk_duration_seconds=chunk_duration_seconds,
             aggressive_memory_cleanup=aggressive_memory_cleanup,
+            temporal_mode=temporal_mode,
         )
 
 

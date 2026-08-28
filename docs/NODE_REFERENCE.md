@@ -279,8 +279,9 @@ Node ID：`JR_H3_TemporalChunkSampler`
 | `latent_image` | LATENT | 必须连接 | 官方 H3 两流 NestedTensor；video `[B,24,5k+2,H,W]`、audio `[B,32,2,T]` |
 | `chunk_duration_seconds` | FLOAT | `15.0` | 1..3600，step 0.5；实际内部边界按 5 video tokens / 17 frames 对齐 |
 | `aggressive_memory_cleanup` | BOOLEAN | `false` | 每块结束后调用 ComfyUI `soft_empty_cache`；更慢，通常保持关闭 |
+| `temporal_mode` | COMBO | `A - Legacy No Overlap` | A 保留旧算法；B 使用 exact H3 source overlap；C 使用同 geometry/noise 的 previous-refined AV overlap |
 
-节点只负责时间规划、切片、顺序编排、CPU 预分配回填和生命周期控制；每块扩散采样委托给当前 ComfyUI 原生 `SamplerCustomAdvanced`。Phase 1 没有 overlap、跨块状态或全局 position offset，并拒绝 `noise_mask`；多块执行还会拒绝带绝对目标帧索引的 `minimax_keyframes`。详见 [H3_TEMPORAL_CHUNK_SAMPLER.md](H3_TEMPORAL_CHUNK_SAMPLER.md)。
+节点只负责时间规划、切片、顺序编排、CPU 预分配回填和生命周期控制；每块扩散采样委托给当前 ComfyUI 原生 `SamplerCustomAdvanced`。A 是无 overlap 的 regression baseline；B/C 使用同一 exact-window overlap-and-discard planner，仅在 C 中把已完成的 video/audio overlap 从 CPU output 搬回当前 window。三种模式都没有 hard lock、跨块 hidden state 或 global position offset，并拒绝 `noise_mask`；多块执行还会拒绝带绝对目标帧索引的 `minimax_keyframes`。详见 [H3_TEMPORAL_CHUNK_SAMPLER.md](H3_TEMPORAL_CHUNK_SAMPLER.md)。
 
 ## Cache Config Router
 

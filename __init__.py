@@ -26,7 +26,7 @@ from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
 from .nodes.rtx_upscaler_refiner import JR_H3_RTXUpscalerRefiner
 from .server import register_director_media_routes, register_prompt_review_routes
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 WEB_DIRECTORY = "./js"
 
 register_prompt_review_routes()

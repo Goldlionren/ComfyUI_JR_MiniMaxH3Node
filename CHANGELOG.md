@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.17.0
+
+- Added controlled A/B/C continuity modes to `JR MiniMax H3 Temporal Chunk Sampler`: unchanged legacy no-overlap, exact H3 source overlap, and exact H3 previous-refined AV overlap.
+- Added global token-lattice planning with audio-exact local windows, tail back-alignment, overlap-and-discard reassembly, deterministic per-window noise identity, and bounded CPU/GPU context transfer.
+- Added planner, source/refined context, final-tail, reassembly, noise, schema, and legacy regression coverage for the temporal experiment.
+
 ## 0.16.0
 
 - Added a disk-backed four-node sequential audio workflow that prepares exact H3 frame/tick chunks, applies native previous-frame continuation guides, checkpoints sampled AV latents to safetensors, and commits one decoded video segment per ComfyUI prompt.

@@ -9,10 +9,14 @@ from comfy.nested_tensor import NestedTensor
 from ComfyUI_JR_MiniMaxH3Node.nodes.h3_temporal_chunk_sampler import JR_H3_TemporalChunkSampler
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_temporal_chunk_sampler import (
     ERROR_PREFIX,
+    TEMPORAL_MODE_A,
+    TEMPORAL_MODE_B,
+    TEMPORAL_MODE_C,
     H3TemporalChunkSamplerError,
     derive_chunk_seed,
     frame_boundary_for_video_token,
     plan_h3_temporal_chunks,
+    plan_h3_temporal_overlap_windows,
     sample_h3_temporal_chunks,
 )
 
@@ -27,6 +31,14 @@ def _identity_native(**kwargs):
     latent = kwargs["latent_image"]
     video, audio = latent["samples"].unbind()
     return {"samples": NestedTensor((video.clone(), audio.clone()))}
+
+
+def _temporal_values_latent(*, video_t=217, audio_t=1227):
+    video_values = torch.arange(video_t, dtype=torch.float32).reshape(1, 1, video_t, 1, 1)
+    audio_values = torch.arange(audio_t, dtype=torch.float32).reshape(1, 1, 1, audio_t)
+    video = video_values.expand(1, 24, video_t, 1, 1).clone()
+    audio = audio_values.expand(1, 32, 2, audio_t).clone()
+    return {"samples": NestedTensor((video, audio)), "custom": "preserve-me"}
 
 
 def _empty_noise():
@@ -103,6 +115,148 @@ def test_remainder_is_kept_without_truncating_the_timeline():
     assert plan.chunks[-1].audio_end == 2133
 
 
+def test_explicit_a_mode_matches_legacy_canonical_plan():
+    plan = plan_h3_temporal_chunks(217, 1227, 5.0)
+    assert [(chunk.video_start, chunk.video_end) for chunk in plan.chunks] == [
+        (0, 35),
+        (35, 70),
+        (70, 105),
+        (105, 140),
+        (140, 175),
+        (175, 217),
+    ]
+    assert [(chunk.audio_start, chunk.audio_end) for chunk in plan.chunks] == [
+        (0, 198),
+        (198, 397),
+        (397, 595),
+        (595, 793),
+        (793, 992),
+        (992, 1227),
+    ]
+
+
+def test_bc_canonical_plan_matches_hardcoded_global_window_oracle():
+    plan = plan_h3_temporal_overlap_windows(217, 1227, 5.0)
+
+    assert plan.stride_video_tokens == 35
+    assert plan.stride_frames == 119
+    assert plan.window_video_tokens == 42
+    assert plan.window_frames == 141
+    assert plan.window_audio_tokens == 235
+    assert plan.overlap_video_tokens == 7
+    assert plan.overlap_frames == 22
+    assert [
+        (
+            window.sample.video_start,
+            window.sample.video_end,
+            window.keep_video_start,
+            window.keep_video_end,
+            window.sample.audio_start,
+            window.sample.audio_end,
+            window.keep_audio_start,
+            window.keep_audio_end,
+            window.sample.frame_start,
+        )
+        for window in plan.windows
+    ] == [
+        (0, 42, 0, 42, 0, 235, 0, 235, 0),
+        (35, 77, 42, 77, 198, 433, 235, 433, 119),
+        (70, 112, 77, 112, 397, 632, 433, 632, 238),
+        (105, 147, 112, 147, 595, 830, 632, 830, 357),
+        (140, 182, 147, 182, 793, 1028, 830, 1028, 476),
+        (175, 217, 182, 217, 992, 1227, 1028, 1227, 595),
+    ]
+
+
+def test_bc_final_window_is_back_aligned_and_keep_ranges_cover_once():
+    plan = plan_h3_temporal_overlap_windows(202, 1142, 5.0)
+    assert [(window.sample.video_start, window.sample.video_end) for window in plan.windows] == [
+        (0, 42),
+        (35, 77),
+        (70, 112),
+        (105, 147),
+        (140, 182),
+        (160, 202),
+    ]
+    final = plan.windows[-1]
+    assert (final.keep_video_start, final.keep_video_end) == (182, 202)
+    assert (final.sample.audio_start, final.sample.audio_end) == (907, 1142)
+    assert (final.keep_audio_start, final.keep_audio_end) == (1028, 1142)
+    assert final.sample.frame_start == 544
+
+    video_coverage = torch.zeros(202, dtype=torch.int32)
+    audio_coverage = torch.zeros(1142, dtype=torch.int32)
+    for window in plan.windows:
+        video_coverage[window.keep_video_start : window.keep_video_end] += 1
+        audio_coverage[window.keep_audio_start : window.keep_audio_end] += 1
+        assert window.sample.video_tokens == 42
+        assert window.sample.frames == 141
+        assert window.sample.audio_tokens == 235
+    assert torch.equal(video_coverage, torch.ones_like(video_coverage))
+    assert torch.equal(audio_coverage, torch.ones_like(audio_coverage))
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected_window"),
+    [
+        (5.0, (42, 141, 235)),
+        (8.0, (57, 192, 320)),
+        (10.125, (72, 243, 405)),
+        (12.25, (87, 294, 490)),
+        (14.375, (102, 345, 575)),
+    ],
+)
+def test_exact_window_math_derives_safe_windows_and_cross_checks_sequential_presets(
+    requested, expected_window
+):
+    from ComfyUI_JR_MiniMaxH3Node.utils.h3_sequential_audio import CHUNK_PRESETS
+
+    plan = plan_h3_temporal_overlap_windows(217, 1227, requested)
+    assert (plan.window_video_tokens, plan.window_frames, plan.window_audio_tokens) == expected_window
+    sequential = {(item.video_latent_t, item.frames, item.audio_ticks) for item in CHUNK_PRESETS}
+    if expected_window != (87, 294, 490):
+        assert expected_window in sequential
+
+
+@pytest.mark.parametrize("audio_t", [1226, 1228])
+@pytest.mark.parametrize("mode", [TEMPORAL_MODE_B, TEMPORAL_MODE_C])
+def test_bc_preserves_official_terminal_audio_tick_delta_without_padding(audio_t, mode):
+    plan = plan_h3_temporal_overlap_windows(217, audio_t, 5.0)
+    final = plan.windows[-1]
+    assert plan.audio_delta == audio_t - 1227
+    assert final.sample.audio_end == audio_t
+    assert final.sample.audio_tokens == 235 + plan.audio_delta
+    assert final.keep_audio_end == audio_t
+
+    latent = _temporal_values_latent(audio_t=audio_t)
+    source_video, source_audio = latent["samples"].unbind()
+    output, status = sample_h3_temporal_chunks(
+        noise=_empty_noise(),
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=latent,
+        chunk_duration_seconds=5.0,
+        temporal_mode=mode,
+        sample_chunk=_identity_native,
+    )
+    output_video, output_audio = output["samples"].unbind()
+    assert torch.equal(output_video, source_video)
+    assert torch.equal(output_audio, source_audio)
+    assert f"audio timeline delta: {plan.audio_delta:+d} tick(s)" in status
+
+
+@pytest.mark.parametrize("seconds", [14.875, 15.0, 99.0])
+def test_bc_requested_duration_above_safe_window_fails_closed(seconds):
+    with pytest.raises(H3TemporalChunkSamplerError, match="maximum 102 video tokens"):
+        plan_h3_temporal_overlap_windows(217, 1227, seconds)
+
+
+def test_bc_short_timeline_without_real_overlap_fails_closed():
+    with pytest.raises(H3TemporalChunkSamplerError, match="requires a global timeline longer"):
+        plan_h3_temporal_overlap_windows(42, 235, 5.0)
+
+
 def test_short_timeline_calls_native_sampler_once():
     calls = []
 
@@ -166,6 +320,231 @@ def test_sequential_sampling_reassembles_without_mutating_input_or_metadata(monk
     assert "CPU preallocated" in status
     assert "noise_mode=native_zero" in status
     assert "no temporal hidden-state carry" in status
+
+
+def test_b_uses_original_source_overlap_and_reassembles_identity_once():
+    latent = _temporal_values_latent()
+    original_video, original_audio = latent["samples"].unbind()
+    captured = []
+
+    def sampled(**kwargs):
+        video, audio = kwargs["latent_image"]["samples"].unbind()
+        captured.append((video.clone(), audio.clone()))
+        return _identity_native(**kwargs)
+
+    output, status = sample_h3_temporal_chunks(
+        noise=_empty_noise(),
+        guider=object(),
+        sampler=object(),
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=latent,
+        chunk_duration_seconds=5.0,
+        temporal_mode=TEMPORAL_MODE_B,
+        sample_chunk=sampled,
+    )
+
+    output_video, output_audio = output["samples"].unbind()
+    assert len(captured) == 6
+    assert torch.equal(captured[1][0][:, :, :7], original_video[:, :, 35:42])
+    assert torch.equal(captured[1][0][:, :, 7:], original_video[:, :, 42:77])
+    assert torch.equal(captured[1][1][:, :, :, :37], original_audio[:, :, :, 198:235])
+    assert torch.equal(captured[1][1][:, :, :, 37:], original_audio[:, :, :, 235:433])
+    assert torch.equal(output_video, original_video)
+    assert torch.equal(output_audio, original_audio)
+    assert output_video.device.type == "cpu"
+    assert output_audio.device.type == "cpu"
+    assert output["custom"] == "preserve-me"
+    assert f"temporal_mode={TEMPORAL_MODE_B}" in status
+    assert "context=source" in status
+    assert "requested_chunk=5s" in status
+    assert "global: video T=217, audio T=1227, frames=736" in status
+    assert "stride: 35 video tokens / 119 frames / 4.958s" in status
+    assert "window: 42 video tokens / 141 frames / 235 audio ticks" in status
+    assert "nominal overlap: 7 video tokens / 22 frames / 0.917s" in status
+    assert "windows: 6" in status
+    assert "#1 sample v[0:42] f[0:141] a[0:235] keep v[0:42] a[0:235]" in status
+    assert "#6 sample v[175:217] f[595:736] a[992:1227] keep v[182:217] a[1028:1227]" in status
+
+
+def test_c_uses_only_previous_refined_av_overlap_and_discards_resampled_prefix(monkeypatch):
+    latent = _temporal_values_latent()
+    original_video, original_audio = latent["samples"].unbind()
+    captured = []
+
+    def forbidden_cat(*args, **kwargs):
+        raise AssertionError("exact-overlap sampler must not concatenate retained window outputs")
+
+    original_to = torch.Tensor.to
+
+    def reject_full_output_transfer(tensor, *args, **kwargs):
+        if (tensor.ndim == 5 and tensor.shape[2] == 217) or (tensor.ndim == 4 and tensor.shape[3] == 1227):
+            raise AssertionError("C must not move a full global CPU output back to the sampling device")
+        return original_to(tensor, *args, **kwargs)
+
+    monkeypatch.setattr(torch, "cat", forbidden_cat)
+    monkeypatch.setattr(torch.Tensor, "to", reject_full_output_transfer)
+
+    def refined(**kwargs):
+        assert "noise_mask" not in kwargs["latent_image"]
+        video, audio = kwargs["latent_image"]["samples"].unbind()
+        captured.append((video.clone(), audio.clone()))
+        return {"samples": NestedTensor((video.clone() + 10000, audio.clone() + 10000))}
+
+    output, status = sample_h3_temporal_chunks(
+        noise=_empty_noise(),
+        guider=object(),
+        sampler=object(),
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=latent,
+        chunk_duration_seconds=5.0,
+        temporal_mode=TEMPORAL_MODE_C,
+        sample_chunk=refined,
+    )
+
+    output_video, output_audio = output["samples"].unbind()
+    assert len(captured) == 6
+    assert torch.equal(captured[1][0][:, :, :7], original_video[:, :, 35:42] + 10000)
+    assert torch.equal(captured[1][0][:, :, 7:], original_video[:, :, 42:77])
+    assert torch.equal(captured[1][1][:, :, :, :37], original_audio[:, :, :, 198:235] + 10000)
+    assert torch.equal(captured[1][1][:, :, :, 37:], original_audio[:, :, :, 235:433])
+    assert torch.equal(output_video, original_video + 10000)
+    assert torch.equal(output_audio, original_audio + 10000)
+    assert f"temporal_mode={TEMPORAL_MODE_C}" in status
+    assert "context=previous_refined" in status
+
+
+def test_b_keep_discard_assigns_each_global_position_to_one_window():
+    latent = _temporal_values_latent()
+    plan = plan_h3_temporal_overlap_windows(217, 1227, 5.0)
+    call_index = 0
+
+    def marked(**kwargs):
+        nonlocal call_index
+        call_index += 1
+        video, audio = kwargs["latent_image"]["samples"].unbind()
+        return {
+            "samples": NestedTensor(
+                (torch.full_like(video, call_index), torch.full_like(audio, call_index))
+            )
+        }
+
+    output, _ = sample_h3_temporal_chunks(
+        noise=_empty_noise(),
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=latent,
+        chunk_duration_seconds=5.0,
+        temporal_mode=TEMPORAL_MODE_B,
+        sample_chunk=marked,
+    )
+    output_video, output_audio = output["samples"].unbind()
+    expected_video = torch.empty_like(output_video)
+    expected_audio = torch.empty_like(output_audio)
+    for owner, window in enumerate(plan.windows, start=1):
+        expected_video[:, :, window.keep_video_start : window.keep_video_end] = owner
+        expected_audio[:, :, :, window.keep_audio_start : window.keep_audio_end] = owner
+    assert torch.equal(output_video, expected_video)
+    assert torch.equal(output_audio, expected_audio)
+
+
+def test_c_final_tail_uses_entire_larger_previous_refined_av_overlap():
+    latent = _temporal_values_latent(video_t=202, audio_t=1142)
+    original_video, original_audio = latent["samples"].unbind()
+    captured_final = None
+    calls = 0
+
+    def refined(**kwargs):
+        nonlocal calls, captured_final
+        calls += 1
+        video, audio = kwargs["latent_image"]["samples"].unbind()
+        if calls == 6:
+            captured_final = (video.clone(), audio.clone())
+        return {"samples": NestedTensor((video.clone() + 10000, audio.clone() + 10000))}
+
+    output, status = sample_h3_temporal_chunks(
+        noise=_empty_noise(),
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=latent,
+        chunk_duration_seconds=5.0,
+        temporal_mode=TEMPORAL_MODE_C,
+        sample_chunk=refined,
+    )
+    assert captured_final is not None
+    assert torch.equal(captured_final[0][:, :, :22], original_video[:, :, 160:182] + 10000)
+    assert torch.equal(captured_final[0][:, :, 22:], original_video[:, :, 182:202])
+    assert torch.equal(captured_final[1][:, :, :, :121], original_audio[:, :, :, 907:1028] + 10000)
+    assert torch.equal(captured_final[1][:, :, :, 121:], original_audio[:, :, :, 1028:1142])
+    output_video, output_audio = output["samples"].unbind()
+    assert torch.equal(output_video, original_video + 10000)
+    assert torch.equal(output_audio, original_audio + 10000)
+    assert "#6 sample v[160:202]" in status
+    assert "keep v[182:202] a[1028:1142]" in status
+
+
+@pytest.mark.parametrize("mode", [TEMPORAL_MODE_B, TEMPORAL_MODE_C])
+def test_overlap_sampled_windows_are_released_before_the_next_call(mode):
+    previous_refs = []
+
+    def sampled(**kwargs):
+        gc.collect()
+        if previous_refs:
+            assert previous_refs[-1][0]() is None
+            assert previous_refs[-1][1]() is None
+        video, audio = kwargs["latent_image"]["samples"].unbind()
+        sampled_video = video.clone()
+        sampled_audio = audio.clone()
+        previous_refs.append((weakref.ref(sampled_video), weakref.ref(sampled_audio)))
+        return {"samples": NestedTensor((sampled_video, sampled_audio))}
+
+    sample_h3_temporal_chunks(
+        noise=_empty_noise(),
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=_temporal_values_latent(),
+        chunk_duration_seconds=5.0,
+        temporal_mode=mode,
+        sample_chunk=sampled,
+    )
+    gc.collect()
+    assert all(video_ref() is None and audio_ref() is None for video_ref, audio_ref in previous_refs)
+
+
+def test_default_and_explicit_a_sampling_are_identical():
+    kwargs = dict(
+        noise=_empty_noise(),
+        guider=object(),
+        sampler=object(),
+        sigmas=torch.tensor([1.0, 0.0]),
+        chunk_duration_seconds=1.0,
+        sample_chunk=_identity_native,
+    )
+    default_output, default_status = sample_h3_temporal_chunks(latent_image=_latent(), **kwargs)
+    explicit_output, explicit_status = sample_h3_temporal_chunks(
+        latent_image=_latent(), temporal_mode=TEMPORAL_MODE_A, **kwargs
+    )
+    for default_stream, explicit_stream in zip(
+        default_output["samples"].unbind(), explicit_output["samples"].unbind()
+    ):
+        assert torch.equal(default_stream, explicit_stream)
+    assert default_status == explicit_status
+
+
+def test_unknown_temporal_mode_fails_closed_before_sampling():
+    with pytest.raises(H3TemporalChunkSamplerError, match="temporal_mode must be one of"):
+        sample_h3_temporal_chunks(
+            noise=_empty_noise(),
+            guider=None,
+            sampler=None,
+            sigmas=torch.tensor([1.0, 0.0]),
+            latent_image=_latent(),
+            chunk_duration_seconds=1.0,
+            temporal_mode="experimental typo",
+            sample_chunk=_identity_native,
+        )
 
 
 def test_completed_sampled_chunks_are_not_retained_between_calls():
@@ -281,6 +660,55 @@ def test_chunk_derived_random_noise_is_deterministic_across_runs():
     for first, second in zip(first_noise, second_noise):
         assert torch.equal(first[0], second[0])
         assert torch.equal(first[1], second[1])
+
+
+def test_a_b_and_c_use_identical_canonical_global_start_noise_identity():
+    def capture(mode=None):
+        seeds = []
+
+        def sampled(**kwargs):
+            seeds.append(kwargs["noise"].seed)
+            return _identity_native(**kwargs)
+
+        kwargs = dict(
+            noise=_random_noise(123456789),
+            guider=None,
+            sampler=None,
+            sigmas=torch.tensor([1.0, 0.0]),
+            latent_image=_temporal_values_latent(),
+            chunk_duration_seconds=5.0,
+            sample_chunk=sampled,
+        )
+        if mode is not None:
+            kwargs["temporal_mode"] = mode
+        sample_h3_temporal_chunks(**kwargs)
+        return seeds
+
+    expected = [derive_chunk_seed(123456789, frame) for frame in (0, 119, 238, 357, 476, 595)]
+    assert capture() == expected
+    assert capture(TEMPORAL_MODE_B) == expected
+    assert capture(TEMPORAL_MODE_C) == expected
+
+
+@pytest.mark.parametrize("mode", [TEMPORAL_MODE_B, TEMPORAL_MODE_C])
+def test_final_shifted_window_noise_uses_actual_global_frame_start(mode):
+    seeds = []
+
+    def sampled(**kwargs):
+        seeds.append(kwargs["noise"].seed)
+        return _identity_native(**kwargs)
+
+    sample_h3_temporal_chunks(
+        noise=_random_noise(987654321),
+        guider=None,
+        sampler=None,
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image=_temporal_values_latent(video_t=202, audio_t=1142),
+        chunk_duration_seconds=5.0,
+        temporal_mode=mode,
+        sample_chunk=sampled,
+    )
+    assert seeds[-1] == derive_chunk_seed(987654321, 544)
 
 
 def test_registered_runtime_random_noise_identity_is_supported(monkeypatch):
@@ -534,6 +962,7 @@ def test_node_schema_matches_advanced_sampler_contract():
         "latent_image",
         "chunk_duration_seconds",
         "aggressive_memory_cleanup",
+        "temporal_mode",
     ]
     assert schema["noise"] == ("NOISE",)
     assert schema["guider"] == ("GUIDER",)
@@ -542,5 +971,7 @@ def test_node_schema_matches_advanced_sampler_contract():
     assert schema["latent_image"] == ("LATENT",)
     assert schema["chunk_duration_seconds"][1]["default"] == 15.0
     assert schema["aggressive_memory_cleanup"][1]["default"] is False
+    assert schema["temporal_mode"][0] == [TEMPORAL_MODE_A, TEMPORAL_MODE_B, TEMPORAL_MODE_C]
+    assert schema["temporal_mode"][1]["default"] == TEMPORAL_MODE_A
     assert node.RETURN_TYPES == ("LATENT", "STRING")
     assert node.RETURN_NAMES == ("output", "status")
