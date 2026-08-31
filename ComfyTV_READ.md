@@ -1,6 +1,6 @@
 # ComfyTV 适配说明
 
-本文档记录本节点包在 ComfyTV(ComfyUI 的画布应用层)下的适配结论、随附的 5 个工作流,以及 `server_auto_continue` 的设计。所有结论均经真机端到端验证(RTX 5090, ComfyUI 0.34.0, ComfyTV 1.9.0, 2026-08-30)。
+本文档记录本节点包对 [ComfyTV](https://github.com/jtydhr88/ComfyTV)（ComfyUI 的画布应用层）的适配结论、随附的 5 个工作流，以及 `server_auto_continue` 的设计。ComfyTV 本身不随本仓库分发。所有结论均经真机端到端验证（RTX 5090、ComfyUI 0.34.0、ComfyTV 1.9.0，2026-08-30）。
 
 ## 核心结论:管线节点是 API-JSON 干净的
 
@@ -17,6 +17,7 @@
 `JR MiniMax H3 Sequential Video Output` 新增 optional 布尔 `server_auto_continue`(默认 False,不影响既有工作流):
 
 - commit 成功且还有后续 chunk 时,在 PromptServer 的 event loop 上挂一个 watcher,轮询 `prompt_queue.get_history(prompt_id)` **等待整个 prompt 成功完结**(与前端等 `execution_success` 的语义一致),然后把 history 中保存的 API prompt 通过 loopback POST 公共 `/prompt` 续排下一块;
+- replay 保留 history 中原始 `extra_data` 上下文；loopback `/prompt` 请求总超时为 30 秒，异常退出时会清理该 source prompt 的协调状态;
 - prompt 以 error/interrupt 结束则停;续排按 source prompt 协调,且每个 API prompt 仅支持一条 server-auto Sequential chain;
 - 同一 source prompt 若出现第二个不同的 server-auto Sequential job,会 fail closed:当前已提交 chunk 保留,服务端不再 replay,并明确提示拆分为独立 prompt/workflow;
 - 开启时发给前端的 `chunk_committed` 事件会携带 `auto_queue_next=false`,避免浏览器双重排队;

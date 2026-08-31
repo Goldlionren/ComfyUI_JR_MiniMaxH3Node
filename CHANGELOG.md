@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.19.0 - 2026-08-31
+
+- Added five ComfyTV-ready reference workflows for turbo T2VA, turbo R2V, dual-sample latent upscaling, audio-driven MV, and sequential/infinite MV, while removing the EasyUse dependency from the supplied workflow set.
+- Added optional `server_auto_continue` to `JR_H3_SequentialVideoOutput` for browser-free/API continuation through the normal `/prompt` route after whole-prompt success; errors and interrupts stop the chain, the original `extra_data` context is preserved, and loopback requests have a 30-second timeout.
+- Added browser/server double-queue suppression, wrapped ComfyTV/orchestrator replay protection, same-job deduplication, safe closed-loop state cleanup, and a one-server-auto-chain-per-source-prompt contract with multi-chain fail-closed behavior.
+- Added focused regression coverage for single-chain replay, same-job dedupe, different-job and different-total-chunks conflicts, blocked-state cleanup, final-only lifecycle, error/interrupt handling, wrapped execution, and `extra_data` passthrough.
+- Added deterministic CPU-only GitHub Actions CI pinned to the validated ComfyUI runtime source and made Registry publication depend explicitly on that quality gate.
+
+Thanks to [@jtydhr88](https://github.com/jtydhr88) (Terry Jia), author of ComfyTV, for PR #1, the main ComfyTV adaptation, review fixes, and real-world E2E validation. Goldlionren added the final multi-chain fail-closed maintainer hardening.
+
 ## 0.18.0
 
 - Replaced the experimental Temporal Chunk Sampler B/C overlap UI with decoded previous-terminal-frame continuity on the non-overlapping H3 timeline.

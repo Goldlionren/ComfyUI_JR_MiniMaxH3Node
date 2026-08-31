@@ -231,6 +231,13 @@ Node ID：`JR_H3_SequentialVideoOutput`
 
 这是顺序分支的 OUTPUT 节点，输入 decoded IMAGE 与 chunk context；另有 H.264 quality、8/10-bit、最终 AAC bitrate、filename prefix、自动续跑和 aggressive cleanup 控件。它验证并提交静音 MP4 segment、保存末帧、在活动浏览器中排队下一 prompt；最后使用相同编码器的 segment stream-copy，并把完整源 PCM 编码/融合一次。该分支不要再连接 Enhanced Video Combine。
 
+| 输入 | 类型 | 默认值 | 范围或说明 |
+| --- | --- | --- | --- |
+| `auto_queue_next` | BOOLEAN | `True` | 浏览器模式；需要活动页面，由前端在 chunk commit 后排下一 prompt |
+| `server_auto_continue` | BOOLEAN | `False` | API/headless 模式；整个 source prompt 成功后由服务端通过 `/prompt` replay，启用时抑制浏览器自动排队 |
+
+`server_auto_continue` 保留 source prompt 的 `extra_data`，遇到 error/interrupt 会停止，loopback POST 超时为 30 秒。支持拓扑是“一次 source prompt → 一条 server-auto Sequential chain”。同一 source prompt 中出现多个独立 server-auto job 时会 fail closed、安全暂停且不 replay；应拆成独立 prompt/workflow。ComfyTV 等 wrapped orchestrator 的外层 API prompt 不含本节点时，守卫会跳过盲目 replay，由编排器继续驱动。
+
 ## Split AV Latent
 
 Node ID：`JR_H3_SplitAVLatent`

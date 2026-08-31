@@ -1,8 +1,8 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 19 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 23 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
-当前包版本：`0.15.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+当前包版本：`0.19.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ## 节点一览
 
@@ -382,6 +382,14 @@ Load Audio + Audio VAE ------^                         | positive/latent + per-c
 
 缓存默认位于 `ComfyUI/output/temp/JR_H3_audio_jobs`，可配置绝对路径。manifest 只会在 segment 验证成功后前移；浏览器关闭会在当前块后安全暂停，重新打开并手动 Queue 即可恢复。顺序分支的最终节点替代 Enhanced Video Combine，不会把所有 decoded IMAGE 一次性装回内存。详见 [H3 Sequential Audio Generation](docs/H3_SEQUENTIAL_AUDIO.md)。
 
+## ComfyTV 集成
+
+本仓库兼容 [ComfyTV](https://github.com/jtydhr88/ComfyTV)，但不捆绑 ComfyTV 本身。`comfytv/workflows/` 提供 5 个经适配的参考工作流：turbo T2VA、turbo R2V、双采样 latent upscale、audio-driven MV，以及 sequential/infinite MV；具体 binding、运行边界与依赖见 [ComfyTV 适配说明](ComfyTV_READ.md)。
+
+`JR_H3_SequentialVideoOutput` 的 `server_auto_continue=false`（默认）保留浏览器端 `auto_queue_next`；设为 `true` 时，它会在整个 source prompt 成功后通过标准 `/prompt` 路由服务端续排，适合直接 API/headless 提交。原 `extra_data` 上下文会随 replay 保留，出错或中断会停止，浏览器/服务端双重排队会被抑制。一个 source API prompt 只支持一条 server-auto Sequential chain；检测到多个独立 job 时会 fail closed 并安全暂停，绝不会只续排其中一条。
+
+ComfyTV 的 wrapped-stage prompt 不含被包装的 Sequential Output 节点，服务端 replay 守卫会因此跳过盲目重放，由 ComfyTV/编排器继续驱动各 stage。该边界避免重放外层 prompt 命中缓存而空转。
+
 ## H3 Adaptive Cache
 
 该节点面向 ComfyUI 原生 `comfy.ldm.minimax.model.MiniMaxH3Model`，并在运行时读取真实 Block 数量。它没有按模型文件名锁死，所以 bf16、int8、Ref2VA 等权重文件只要最终加载成兼容的原生 H3 模型结构即可；`strict_model_check=true` 时不兼容模型会明确报错。
@@ -434,13 +442,19 @@ H.264 NVENC 常见最大宽度为 4096。横向拼接后出现 `4352×2880` 等�
 
 ## 示例
 
-`examples/` 当前包含：
+`examples/` 当前包含以下参考流程（部分文件名为历史版本名）：
 
 - `jr_minimax_h3_director_desk_workflow.json`
 - `JR_MiniMax_H3_T2VA加速放大 (ver5.0).json`
 - `JR_MiniMax_H3_文生视频&首尾帧生视频_加速放大.json`
 - `JR_MiniMax_H3_ref加速放大.json`
 - `jr_minimax_h3_prompt_review_workflow.json`
+- `JR MiniMax H3 双采样 chunk sampler 16G GPU version1.0.json`
+- `JR MiniMax H3 无限时长MV ver 2.0.json`
+- `JR_MiniMax_H3_MV制作ver1.0.json`
+- `JR_MiniMax_H3_导演台ver5.2（Hybrid）.json`
+- `JR_MiniMax_H3_导演台ver5.5.json`
+- `JR_MiniMax_H3_导演台ver6.0.json`
 - [WORKFLOW_WIRING.md](examples/WORKFLOW_WIRING.md)
 
 示例可能引用外部 custom nodes、模型和本地资源；导入后请更换缺失节点、模型路径、API 地址和媒体输入。示例参数是工作点，不是硬件上限或普适最佳值。
@@ -468,8 +482,8 @@ import 阶段不会访问网络、加载模型、初始化 CUDA/RTX SDK 或运�
 Release process:
 
 1. 在 `pyproject.toml` 中递增版本号。
-2. 按 workflow 触发规则提交并 push 到 `main`。
-3. GitHub Action 自动发布该不可变版本到 Comfy Registry。
+2. 本地测试通过后，按 workflow 触发规则提交并 push 到 `main`。
+3. GitHub Action 的 CPU quality gate 通过后，才发布该不可变版本到 Comfy Registry。
 4. 仓库 Actions Secrets 中必须存在 `REGISTRY_ACCESS_TOKEN`。
 
 普通 Git commit 不等于 Registry release；没有版本号变更时不得覆盖已发布版本。

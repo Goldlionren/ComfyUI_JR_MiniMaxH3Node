@@ -86,7 +86,7 @@ The output node:
 3. validates it before commit;
 4. saves its last frame;
 5. atomically advances `manifest.json`;
-6. queues exactly one next ComfyUI prompt after `execution_success` when enabled;
+6. queues exactly one next ComfyUI prompt after whole-prompt `execution_success` when the selected continuation mode is enabled;
 7. after the last chunk, concatenates compatible video streams with `-c:v copy` and encodes the original continuous PCM to AAC once.
 
 The first usable encoder is recorded in the manifest and every later segment must use exactly the same encoder. Encoder changes fail closed instead of risking a corrupt concat.
@@ -103,7 +103,12 @@ Absolute paths are supported. Relative paths cannot escape the ComfyUI output di
 
 The manifest is the authoritative state. A chunk advances only after its video segment and continuation frame have been written and validated. A failed sampler, decode, encode or final mux leaves the current index unchanged. Queue the same workflow manually to resume.
 
-Automatic continuation requires an active browser because the frontend queues the next prompt. Closing the browser safely pauses after the current committed chunk. Reopen the workflow and queue it once to resume from disk.
+There are two continuation controls:
+
+- `auto_queue_next=true` is the browser mode. The frontend queues the next prompt after the chunk commit event and requires an active page. Closing the browser safely pauses after the committed chunk; reopen the workflow and queue once to resume from disk.
+- `server_auto_continue=true` is the direct API/headless mode. It supersedes browser auto-queue, waits for the entire source prompt to finish successfully, and re-posts the saved API prompt through the normal loopback `/prompt` endpoint. The original `extra_data` context is preserved. Error or interrupt stops the chain, and the loopback request has a 30-second timeout.
+
+Server continuation deliberately supports exactly one Sequential job per source API prompt. A duplicate callback for the same job is deduplicated. A second independent job (including a conflicting total-chunk lifecycle) blocks replay for the source prompt, retains already committed chunks, and pauses fail-closed; split independent chains into separate prompt/workflow submissions. Prompt state is removed when its watcher exits. For wrapped execution such as a ComfyTV stage, the outer saved API prompt does not contain `JR_H3_SequentialVideoOutput`; the replay guard therefore skips blind server replay and leaves continuation to the orchestrator.
 
 ## Memory boundary
 

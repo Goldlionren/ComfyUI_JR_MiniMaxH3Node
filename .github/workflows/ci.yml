@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: CPU quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONIOENCODING: utf-8
+      PYTHONPATH: ${{ github.workspace }}/..:${{ github.workspace }}/.ci/ComfyUI
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@v7
+
+      - name: Check out pinned ComfyUI 0.34.0 runtime source
+        uses: actions/checkout@v7
+        with:
+          repository: Comfy-Org/ComfyUI
+          ref: 8a33128f2f8c5585c57486c07de481241e70a39c
+          path: .ci/ComfyUI
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            .ci/ComfyUI/requirements.txt
+
+      - name: Install CPU-only test runtime
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.11.0+cpu torchvision==0.26.0+cpu torchaudio==2.11.0+cpu
+          python -m pip install -r .ci/ComfyUI/requirements.txt -r requirements.txt \
+            pytest==9.1.1 ruff==0.16.1
+
+      - name: Ruff
+        run: python -m ruff check .
+
+      - name: Pytest
+        run: python -m pytest -q
+
+      - name: Compile package
+        run: python -m compileall -q __init__.py nodes server utils tools
+
+      - name: Import, registration, and workflow smoke
+        run: python tools/ci_smoke.py --comfy-root .ci/ComfyUI
+
+      - name: Diff whitespace check
+        run: git diff --check

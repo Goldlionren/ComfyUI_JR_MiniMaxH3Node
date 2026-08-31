@@ -16,8 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality-gate:
+    name: Required release quality gate
+    uses: ./.github/workflows/ci.yml
+
   publish-node:
     name: Publish custom node
+    needs: quality-gate
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
