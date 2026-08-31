@@ -3,8 +3,8 @@
 Mirrors the frontend requeue contract (js/sequential_audio.js) without a
 browser: wait until the committing prompt finishes successfully, then re-post
 its own API prompt through the public /prompt route. Coordination is per
-source prompt — one replay covers every sequential chain inside it — so total
-posts stay bounded by the manifests' total_chunks.
+source prompt and deliberately supports exactly one server-auto chain. A
+second distinct job blocks replay so committed chunks remain safely paused.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from dataclasses import dataclass
 
 _log = logging.getLogger(__name__)
 
@@ -20,7 +21,21 @@ _LOST_PROMPT_GRACE_SECONDS = 30.0
 _POST_TIMEOUT_SECONDS = 30.0
 
 _lock = threading.Lock()
-_pending_prompts: set[str] = set()
+
+
+@dataclass(slots=True)
+class _PromptContinuationState:
+    first_job_id: str
+    needs_replay: bool
+    blocked: bool = False
+
+
+_prompt_states: dict[str, _PromptContinuationState] = {}
+
+_MULTI_CHAIN_WARNING = (
+    "Server auto-continue paused: multiple server-auto Sequential chains in one prompt are unsupported; "
+    "use one sequential job per prompt. Current chunks remain committed and no server replay will be queued."
+)
 
 
 def _server():
@@ -75,6 +90,24 @@ async def _watch_and_continue(prompt_id: str, job_id: str, port: int) -> None:
                 entry = history[prompt_id]
                 status = entry.get("status") or {}
                 if status.get("status_str") == "success" and status.get("completed"):
+                    with _lock:
+                        state = _prompt_states.get(prompt_id)
+                        blocked = state is None or state.blocked
+                        needs_replay = state is not None and state.needs_replay
+                    if blocked:
+                        _log.warning(
+                            "[JR H3 Sequential Audio] %s Source prompt: %s",
+                            _MULTI_CHAIN_WARNING,
+                            prompt_id,
+                        )
+                        return
+                    if not needs_replay:
+                        _log.info(
+                            "[JR H3 Sequential Audio] server auto-continue: prompt %s completed its "
+                            "last chunk; no replay needed",
+                            prompt_id,
+                        )
+                        return
                     item = entry["prompt"]
                     api_prompt = item[2]
                     extra_data = item[3] if len(item) > 3 and isinstance(item[3], dict) else None
@@ -116,12 +149,11 @@ async def _watch_and_continue(prompt_id: str, job_id: str, port: int) -> None:
         )
     finally:
         with _lock:
-            _pending_prompts.discard(prompt_id)
+            _prompt_states.pop(prompt_id, None)
 
 
 def schedule_server_continue(*, job_id: str, chunk_index: int, total_chunks: int) -> str:
-    if int(chunk_index) + 1 >= int(total_chunks):
-        return "Server auto-continue: last chunk, nothing to queue."
+    needs_replay = int(chunk_index) + 1 < int(total_chunks)
     server = _server()
     loop = getattr(server, "loop", None)
     if server is None or loop is None:
@@ -132,18 +164,33 @@ def schedule_server_continue(*, job_id: str, chunk_index: int, total_chunks: int
         return "Server auto-continue unavailable: prompt id or port unknown."
     prompt_id = str(prompt_id)
     with _lock:
-        if prompt_id in _pending_prompts:
+        state = _prompt_states.get(prompt_id)
+        if state is not None:
+            if state.first_job_id != job_id:
+                state.blocked = True
+                _log.warning(
+                    "[JR H3 Sequential Audio] %s Source prompt: %s; jobs: %s, %s",
+                    _MULTI_CHAIN_WARNING,
+                    prompt_id,
+                    state.first_job_id,
+                    job_id,
+                )
+                return _MULTI_CHAIN_WARNING
+            state.needs_replay = state.needs_replay or needs_replay
             return (
-                "Server auto-continue already armed for this prompt; "
-                "one replay covers every sequential chain in it."
+                f"Server auto-continue already armed for {job_id} in this prompt."
             )
-        _pending_prompts.add(prompt_id)
+        state = _PromptContinuationState(first_job_id=job_id, needs_replay=needs_replay)
+        _prompt_states[prompt_id] = state
     watcher = _watch_and_continue(prompt_id, job_id, int(port))
     try:
         asyncio.run_coroutine_threadsafe(watcher, loop)
     except RuntimeError as error:
         watcher.close()
         with _lock:
-            _pending_prompts.discard(prompt_id)
+            if _prompt_states.get(prompt_id) is state:
+                _prompt_states.pop(prompt_id, None)
         return f"Server auto-continue unavailable: could not schedule watcher ({error})."
+    if not needs_replay:
+        return "Server auto-continue: last chunk, nothing to queue."
     return f"Server auto-continue: next chunk queues after prompt {prompt_id} completes."

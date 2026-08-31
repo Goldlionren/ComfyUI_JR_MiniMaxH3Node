@@ -17,7 +17,8 @@
 `JR MiniMax H3 Sequential Video Output` 新增 optional 布尔 `server_auto_continue`(默认 False,不影响既有工作流):
 
 - commit 成功且还有后续 chunk 时,在 PromptServer 的 event loop 上挂一个 watcher,轮询 `prompt_queue.get_history(prompt_id)` **等待整个 prompt 成功完结**(与前端等 `execution_success` 的语义一致),然后把 history 中保存的 API prompt 通过 loopback POST 公共 `/prompt` 续排下一块;
-- prompt 以 error/interrupt 结束则停;per-job 去重;总排队次数被 manifest 的 `total_chunks` 封顶;
+- prompt 以 error/interrupt 结束则停;续排按 source prompt 协调,且每个 API prompt 仅支持一条 server-auto Sequential chain;
+- 同一 source prompt 若出现第二个不同的 server-auto Sequential job,会 fail closed:当前已提交 chunk 保留,服务端不再 replay,并明确提示拆分为独立 prompt/workflow;
 - 开启时发给前端的 `chunk_committed` 事件会携带 `auto_queue_next=false`,避免浏览器双重排队;
 - **wrapped-execution 守卫**:重放前检查 prompt 中是否含本节点。若不含(说明被编排器嵌套执行,如 ComfyTV stage —— 原样重放外层 prompt 会命中执行缓存空转),记日志跳过,由提交方驱动续跑。
 

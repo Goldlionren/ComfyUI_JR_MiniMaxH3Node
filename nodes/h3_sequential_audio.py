@@ -268,7 +268,7 @@ class JR_H3_SequentialVideoOutput:
             audio_bitrate=audio_bitrate,
             filename_prefix=filename_prefix,
         )
-        if server_auto_continue and has_next:
+        if server_auto_continue:
             from ..utils.h3_sequential_server_continue import schedule_server_continue
 
             status = status + "\n" + schedule_server_continue(
