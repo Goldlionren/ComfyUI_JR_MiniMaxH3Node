@@ -2,8 +2,9 @@
 
 Mirrors the frontend requeue contract (js/sequential_audio.js) without a
 browser: wait until the committing prompt finishes successfully, then re-post
-its own API prompt through the public /prompt route. Each commit schedules at
-most one follow-up, so total posts are bounded by the manifest's total_chunks.
+its own API prompt through the public /prompt route. Coordination is per
+source prompt — one replay covers every sequential chain inside it — so total
+posts stay bounded by the manifests' total_chunks.
 """
 
 from __future__ import annotations
@@ -16,9 +17,10 @@ _log = logging.getLogger(__name__)
 
 _POLL_SECONDS = 1.0
 _LOST_PROMPT_GRACE_SECONDS = 30.0
+_POST_TIMEOUT_SECONDS = 30.0
 
 _lock = threading.Lock()
-_pending_jobs: set[str] = set()
+_pending_prompts: set[str] = set()
 
 
 def _server():
@@ -47,15 +49,19 @@ def _prompt_in_queue(queue, prompt_id: str) -> bool:
     return False
 
 
-async def _post_prompt(port: int, api_prompt: dict) -> None:
+async def _post_prompt(port: int, api_prompt: dict, extra_data: dict | None) -> None:
     import aiohttp
 
+    body: dict = {"prompt": api_prompt}
+    if extra_data:
+        body["extra_data"] = extra_data
     url = f"http://127.0.0.1:{port}/prompt"
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json={"prompt": api_prompt}) as resp:
-            body = await resp.text()
+    timeout = aiohttp.ClientTimeout(total=_POST_TIMEOUT_SECONDS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, json=body) as resp:
+            text = await resp.text()
             if resp.status != 200:
-                raise RuntimeError(f"/prompt returned {resp.status}: {body[:300]}")
+                raise RuntimeError(f"/prompt returned {resp.status}: {text[:300]}")
 
 
 async def _watch_and_continue(prompt_id: str, job_id: str, port: int) -> None:
@@ -69,7 +75,9 @@ async def _watch_and_continue(prompt_id: str, job_id: str, port: int) -> None:
                 entry = history[prompt_id]
                 status = entry.get("status") or {}
                 if status.get("status_str") == "success" and status.get("completed"):
-                    api_prompt = entry["prompt"][2]
+                    item = entry["prompt"]
+                    api_prompt = item[2]
+                    extra_data = item[3] if len(item) > 3 and isinstance(item[3], dict) else None
                     if not _contains_sequential_output(api_prompt):
                         _log.info(
                             "[JR H3 Sequential Audio] server auto-continue skipped for %s: prompt %s "
@@ -78,10 +86,10 @@ async def _watch_and_continue(prompt_id: str, job_id: str, port: int) -> None:
                             "Re-run from the submitting client to continue.", job_id, prompt_id,
                         )
                         return
-                    await _post_prompt(port, api_prompt)
+                    await _post_prompt(port, api_prompt, extra_data)
                     _log.info(
-                        "[JR H3 Sequential Audio] server auto-continue: queued next chunk of %s "
-                        "after prompt %s", job_id, prompt_id,
+                        "[JR H3 Sequential Audio] server auto-continue: replayed prompt %s "
+                        "(scheduled by %s)", prompt_id, job_id,
                     )
                 else:
                     _log.info(
@@ -108,7 +116,7 @@ async def _watch_and_continue(prompt_id: str, job_id: str, port: int) -> None:
         )
     finally:
         with _lock:
-            _pending_jobs.discard(job_id)
+            _pending_prompts.discard(prompt_id)
 
 
 def schedule_server_continue(*, job_id: str, chunk_index: int, total_chunks: int) -> str:
@@ -122,11 +130,20 @@ def schedule_server_continue(*, job_id: str, chunk_index: int, total_chunks: int
     port = getattr(server, "port", None)
     if not prompt_id or not port:
         return "Server auto-continue unavailable: prompt id or port unknown."
+    prompt_id = str(prompt_id)
     with _lock:
-        if job_id in _pending_jobs:
-            return f"Server auto-continue already pending for {job_id}."
-        _pending_jobs.add(job_id)
-    asyncio.run_coroutine_threadsafe(
-        _watch_and_continue(str(prompt_id), job_id, int(port)), loop,
-    )
+        if prompt_id in _pending_prompts:
+            return (
+                "Server auto-continue already armed for this prompt; "
+                "one replay covers every sequential chain in it."
+            )
+        _pending_prompts.add(prompt_id)
+    watcher = _watch_and_continue(prompt_id, job_id, int(port))
+    try:
+        asyncio.run_coroutine_threadsafe(watcher, loop)
+    except RuntimeError as error:
+        watcher.close()
+        with _lock:
+            _pending_prompts.discard(prompt_id)
+        return f"Server auto-continue unavailable: could not schedule watcher ({error})."
     return f"Server auto-continue: next chunk queues after prompt {prompt_id} completes."

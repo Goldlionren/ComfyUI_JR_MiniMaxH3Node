@@ -1,5 +1,4 @@
 import asyncio
-import sys
 import types
 from pathlib import Path
 
@@ -48,23 +47,32 @@ def test_missing_prompt_id_reports_unavailable(monkeypatch):
         loop.close()
 
 
-def test_schedules_once_per_job(monkeypatch):
+def test_one_replay_per_source_prompt(monkeypatch):
     loop = asyncio.new_event_loop()
     try:
         mod, server = _install_fake_server(monkeypatch, loop=loop)
         scheduled = []
         monkeypatch.setattr(
             mod.asyncio, "run_coroutine_threadsafe",
-            lambda coro, l: (scheduled.append(coro), coro.close()),
+            lambda coro, running_loop: (scheduled.append(coro), coro.close()),
         )
-        first = mod.schedule_server_continue(job_id="j/r1", chunk_index=0, total_chunks=3)
-        second = mod.schedule_server_continue(job_id="j/r1", chunk_index=0, total_chunks=3)
+        first = mod.schedule_server_continue(job_id="job-a/r1", chunk_index=0, total_chunks=3)
+        second = mod.schedule_server_continue(job_id="job-b/r1", chunk_index=0, total_chunks=5)
         assert "queues after prompt p-1" in first
-        assert "already pending" in second
+        assert "already armed" in second
         assert len(scheduled) == 1
-        mod._pending_jobs.discard("j/r1")
+        mod._pending_prompts.discard("p-1")
     finally:
         loop.close()
+
+
+def test_closed_loop_clears_pending(monkeypatch):
+    loop = asyncio.new_event_loop()
+    loop.close()
+    mod, server = _install_fake_server(monkeypatch, loop=loop)
+    note = mod.schedule_server_continue(job_id="j/r1", chunk_index=0, total_chunks=2)
+    assert "unavailable" in note
+    assert "p-1" not in mod._pending_prompts
 
 
 def test_watcher_reposts_only_on_success(monkeypatch):
@@ -73,7 +81,12 @@ def test_watcher_reposts_only_on_success(monkeypatch):
     class FakeQueue:
         def __init__(self, status_str, class_type="JR_H3_SequentialVideoOutput", completed=True):
             self.entry = {
-                "prompt": (0, "p-1", {"1": {"class_type": class_type, "inputs": {}}}, {}, []),
+                "prompt": (
+                    0, "p-1",
+                    {"1": {"class_type": class_type, "inputs": {}}},
+                    {"extra_pnginfo": {"workflow": {}}, "client_id": "c-1"},
+                    [],
+                ),
                 "status": {"status_str": status_str, "completed": completed},
             }
 
@@ -85,8 +98,8 @@ def test_watcher_reposts_only_on_success(monkeypatch):
 
     posts = []
 
-    async def fake_post(port, api_prompt):
-        posts.append((port, api_prompt))
+    async def fake_post(port, api_prompt, extra_data):
+        posts.append((port, api_prompt, extra_data))
 
     monkeypatch.setattr(mod, "_post_prompt", fake_post)
 
@@ -99,12 +112,19 @@ def test_watcher_reposts_only_on_success(monkeypatch):
         posts.clear()
         server = types.SimpleNamespace(prompt_queue=FakeQueue(status, class_type))
         monkeypatch.setattr(mod, "_server", lambda s=server: s)
-        mod._pending_jobs.add("j/r1")
+        mod._pending_prompts.add("p-1")
         asyncio.new_event_loop().run_until_complete(
             mod._watch_and_continue("p-1", "j/r1", 8188)
         )
         assert len(posts) == expected_posts
-        assert "j/r1" not in mod._pending_jobs
+        assert "p-1" not in mod._pending_prompts
+    server = types.SimpleNamespace(prompt_queue=FakeQueue("success"))
+    monkeypatch.setattr(mod, "_server", lambda s=server: s)
+    mod._pending_prompts.add("p-1")
+    asyncio.new_event_loop().run_until_complete(
+        mod._watch_and_continue("p-1", "j/r1", 8188)
+    )
+    assert posts[-1][2] == {"extra_pnginfo": {"workflow": {}}, "client_id": "c-1"}
 
 
 def test_output_node_contract():

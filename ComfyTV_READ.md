@@ -1,6 +1,6 @@
 # ComfyTV 适配说明
 
-本文档记录本节点包在 [ComfyTV](https://github.com/) (ComfyUI 的画布应用层) 下的适配结论、随附的 5 个工作流,以及 `server_auto_continue` 的设计。所有结论均经真机端到端验证(RTX 5090, ComfyUI 0.34.0, ComfyTV 1.9.0, 2026-08-30)。
+本文档记录本节点包在 ComfyTV(ComfyUI 的画布应用层)下的适配结论、随附的 5 个工作流,以及 `server_auto_continue` 的设计。所有结论均经真机端到端验证(RTX 5090, ComfyUI 0.34.0, ComfyTV 1.9.0, 2026-08-30)。
 
 ## 核心结论:管线节点是 API-JSON 干净的
 
