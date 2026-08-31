@@ -234,8 +234,8 @@ def test_state_rejects_invalid_unknown_and_duplicate_without_leaking_text(capsys
 
 
 def test_frontend_contract_exists_and_does_not_log_prompt():
-    source = node_module.__file__.replace("nodes\\prompt_review_pause.py", "js\\prompt_review_pause.js")
-    text = open(source, encoding="utf-8").read()
+    source = Path(node_module.__file__).resolve().parents[1] / "js" / "prompt_review_pause.js"
+    text = source.read_text(encoding="utf-8")
     for marker in (
         "jr_h3_prompt_review_requested", "/jr_h3/prompt-review/continue", "review_text",
         "Next / Continue", "Waiting for review", "Timed out", "Cancelled", "serialize: false",
