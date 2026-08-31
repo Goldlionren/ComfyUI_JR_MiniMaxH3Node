@@ -12,6 +12,7 @@ from ..utils.director_state import (
     DirectorStateError,
     asset_descriptor_from_dict,
     asset_descriptor_to_dict,
+    validate_json_nesting,
 )
 
 _REGISTERED = False
@@ -33,8 +34,10 @@ async def _read_bounded_json(request):
         if len(chunks) > MAX_STATE_BYTES:
             raise web.HTTPRequestEntityTooLarge(max_size=MAX_STATE_BYTES, actual_size=len(chunks))
     try:
-        return json.loads(chunks.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, RecursionError) as error:
+        decoded = json.loads(chunks.decode("utf-8"))
+        validate_json_nesting(decoded)
+        return decoded
+    except (UnicodeDecodeError, ValueError, RecursionError, DirectorStateError) as error:
         raise web.HTTPBadRequest(text="Director media request must be valid UTF-8 JSON.") from error
 
 

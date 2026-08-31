@@ -30,6 +30,22 @@ class DirectorStateError(ValueError):
     """Raised when persisted Director Desk state is malformed or unsafe."""
 
 
+MAX_JSON_DEPTH = 128
+
+
+def validate_json_nesting(value: Any, *, max_depth: int = MAX_JSON_DEPTH) -> None:
+    """Reject JSON containers nested deeply enough to exhaust downstream parsers."""
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if not isinstance(current, (list, dict)):
+            continue
+        if depth > max_depth:
+            raise DirectorStateError("JSON nesting is too deep.")
+        children = current.values() if isinstance(current, dict) else current
+        pending.extend((child, depth + 1) for child in children)
+
+
 @dataclass(frozen=True, slots=True)
 class TimelineState:
     duration_seconds: float
@@ -370,8 +386,11 @@ def director_state_from_json(value: Any) -> DirectorState:
         raise DirectorStateError(f"director_state_json exceeds the {MAX_STATE_BYTES}-byte limit.")
     try:
         decoded = json.loads(value or "{}")
+        validate_json_nesting(decoded)
     except json.JSONDecodeError as error:
         raise DirectorStateError(f"director_state_json is invalid JSON at character {error.pos}.") from error
+    except DirectorStateError:
+        raise
     except ValueError:
         raise DirectorStateError(
             "director_state_json contains an unsupported JSON value."
@@ -456,9 +475,10 @@ DEFAULT_DIRECTOR_STATE_JSON = director_state_to_json(default_director_state())
 __all__ = [
     "ASSET_KINDS", "AUDIO_ROLES", "AssetDescriptor", "AudioState",
     "DEFAULT_DIRECTOR_STATE_JSON", "DirectorState", "DirectorStateError", "DirectorUIState",
-    "FOLDER_TYPES", "MAX_STATE_BYTES", "STATE_SCHEMA", "STATE_VERSION", "ShotState",
+    "FOLDER_TYPES", "MAX_JSON_DEPTH", "MAX_STATE_BYTES", "STATE_SCHEMA", "STATE_VERSION", "ShotState",
     "TimelineState", "VISUAL_ROLES", "VisualState", "asset_descriptor_to_dict",
     "asset_descriptor_from_dict",
     "canonical_time", "default_director_state", "director_state_from_dict",
     "director_state_from_json", "director_state_to_dict", "director_state_to_json",
+    "validate_json_nesting",
 ]

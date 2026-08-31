@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import types
+from pathlib import Path
 
 import pytest
 import torch
@@ -301,7 +302,8 @@ def test_missing_checkpoint_error_names_comfy_model_folder(monkeypatch):
     monkeypatch.setattr(folder_paths, "get_folder_paths", lambda _name: ["X:/ComfyUI/models/latent_upscale_models"])
     with pytest.raises(H3NeuralLatentUpscalerError) as exc:
         _select_checkpoint(torch.float16)
-    assert "X:\\ComfyUI\\models\\latent_upscale_models" in str(exc.value)
+    expected_folder = str(Path("X:/ComfyUI/models/latent_upscale_models"))
+    assert expected_folder in str(exc.value)
     assert "Automatic download and interpolation fallback are intentionally disabled" in str(exc.value)
 
 
