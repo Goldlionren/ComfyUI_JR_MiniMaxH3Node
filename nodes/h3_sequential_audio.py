@@ -230,6 +230,16 @@ class JR_H3_SequentialVideoOutput:
                     },
                 ),
             },
+            "optional": {
+                "server_auto_continue": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Queue the next chunk server-side after this prompt succeeds. Works without a "
+                        "browser (API/headless clients); supersedes auto_queue_next when enabled.",
+                    },
+                ),
+            },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
@@ -247,6 +257,7 @@ class JR_H3_SequentialVideoOutput:
         filename_prefix="video/%date:yyyy-MM-dd%/%date:HHmmss%",
         auto_queue_next=True,
         aggressive_memory_cleanup=True,
+        server_auto_continue=False,
         unique_id=None,
     ):
         filename, status, has_next = commit_decoded_chunk(
@@ -257,6 +268,14 @@ class JR_H3_SequentialVideoOutput:
             audio_bitrate=audio_bitrate,
             filename_prefix=filename_prefix,
         )
+        if server_auto_continue:
+            from ..utils.h3_sequential_server_continue import schedule_server_continue
+
+            status = status + "\n" + schedule_server_continue(
+                job_id=chunk_context.job_id,
+                chunk_index=int(chunk_context.chunk_index),
+                total_chunks=int(chunk_context.total_chunks),
+            )
         if aggressive_memory_cleanup:
             gc.collect()
             try:
@@ -278,7 +297,7 @@ class JR_H3_SequentialVideoOutput:
                         "chunk_index": int(chunk_context.chunk_index),
                         "total_chunks": int(chunk_context.total_chunks),
                         "has_next": bool(has_next),
-                        "auto_queue_next": bool(auto_queue_next),
+                        "auto_queue_next": bool(auto_queue_next and not server_auto_continue),
                         "filename": filename,
                     },
                     getattr(server, "client_id", None),
