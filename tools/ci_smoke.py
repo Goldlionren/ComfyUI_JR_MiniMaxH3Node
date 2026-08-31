@@ -16,6 +16,13 @@ def _load_package(project: Path, comfy_root: Path):
     sys.path.insert(0, str(project.parent))
     sys.path.insert(0, str(comfy_root))
 
+    import torch
+
+    if not (torch.cuda.is_available() and torch.cuda.device_count() > 0):
+        from comfy.cli_args import args
+
+        args.cpu = True
+
     from aiohttp import web
 
     import server
