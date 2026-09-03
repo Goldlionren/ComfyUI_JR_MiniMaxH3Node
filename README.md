@@ -17,7 +17,7 @@
 | JR MiniMax H3 Directed Video Conditioning | `JR_H3_DirectedVideoConditioning` | Generation | 原生 H3 `CONDITIONING`、AV `LATENT` |
 | JR MiniMax H3 Audio Driven Latent Builder | `JR_H3_AudioDrivenLatentBuilder` | Latent | 音频驱动并锁定 audio 分支的 H3 AV `LATENT`、状态 |
 | JR MiniMax H3 Sequential Audio Chunk Driver | `JR_H3_SequentialAudioChunkDriver` | Sequential Audio | 当前音频驱动 AV `LATENT`、chunk context、seed、AUDIO slice、状态 |
-| JR MiniMax H3 Sequential Continuation Guide | `JR_H3_SequentialContinuationGuide` | Sequential Audio | 末帧续接后的 `CONDITIONING` 与 `LATENT` |
+| JR MiniMax H3 Sequential Continuation Guide | `JR_H3_SequentialContinuationGuide` | Sequential Audio | 默认 hard latent prefix，可回退到末帧 guide 或 Independent MV |
 | JR MiniMax H3 Sequential Latent Checkpoint | `JR_H3_SequentialLatentCheckpoint` | Sequential Audio | CPU/磁盘 checkpoint 后的 H3 AV `LATENT` |
 | JR MiniMax H3 Sequential Video Output | `JR_H3_SequentialVideoOutput` | Sequential Audio | 分段提交状态与最终连续音频 MP4 路径 |
 | JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
@@ -376,11 +376,24 @@ Load Audio + Audio VAE ------^                         | positive/latent + per-c
                                               Sequential Video Output
 ```
 
-该流程不是在单次执行中循环 KSampler，而是每块建立一个独立 ComfyUI prompt：默认四个严格 H3 档位为 `345/243/192/141` 帧，对应 `14.375/10.125/8.000/5.875` 秒。音频从全局样本边界切分，Audio VAE 输入只对最后一块补零；最终视频使用同编码器的静音 MP4 分段做 stream concat，并只把完整原始 PCM 编码/融合一次，因此块边界不会发生独立音频编码造成的重复或缺口。
+### 推荐使用：Hard Latent Prefix
 
-默认 prompt 方法论是 `Same Audio Reactive Prompt`：Ref2VA 官方结构、单个开放式 `[Shot 1]`、不写块边界时间；所有块复用同一 reviewed/optimized prompt，真实变化来自当前 audio slice。`Previous Last Frame` 通过原生 `MiniMaxH3AddGuide` 把上一块末帧锚定到下一块局部第 0 帧；`Independent MV` 不强制续帧并允许不同派生 seed。
+在 `JR MiniMax H3 Sequential Audio Chunk Driver` 节点中，把 `continuity_mode` 下拉菜单选择为 **`Hard Latent Prefix`**，然后在 `chunk_preset` 中选择所需长度。四个档位都受支持；上游 Directed Video Conditioning 的 `length` 必须使用对应帧数：
 
-缓存默认位于 `ComfyUI/output/temp/JR_H3_audio_jobs`，可配置绝对路径。manifest 只会在 segment 验证成功后前移；浏览器关闭会在当前块后安全暂停，重新打开并手动 Queue 即可恢复。顺序分支的最终节点替代 Enhanced Video Combine，不会把所有 decoded IMAGE 一次性装回内存。详见 [H3 Sequential Audio Generation](docs/H3_SEQUENTIAL_AUDIO.md)。
+| `chunk_preset` | Directed Video Conditioning `length` | Hard-prefix stride |
+| --- | ---: | ---: |
+| 14.375s / 345 frames / 575 ticks | 345 | 306 frames / 510 ticks |
+| 10.125s / 243 frames / 405 ticks | 243 | 204 frames / 340 ticks |
+| 8.000s / 192 frames / 320 ticks | 192 | 153 frames / 255 ticks |
+| 5.875s / 141 frames / 235 ticks | 141 | 102 frames / 170 ticks |
+
+开始新的长度或设置时请增大 `run_id`。新的 Hard Latent Prefix 方法会把上一块末尾的 12 个 video latent steps 原样锁定到下一块前缀，并在输出时裁掉对应的 39 帧重叠，从而增强长视频跨块的画面与运动连续性。
+
+该流程不是在单次执行中循环 KSampler，而是每块建立一个独立 ComfyUI prompt。每个档位固定使用 12-step / 39-frame 硬前缀与 65-tick 音频重叠；最终视频使用同编码器的静音 MP4 分段做 stream concat，并只把完整原始 PCM 编码/融合一次，因此块边界不会发生独立音频编码造成的重复或缺口。
+
+默认 prompt 方法论是 `Same Audio Reactive Prompt`：Ref2VA 官方结构、单个开放式 `[Shot 1]`、不写块边界时间；所有块复用同一 reviewed/optimized prompt，真实变化来自当前 audio slice。`Previous Last Frame` 作为 PNG/VAE fallback 保留，`Independent MV` 不强制续接。
+
+缓存默认位于 `ComfyUI/output/temp/JR_H3_audio_jobs`，可配置绝对路径。manifest 只会在 segment 验证成功后前移，并严格验证 continuation mode、39/12 context 与所选 preset 的 stride；浏览器关闭会在当前块后安全暂停，重新打开并手动 Queue 即可恢复。输出保留 chunk 0 全部 real frames，chunk 1+ 在提交前精确裁掉 39 帧前缀。顺序分支的最终节点替代 Enhanced Video Combine，不会把所有 decoded IMAGE 一次性装回内存。详见 [H3 Sequential Audio Generation](docs/H3_SEQUENTIAL_AUDIO.md)。
 
 ## ComfyTV 集成
 

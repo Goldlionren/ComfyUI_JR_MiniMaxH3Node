@@ -43,14 +43,16 @@ An appropriate `detailed_description` describes one continuous performance whose
 
 ## Exact H3 presets
 
-| Preset | Frames at 24 fps | Video latent T | Audio latent ticks at 40 Hz |
-| --- | ---: | ---: | ---: |
-| 14.375 seconds | 345 | 102 | 575 |
-| 10.125 seconds | 243 | 72 | 405 |
-| 8.000 seconds | 192 | 57 | 320 |
-| 5.875 seconds | 141 | 42 | 235 |
+| Preset | Frames at 24 fps | Video latent T | Audio latent ticks at 40 Hz | Hard-prefix stride frames / ticks |
+| --- | ---: | ---: | ---: | ---: |
+| 14.375 seconds | 345 | 102 | 575 | 306 / 510 |
+| 10.125 seconds | 243 | 72 | 405 | 204 / 340 |
+| 8.000 seconds | 192 | 57 | 320 | 153 / 255 |
+| 5.875 seconds | 141 | 42 | 235 | 102 / 170 |
 
-The Directed Video Conditioning `length` must match the selected preset's frame count. Chunk boundaries are calculated from the global source timeline with `round(frame_boundary × sample_rate / 24)`; they are never calculated by repeatedly rounding a per-chunk duration. This prevents missing or duplicated PCM samples at joins.
+`Hard Latent Prefix` is the default and supports all four presets. Every preset uses a fixed 39-frame / 12-video-latent-step / 65-audio-tick continuation context. The stride is the selected raw window minus that context.
+
+The Directed Video Conditioning `length` must match the selected preset's frame count. Raw audio boundaries are calculated from the absolute global source frame timeline with `round(frame_boundary × sample_rate / 24)`; they are never calculated by repeatedly rounding a duration. In hard-prefix mode adjacent raw audio slices intentionally overlap by 39 frames / 65 ticks, while the final mux still uses the original continuous PCM exactly once.
 
 The final chunk is padded only for H3 audio-latent generation. Its decoded video is trimmed to the number of frames needed to cover the real remaining source samples. The final output mux uses the original full decoded PCM once, so audio is never separately encoded per segment.
 
@@ -69,7 +71,9 @@ It then encodes only the selected padded block and delegates H3 AV replacement/m
 
 ### Sequential Continuation Guide
 
-`Previous Last Frame` uses the connected initial frame for chunk 1. After that it loads the previous committed terminal PNG and delegates a local frame-zero anchor to ComfyUI's native `MiniMaxH3AddGuide`. `Independent MV` leaves positive conditioning unchanged.
+`Hard Latent Prefix` leaves chunk 1 unchanged. For every later chunk it loads the preceding full sampled AV checkpoint, copies the final 12 video latent steps into the current video's first 12 steps, and forces that video-mask prefix to zero. The remaining video mask retains its upstream semantics. The current chunk's absolute-time audio latent is never replaced with previous audio and its mask remains zero. This mode does not call `MiniMaxH3AddGuide` or append a duplicate `minimax_keyframes` tail guide.
+
+`Previous Last Frame` remains a legacy fallback: it uses the connected initial frame for chunk 1, then loads the previous committed terminal PNG and delegates a local frame-zero anchor to ComfyUI's native `MiniMaxH3AddGuide`. `Independent MV` leaves positive conditioning unchanged.
 
 The guide must be placed before the Guider is constructed. Prompt reuse alone does not guarantee pose or camera-state continuity.
 
@@ -81,7 +85,7 @@ After the sampler, the two sampled tensors are atomically saved as `latents/chun
 
 The output node:
 
-1. keeps only the real frame count for the current chunk;
+1. keeps all real frames for chunk 1 and trims exactly 39 decoded prefix frames from every later hard-prefix chunk;
 2. encodes a silent H.264/MP4 segment;
 3. validates it before commit;
 4. saves its last frame;
@@ -101,7 +105,7 @@ ComfyUI/output/temp/JR_H3_audio_jobs/<job_name>/run_0001/
 
 Absolute paths are supported. Relative paths cannot escape the ComfyUI output directory. `job_name` is sanitized and `run_id` selects a new immutable run directory. Existing runs are never recursively deleted or overwritten; increment `run_id` to start over.
 
-The manifest is the authoritative state. A chunk advances only after its video segment and continuation frame have been written and validated. A failed sampler, decode, encode or final mux leaves the current index unchanged. Queue the same workflow manually to resume.
+The manifest is the authoritative state. It records and validates `continuation_mode`, `hard_context_frames`, `hard_context_latent_steps`, and the preset-specific `stride_frames`. Hard-prefix manifests use schema 2; an older run fails closed and requires a larger `run_id`. A chunk advances only after its video segment and continuation frame have been written and validated. A failed sampler, decode, encode or final mux leaves the current index unchanged. Queue the same workflow manually to resume.
 
 There are two continuation controls:
 
@@ -119,7 +123,9 @@ The final pipeline never loads every decoded segment back into one IMAGE batch. 
 ## Boundaries
 
 - There is no cross-chunk DiT hidden-state carry.
-- Previous-frame guidance provides a visual anchor but cannot guarantee numerically seamless motion.
+- Hard-prefix mode locks the overlap latent exactly, but downstream model/decode behavior can still expose a visible or motion discontinuity; real generation must be evaluated separately.
+- Hard-prefix mode supports the exact 345/243/192/141-frame H3 presets; arbitrary durations outside these temporal grids are not supported.
+- Previous-frame guidance is retained only as a legacy fallback and cannot guarantee numerically seamless motion.
 - `Independent MV` deliberately permits visual cuts and different deterministic per-chunk seeds.
 - The current release supports H.264/MP4 segment caching and final MP4 output for concat safety.
 - The final audio is AAC encoded once; “exact” refers to continuous sample slicing and absence of per-block trim/pad/encoder joins, not lossless delivery codec.

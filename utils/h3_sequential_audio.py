@@ -28,11 +28,19 @@ from .h3_audio_driven_latent_builder import build_h3_audio_driven_latent
 from .h3_temporal_chunk_sampler import derive_chunk_seed, frame_boundary_for_video_token
 
 ERROR_PREFIX = "JR MiniMax H3 Sequential Audio:"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 H3_FPS = 24
 AUDIO_LATENT_FPS = 40
 DEFAULT_CACHE_PATH = "temp/JR_H3_audio_jobs"
-CONTINUITY_MODES = ("Previous Last Frame", "Independent MV")
+HARD_LATENT_PREFIX_MODE = "Hard Latent Prefix"
+HARD_CONTEXT_FRAMES = 39
+HARD_CONTEXT_LATENT_STEPS = 12
+# Backward-compatible aliases for the default 345-frame preset. Hard-prefix
+# execution derives its actual stride from the selected preset.
+HARD_STRIDE_FRAMES = 306
+HARD_AUDIO_OVERLAP_TICKS = 65
+HARD_AUDIO_STRIDE_TICKS = 510
+CONTINUITY_MODES = (HARD_LATENT_PREFIX_MODE, "Previous Last Frame", "Independent MV")
 SEED_MODES = ("Derived per chunk", "Fixed")
 
 
@@ -79,11 +87,16 @@ class H3AudioChunkContext:
     frame_start: int
     frame_end: int
     generated_frames: int
+    raw_real_frames: int
+    trim_head_frames: int
     real_frames: int
     source_sample_start: int
     source_sample_end: int
     source_sample_rate: int
     continuity_mode: str
+    hard_context_frames: int
+    hard_context_latent_steps: int
+    stride_frames: int
     seed: int
 
 
@@ -167,7 +180,10 @@ def load_manifest(job_dir: Path) -> dict[str, Any] | None:
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise _error(f"Manifest is unreadable or corrupt: {path}.") from None
     if not isinstance(value, dict) or value.get("schema_version") != SCHEMA_VERSION:
-        raise _error(f"Unsupported sequential job manifest schema in {path}.")
+        raise _error(
+            f"Unsupported or legacy sequential job manifest schema in {path}. "
+            "Increment run_id to start a Stage B job; existing cache files were not modified."
+        )
     return value
 
 
@@ -279,12 +295,42 @@ def _resample_audio(values: torch.Tensor, source_rate: int, target_rate: int) ->
     return torchaudio.functional.resample(values, source_rate, target_rate).contiguous()
 
 
-def _total_chunks(total_samples: int, sample_rate: int, frames_per_chunk: int) -> int:
-    return max(1, math.ceil(total_samples * H3_FPS / (sample_rate * frames_per_chunk)))
+def _source_frame_count(total_samples: int, sample_rate: int) -> int:
+    return max(1, math.ceil(total_samples * H3_FPS / sample_rate))
 
 
-def _sample_boundary(index: int, frames_per_chunk: int, sample_rate: int) -> int:
-    return round(index * frames_per_chunk * sample_rate / H3_FPS)
+def _total_chunks(total_samples: int, sample_rate: int, window_frames: int, stride_frames: int) -> int:
+    source_frames = _source_frame_count(total_samples, sample_rate)
+    if source_frames <= window_frames:
+        return 1
+    return 1 + math.ceil((source_frames - window_frames) / stride_frames)
+
+
+def _sample_boundary(frame_index: int, sample_rate: int) -> int:
+    return round(frame_index * sample_rate / H3_FPS)
+
+
+def _continuation_profile(preset: ChunkPreset, continuity_mode: str) -> tuple[int, int, int]:
+    if continuity_mode not in CONTINUITY_MODES:
+        raise _error(f"Unsupported continuity_mode: {continuity_mode!r}.")
+    if continuity_mode == HARD_LATENT_PREFIX_MODE:
+        if frame_boundary_for_video_token(HARD_CONTEXT_LATENT_STEPS) != HARD_CONTEXT_FRAMES:
+            raise RuntimeError(f"{ERROR_PREFIX}\nInternal hard-prefix H3 phase constants are inconsistent.")
+        if round(HARD_CONTEXT_FRAMES * AUDIO_LATENT_FPS / H3_FPS) != HARD_AUDIO_OVERLAP_TICKS:
+            raise RuntimeError(f"{ERROR_PREFIX}\nInternal hard-prefix audio overlap constants are inconsistent.")
+        if frame_boundary_for_video_token(preset.video_latent_t) != preset.frames:
+            raise RuntimeError(f"{ERROR_PREFIX}\nSelected hard-prefix preset has an invalid H3 video grid.")
+        if round(preset.frames * AUDIO_LATENT_FPS / H3_FPS) != preset.audio_ticks:
+            raise RuntimeError(f"{ERROR_PREFIX}\nSelected hard-prefix preset has an invalid H3 audio grid.")
+        remaining_latent_steps = preset.video_latent_t - HARD_CONTEXT_LATENT_STEPS
+        if remaining_latent_steps <= 0 or remaining_latent_steps % 5 != 0:
+            raise RuntimeError(f"{ERROR_PREFIX}\nSelected preset is not phase-compatible with the hard prefix.")
+        stride_frames = preset.frames - HARD_CONTEXT_FRAMES
+        audio_stride_ticks = preset.audio_ticks - HARD_AUDIO_OVERLAP_TICKS
+        if round(stride_frames * AUDIO_LATENT_FPS / H3_FPS) != audio_stride_ticks:
+            raise RuntimeError(f"{ERROR_PREFIX}\nInternal hard-prefix audio stride constants are inconsistent.")
+        return HARD_CONTEXT_FRAMES, HARD_CONTEXT_LATENT_STEPS, stride_frames
+    return 0, 0, preset.frames
 
 
 def _initial_manifest(
@@ -298,8 +344,9 @@ def _initial_manifest(
     seed_mode: str,
     base_seed: int,
 ) -> dict[str, Any]:
-    if continuity_mode not in CONTINUITY_MODES:
-        raise _error(f"Unsupported continuity_mode: {continuity_mode!r}.")
+    hard_context_frames, hard_context_latent_steps, stride_frames = _continuation_profile(
+        preset, continuity_mode
+    )
     if seed_mode not in SEED_MODES:
         raise _error(f"Unsupported seed_mode: {seed_mode!r}.")
     channels = int(values.shape[1])
@@ -309,7 +356,8 @@ def _initial_manifest(
     source_sha256 = _atomic_pcm(source_pcm, values)
     vae_values = _resample_audio(values, source_rate, vae_rate)
     vae_sha256 = _atomic_pcm(vae_pcm, vae_values)
-    total = _total_chunks(total_samples, source_rate, preset.frames)
+    source_frames = _source_frame_count(total_samples, source_rate)
+    total = _total_chunks(total_samples, source_rate, preset.frames, stride_frames)
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "job_id": f"{job_dir.parent.name}/{job_dir.name}",
@@ -322,6 +370,7 @@ def _initial_manifest(
             "sample_rate": source_rate,
             "channels": channels,
             "samples": total_samples,
+            "frames": source_frames,
             "duration_seconds": total_samples / source_rate,
             "quick_hash": _quick_audio_hash(values, source_rate),
             "sha256": source_sha256,
@@ -335,7 +384,10 @@ def _initial_manifest(
             "pcm_file": vae_pcm.name,
         },
         "chunk": asdict(preset),
-        "continuity_mode": continuity_mode,
+        "continuation_mode": continuity_mode,
+        "hard_context_frames": hard_context_frames,
+        "hard_context_latent_steps": hard_context_latent_steps,
+        "stride_frames": stride_frames,
         "seed_mode": seed_mode,
         "base_seed": int(base_seed),
         "segments": [],
@@ -355,19 +407,34 @@ def _validate_manifest_inputs(
     seed_mode: str,
     base_seed: int,
 ) -> None:
+    hard_context_frames, hard_context_latent_steps, stride_frames = _continuation_profile(
+        preset, continuity_mode
+    )
     expected = {
         "sample_rate": source_rate,
         "channels": int(values.shape[1]),
         "samples": int(values.shape[-1]),
+        "frames": _source_frame_count(int(values.shape[-1]), source_rate),
         "quick_hash": _quick_audio_hash(values, source_rate),
     }
     source = manifest.get("source", {})
     mismatches = [key for key, value in expected.items() if source.get(key) != value]
     chunk = manifest.get("chunk", {})
-    if chunk.get("label") != preset.label:
+    if chunk != asdict(preset):
         mismatches.append("chunk preset")
-    if manifest.get("continuity_mode") != continuity_mode:
-        mismatches.append("continuity_mode")
+    if manifest.get("continuation_mode") != continuity_mode:
+        mismatches.append("continuation_mode")
+    profile = {
+        "hard_context_frames": hard_context_frames,
+        "hard_context_latent_steps": hard_context_latent_steps,
+        "stride_frames": stride_frames,
+    }
+    mismatches.extend(key for key, value in profile.items() if manifest.get(key) != value)
+    expected_total = _total_chunks(
+        int(values.shape[-1]), source_rate, preset.frames, stride_frames
+    )
+    if manifest.get("total_chunks") != expected_total:
+        mismatches.append("total_chunks")
     if manifest.get("seed_mode") != seed_mode or manifest.get("base_seed") != int(base_seed):
         mismatches.append("seed settings")
     if manifest.get("vae_audio", {}).get("sample_rate") != vae_rate:
@@ -414,6 +481,9 @@ def prepare_audio_chunk(
     """Prepare exactly one padded audio slice and lock it into an H3 AV latent."""
 
     preset = preset_from_label(chunk_preset)
+    hard_context_frames, hard_context_latent_steps, stride_frames = _continuation_profile(
+        preset, continuity_mode
+    )
     if _template_frame_count(av_latent) != preset.frames:
         raise _error(
             f"Directed conditioning latent length does not match {preset.label}. "
@@ -468,20 +538,22 @@ def prepare_audio_chunk(
             _atomic_json(_manifest_path(job_dir), manifest)
 
         source = manifest["source"]
-        source_start = _sample_boundary(index, preset.frames, source_rate)
+        frame_start = index * stride_frames
+        frame_end = frame_start + preset.frames
+        source_start = _sample_boundary(frame_start, source_rate)
         source_end = min(
             int(source["samples"]),
-            _sample_boundary(index + 1, preset.frames, source_rate),
+            _sample_boundary(frame_end, source_rate),
         )
         if source_end <= source_start:
             raise _error("The current source-audio slice is empty.")
         vae = manifest["vae_audio"]
-        vae_start = _sample_boundary(index, preset.frames, vae_rate)
+        vae_start = _sample_boundary(frame_start, vae_rate)
         vae_real_end = min(
             int(vae["samples"]),
-            _sample_boundary(index + 1, preset.frames, vae_rate),
+            _sample_boundary(frame_end, vae_rate),
         )
-        vae_target_samples = _sample_boundary(1, preset.frames, vae_rate)
+        vae_target_samples = _sample_boundary(preset.frames, vae_rate)
         vae_values = _read_pcm(
             job_dir / vae["pcm_file"],
             channels=int(vae["channels"]),
@@ -501,10 +573,11 @@ def prepare_audio_chunk(
             shape = getattr(encoded, "shape", None)
             raise _error(f"audio_vae returned an incompatible H3 audio latent: {shape}.")
         driven_latent, fit_status = build_h3_audio_driven_latent(av_latent, {"samples": encoded})
-        frame_start = index * preset.frames
-        frame_end = frame_start + preset.frames
-        real_samples = source_end - source_start
-        real_frames = min(preset.frames, max(1, math.ceil(real_samples * H3_FPS / source_rate)))
+        raw_real_frames = min(preset.frames, int(source["frames"]) - frame_start)
+        trim_head_frames = hard_context_frames if index > 0 else 0
+        real_frames = raw_real_frames - trim_head_frames
+        if raw_real_frames <= 0 or real_frames <= 0:
+            raise _error("The current source timeline does not contain any deliverable frames.")
         seed = int(base_seed) if seed_mode == "Fixed" else derive_chunk_seed(int(base_seed), frame_start)
         context = H3AudioChunkContext(
             schema_version=SCHEMA_VERSION,
@@ -518,11 +591,16 @@ def prepare_audio_chunk(
             frame_start=frame_start,
             frame_end=frame_end,
             generated_frames=preset.frames,
+            raw_real_frames=raw_real_frames,
+            trim_head_frames=trim_head_frames,
             real_frames=real_frames,
             source_sample_start=source_start,
             source_sample_end=source_end,
             source_sample_rate=source_rate,
             continuity_mode=continuity_mode,
+            hard_context_frames=hard_context_frames,
+            hard_context_latent_steps=hard_context_latent_steps,
+            stride_frames=stride_frames,
             seed=seed,
         )
         source_slice = _read_pcm(
@@ -539,8 +617,12 @@ def prepare_audio_chunk(
                 f"Job: {manifest['job_id']}",
                 f"Chunk: {index + 1}/{total}",
                 f"Preset: {preset.label}",
+                f"Raw timeline frames: [{frame_start}:{frame_end}) @ {H3_FPS} fps",
                 f"Source samples: [{source_start}:{source_end}] @ {source_rate} Hz",
-                f"Real output frames: {real_frames}/{preset.frames}",
+                f"Raw real frames: {raw_real_frames}/{preset.frames}",
+                f"Trim head: {trim_head_frames} frames",
+                f"Delivery real frames: {real_frames}",
+                f"Stride: {stride_frames} frames",
                 f"Continuity: {continuity_mode}",
                 f"Seed: {seed} ({seed_mode})",
                 f"Cache: {job_dir}",
@@ -593,6 +675,14 @@ def validate_chunk_context(context: Any) -> tuple[H3AudioChunkContext, Path, dic
         raise _error("The chunk manifest no longer exists.")
     if manifest.get("job_id") != context.job_id:
         raise _error("chunk_context job_id does not match the manifest.")
+    context_profile = {
+        "continuation_mode": context.continuity_mode,
+        "hard_context_frames": context.hard_context_frames,
+        "hard_context_latent_steps": context.hard_context_latent_steps,
+        "stride_frames": context.stride_frames,
+    }
+    if any(manifest.get(key) != value for key, value in context_profile.items()):
+        raise _error("chunk_context continuation profile does not match the manifest.")
     current = int(manifest.get("current_index", -1))
     if current != context.chunk_index:
         if current > context.chunk_index:
@@ -601,6 +691,124 @@ def validate_chunk_context(context: Any) -> tuple[H3AudioChunkContext, Path, dic
     if manifest.get("active_token") != context.generation_token:
         raise _error("chunk_context generation token does not match the active manifest chunk.")
     return context, job_dir, manifest
+
+
+def _extract_nested_av_streams(latent: Any, name: str) -> tuple[Any, torch.Tensor, torch.Tensor]:
+    if not isinstance(latent, dict) or "samples" not in latent:
+        raise _error(f"{name} must be a LATENT mapping.")
+    nested = latent["samples"]
+    if not getattr(nested, "is_nested", False) or not callable(getattr(nested, "unbind", None)):
+        raise _error(f"{name} must contain the official H3 AV NestedTensor.")
+    streams = tuple(nested.unbind())
+    if len(streams) != 2 or not all(isinstance(item, torch.Tensor) for item in streams):
+        raise _error(f"{name} must contain video and audio tensor streams.")
+    return nested, streams[0], streams[1]
+
+
+def _validate_floating_stream(tensor: torch.Tensor, name: str) -> None:
+    if tensor.layout != torch.strided or tensor.device.type == "meta" or not tensor.is_floating_point():
+        raise _error(f"{name} must be a materialized strided floating-point tensor.")
+    try:
+        finite = bool(torch.isfinite(tensor).all().item())
+    except (RuntimeError, TypeError):
+        raise _error(f"{name} could not be checked for NaN or Inf values.") from None
+    if not finite:
+        raise _error(f"{name} contains NaN or Inf values.")
+
+
+def _validate_sampled_av_streams(
+    video: torch.Tensor,
+    audio: torch.Tensor,
+    *,
+    name: str,
+    expected_frames: int | None = None,
+) -> None:
+    if video.ndim != 5 or video.shape[1] != 24 or any(int(size) <= 0 for size in video.shape):
+        raise _error(f"{name} video must have shape [B,24,T,H,W], received {_shape_text(video)}.")
+    if audio.ndim != 4 or audio.shape[1:3] != (32, 2) or any(int(size) <= 0 for size in audio.shape):
+        raise _error(f"{name} audio must have shape [B,32,2,T], received {_shape_text(audio)}.")
+    if video.shape[0] != audio.shape[0] or video.dtype != audio.dtype or video.device != audio.device:
+        raise _error(f"{name} video/audio batch, dtype, and device must match.")
+    _validate_floating_stream(video, f"{name} video")
+    _validate_floating_stream(audio, f"{name} audio")
+    video_t = int(video.shape[2])
+    if video_t < 2 or (video_t - 2) % 5 != 0:
+        raise _error(f"{name} video has an invalid H3 temporal grid: T={video_t}.")
+    frames = frame_boundary_for_video_token(video_t)
+    if expected_frames is not None and frames != expected_frames:
+        raise _error(f"{name} represents {frames} frames; expected {expected_frames} frames.")
+    expected_audio_t = round(frames * AUDIO_LATENT_FPS / H3_FPS)
+    if abs(int(audio.shape[-1]) - expected_audio_t) > 1:
+        raise _error(
+            f"{name} video/audio timeline mismatch: {frames} frames require about "
+            f"{expected_audio_t} audio ticks, received {int(audio.shape[-1])}."
+        )
+
+
+def _nested_like(reference: Any, streams: tuple[torch.Tensor, torch.Tensor]) -> Any:
+    try:
+        return type(reference)(streams)
+    except (TypeError, RuntimeError):
+        raise RuntimeError(f"{ERROR_PREFIX}\nCould not rebuild the official H3 NestedTensor.") from None
+
+
+def _validate_broadcast_mask(mask: Any, target: torch.Tensor, name: str) -> None:
+    if not isinstance(mask, torch.Tensor) or mask.ndim != target.ndim:
+        shape = getattr(mask, "shape", None)
+        raise _error(f"{name} must have rank {target.ndim}, received {shape}.")
+    if int(mask.shape[2]) != int(target.shape[2]):
+        raise _error(f"{name} must expose the full temporal dimension T={int(target.shape[2])}.")
+    if any(int(got) not in {1, int(want)} for got, want in zip(mask.shape, target.shape)):
+        raise _error(f"{name} shape {_shape_text(mask)} is not broadcast-compatible with {_shape_text(target)}.")
+    _validate_floating_stream(mask, name)
+
+
+def _load_previous_checkpoint(
+    path: Path,
+    *,
+    context: H3AudioChunkContext,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not path.is_file():
+        raise _error(
+            f"Previous sampled latent checkpoint is missing: {path}. "
+            "Re-run the preceding chunk; hard continuation will not fall back to PNG/VAE."
+        )
+    try:
+        from safetensors import SafetensorError, safe_open
+    except ImportError:
+        raise RuntimeError(f"{ERROR_PREFIX}\nsafetensors is required to load sampled latent checkpoints.") from None
+
+    try:
+        with safe_open(str(path), framework="pt", device="cpu") as handle:
+            keys = set(handle.keys())
+            metadata = handle.metadata() or {}
+            if keys != {"video", "audio"}:
+                raise ValueError("checkpoint must contain exactly video and audio tensors")
+            video = handle.get_tensor("video")
+            audio = handle.get_tensor("audio")
+    except (OSError, RuntimeError, ValueError, SafetensorError):
+        raise _error(f"Previous sampled latent checkpoint is unreadable or corrupt: {path}.") from None
+    expected_metadata = {
+        "schema_version": str(SCHEMA_VERSION),
+        "job_id": context.job_id,
+        "chunk_index": str(context.chunk_index - 1),
+        "continuation_mode": HARD_LATENT_PREFIX_MODE,
+        "hard_context_frames": str(context.hard_context_frames),
+        "hard_context_latent_steps": str(context.hard_context_latent_steps),
+        "stride_frames": str(context.stride_frames),
+    }
+    if any(metadata.get(key) != value for key, value in expected_metadata.items()):
+        raise _error(
+            f"Previous sampled latent checkpoint metadata is incompatible: {path}. "
+            "Increment run_id if this checkpoint belongs to an older continuation profile."
+        )
+    _validate_sampled_av_streams(
+        video,
+        audio,
+        name="Previous sampled checkpoint",
+        expected_frames=context.generated_frames,
+    )
+    return video, audio
 
 
 def checkpoint_sampled_latent(
@@ -612,15 +820,14 @@ def checkpoint_sampled_latent(
     context, job_dir, manifest = validate_chunk_context(context)
     if int(manifest.get("current_index", -1)) > context.chunk_index:
         return sampled_latent, "Chunk was already committed; checkpoint write skipped."
-    if not isinstance(sampled_latent, dict) or "samples" not in sampled_latent:
-        raise _error("sampled_latent must be a LATENT mapping.")
-    nested = sampled_latent["samples"]
-    if not getattr(nested, "is_nested", False) or not callable(getattr(nested, "unbind", None)):
-        raise _error("sampled_latent must contain the official H3 AV NestedTensor.")
-    streams = tuple(nested.unbind())
-    if len(streams) != 2 or not all(isinstance(item, torch.Tensor) for item in streams):
-        raise _error("sampled_latent must contain video and audio tensor streams.")
-    video, audio = (item.detach().to("cpu").contiguous() for item in streams)
+    nested, sampled_video, sampled_audio = _extract_nested_av_streams(sampled_latent, "sampled_latent")
+    _validate_sampled_av_streams(
+        sampled_video,
+        sampled_audio,
+        name="sampled_latent",
+        expected_frames=context.generated_frames,
+    )
+    video, audio = (item.detach().to("cpu").contiguous() for item in (sampled_video, sampled_audio))
     checkpoint_dir = job_dir / "latents"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     target = checkpoint_dir / f"chunk_{context.chunk_index:05d}.safetensors"
@@ -635,21 +842,22 @@ def checkpoint_sampled_latent(
                 "job_id": context.job_id,
                 "chunk_index": str(context.chunk_index),
                 "generation_token": context.generation_token,
+                "schema_version": str(SCHEMA_VERSION),
+                "continuation_mode": context.continuity_mode,
+                "hard_context_frames": str(context.hard_context_frames),
+                "hard_context_latent_steps": str(context.hard_context_latent_steps),
+                "stride_frames": str(context.stride_frames),
             },
         )
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
-    try:
-        from comfy.nested_tensor import NestedTensor
-    except ImportError:
-        raise RuntimeError(f"{ERROR_PREFIX}\nComfyUI NestedTensor is unavailable.") from None
     output = dict(sampled_latent)
-    output["samples"] = NestedTensor((video, audio))
+    output["samples"] = _nested_like(nested, (video, audio))
     incoming_mask = sampled_latent.get("noise_mask")
     if getattr(incoming_mask, "is_nested", False) and callable(getattr(incoming_mask, "unbind", None)):
         masks = tuple(item.detach().to("cpu").contiguous() for item in incoming_mask.unbind())
-        output["noise_mask"] = NestedTensor(masks)
+        output["noise_mask"] = _nested_like(incoming_mask, masks)
     status = (
         f"Saved chunk {context.chunk_index + 1}/{context.total_chunks} sampled latent to {target}; "
         "downstream latent is CPU-backed."
@@ -666,6 +874,89 @@ def _load_rgb_image(path: Path) -> torch.Tensor:
     return torch.from_numpy(array.copy()).unsqueeze(0)
 
 
+def _apply_hard_latent_prefix(
+    latent: Any,
+    *,
+    context: H3AudioChunkContext,
+    job_dir: Path,
+) -> tuple[dict[str, Any], str]:
+    nested, current_video, current_audio = _extract_nested_av_streams(latent, "latent")
+    _validate_sampled_av_streams(
+        current_video,
+        current_audio,
+        name="Current audio-driven latent",
+        expected_frames=context.generated_frames,
+    )
+    previous_path = job_dir / "latents" / f"chunk_{context.chunk_index - 1:05d}.safetensors"
+    previous_video, _previous_audio = _load_previous_checkpoint(previous_path, context=context)
+    if (
+        previous_video.shape[0] != current_video.shape[0]
+        or previous_video.shape[1] != current_video.shape[1]
+        or previous_video.shape[3:] != current_video.shape[3:]
+    ):
+        raise _error(
+            "Previous/current video latent batch, channel, or resolution is incompatible.\n"
+            f"Previous: {_shape_text(previous_video)}\n"
+            f"Current: {_shape_text(current_video)}"
+        )
+    if previous_video.dtype != current_video.dtype:
+        raise _error(
+            "Previous/current video latent dtype is incompatible; hard-prefix casting is intentionally disabled."
+        )
+    previous_tail_start = int(previous_video.shape[2]) - HARD_CONTEXT_LATENT_STEPS
+    if previous_tail_start < 0 or previous_tail_start % 5 != 0:
+        raise _error(
+            "Previous sampled video latent is not phase-compatible with the 12-step H3 hard prefix."
+        )
+    if int(current_video.shape[2]) < HARD_CONTEXT_LATENT_STEPS:
+        raise _error("Current video latent is shorter than the required 12-step hard prefix.")
+
+    previous_tail = previous_video[..., -HARD_CONTEXT_LATENT_STEPS:, :, :].to(
+        device=current_video.device
+    )
+    locked_video = current_video.clone()
+    locked_video[..., :HARD_CONTEXT_LATENT_STEPS, :, :] = previous_tail
+
+    incoming_mask = latent.get("noise_mask")
+    if incoming_mask is None:
+        video_mask = torch.ones_like(current_video)
+    else:
+        if not getattr(incoming_mask, "is_nested", False) or not callable(getattr(incoming_mask, "unbind", None)):
+            raise _error("Incoming AV noise_mask must be the official two-stream NestedTensor or None.")
+        masks = tuple(incoming_mask.unbind())
+        if len(masks) != 2:
+            raise _error("Incoming AV noise_mask must contain exactly video and audio streams.")
+        video_mask, incoming_audio_mask = masks
+        _validate_broadcast_mask(video_mask, current_video, "Incoming video noise mask")
+        if not isinstance(incoming_audio_mask, torch.Tensor) or incoming_audio_mask.ndim != 4:
+            raise _error("Incoming audio noise mask must have rank 4.")
+        if int(incoming_audio_mask.shape[-1]) != int(current_audio.shape[-1]):
+            raise _error("Incoming audio noise mask must expose the full current audio timeline.")
+        if any(
+            int(got) not in {1, int(want)}
+            for got, want in zip(incoming_audio_mask.shape, current_audio.shape)
+        ):
+            raise _error("Incoming audio noise mask is not broadcast-compatible with the current audio stream.")
+        _validate_floating_stream(incoming_audio_mask, "Incoming audio noise mask")
+    locked_video_mask = video_mask.clone()
+    locked_video_mask[..., :HARD_CONTEXT_LATENT_STEPS, :, :] = 0
+    locked_audio_mask = torch.zeros_like(current_audio)
+
+    output = dict(latent)
+    output["samples"] = _nested_like(nested, (locked_video, current_audio))
+    output["noise_mask"] = _nested_like(nested, (locked_video_mask, locked_audio_mask))
+    return output, "\n".join(
+        (
+            "Hard Latent Prefix: applied",
+            f"Previous checkpoint: {previous_path}",
+            f"Video prefix: {HARD_CONTEXT_LATENT_STEPS} latent steps / {HARD_CONTEXT_FRAMES} pixel frames (locked)",
+            f"Video generation area: {int(current_video.shape[2]) - HARD_CONTEXT_LATENT_STEPS} latent steps",
+            "Audio: current absolute-time source slice preserved; mask locked to 0",
+            "PNG/VAE continuation guide: not applied",
+        )
+    )
+
+
 def apply_continuation_guide(
     *,
     positive: Any,
@@ -675,10 +966,20 @@ def apply_continuation_guide(
     initial_frame: Any = None,
     native_module: Any = None,
 ) -> tuple[Any, Any, str]:
-    """Anchor the initial/previous terminal frame at local frame zero."""
+    """Apply the selected continuation mode without mutating upstream values."""
 
     context, job_dir, manifest = validate_chunk_context(context)
-    if manifest.get("continuity_mode") == "Independent MV":
+    continuation_mode = manifest.get("continuation_mode")
+    if continuation_mode == HARD_LATENT_PREFIX_MODE:
+        if context.chunk_index == 0:
+            return (
+                positive,
+                latent,
+                "Hard Latent Prefix: chunk 1 has no previous sampled latent; passed through unchanged.",
+            )
+        output_latent, status = _apply_hard_latent_prefix(latent, context=context, job_dir=job_dir)
+        return positive, output_latent, status
+    if continuation_mode == "Independent MV":
         return positive, latent, "Independent MV: no previous-frame guide was applied."
     if context.chunk_index == 0:
         if initial_frame is None:
@@ -902,10 +1203,12 @@ def commit_decoded_chunk(
 ) -> tuple[str, str, bool]:
     """Encode, validate, atomically commit one segment, and finalize when complete."""
 
-    if not isinstance(images, torch.Tensor) or images.ndim != 4 or images.shape[0] < context.real_frames:
+    required_decoded_frames = context.trim_head_frames + context.real_frames
+    if not isinstance(images, torch.Tensor) or images.ndim != 4 or images.shape[0] < required_decoded_frames:
         shape = getattr(images, "shape", None)
         raise _error(
-            f"decoded images must be [frames,H,W,C] with at least {context.real_frames} frames; received {shape}."
+            "decoded images must be [frames,H,W,C] with enough raw frames for continuation trimming; "
+            f"required {required_decoded_frames}, received {shape}."
         )
     if images.shape[-1] < 3 or images.shape[1] < 1 or images.shape[2] < 1:
         raise _error("decoded images have invalid channel or spatial dimensions.")
@@ -929,7 +1232,9 @@ def commit_decoded_chunk(
         continuation_dir = job_dir / "continuation"
         segment_dir.mkdir(parents=True, exist_ok=True)
         continuation_dir.mkdir(parents=True, exist_ok=True)
-        selected = images[: context.real_frames]
+        trim_start = context.trim_head_frames
+        trim_end = trim_start + context.real_frames
+        selected = images[trim_start:trim_end]
         segment_path = segment_dir / f"segment_{context.chunk_index:05d}.mp4"
         required_encoder = manifest.get("segment_encoder")
         encoder = _encode_segment(
@@ -954,6 +1259,9 @@ def commit_decoded_chunk(
                 "index": context.chunk_index,
                 "file": relative_segment,
                 "frames": context.real_frames,
+                "raw_real_frames": context.raw_real_frames,
+                "trim_head_frames": context.trim_head_frames,
+                "delivery_frames": context.real_frames,
                 "encoder": encoder,
                 "width": int(images.shape[2]),
                 "height": int(images.shape[1]),
@@ -994,7 +1302,9 @@ def commit_decoded_chunk(
                 f"Committed chunk: {context.chunk_index + 1}/{context.total_chunks}",
                 f"Segment: {segment_path}",
                 f"Encoder: {encoder}",
-                f"Frames: {context.real_frames} @ {H3_FPS} fps",
+                f"Raw real frames: {context.raw_real_frames}",
+                f"Trim head: {context.trim_head_frames}",
+                f"Delivery frames: {context.real_frames} @ {H3_FPS} fps",
                 f"Next chunk: {'yes' if has_next else 'no'}",
                 f"Final output: {filename or 'pending'}",
                 "Audio: original continuous PCM muxed once at finalization",
@@ -1010,6 +1320,12 @@ __all__ = [
     "CONTINUITY_MODES",
     "DEFAULT_CACHE_PATH",
     "ERROR_PREFIX",
+    "HARD_AUDIO_OVERLAP_TICKS",
+    "HARD_AUDIO_STRIDE_TICKS",
+    "HARD_CONTEXT_FRAMES",
+    "HARD_CONTEXT_LATENT_STEPS",
+    "HARD_LATENT_PREFIX_MODE",
+    "HARD_STRIDE_FRAMES",
     "H3AudioChunkContext",
     "H3SequentialAudioError",
     "SCHEMA_VERSION",

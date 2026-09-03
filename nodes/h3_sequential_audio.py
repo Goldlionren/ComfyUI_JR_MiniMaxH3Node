@@ -8,6 +8,7 @@ from ..utils.h3_sequential_audio import (
     CHUNK_PRESET_LABELS,
     CONTINUITY_MODES,
     DEFAULT_CACHE_PATH,
+    HARD_LATENT_PREFIX_MODE,
     SEED_MODES,
     apply_continuation_guide,
     checkpoint_sampled_latent,
@@ -50,7 +51,7 @@ class JR_H3_SequentialAudioChunkDriver:
                 ),
                 "continuity_mode": (
                     list(CONTINUITY_MODES),
-                    {"default": "Previous Last Frame"},
+                    {"default": HARD_LATENT_PREFIX_MODE},
                 ),
                 "seed_mode": (
                     list(SEED_MODES),
@@ -107,7 +108,7 @@ class JR_H3_SequentialAudioChunkDriver:
         audio,
         audio_vae,
         chunk_preset=CHUNK_PRESET_LABELS[0],
-        continuity_mode="Previous Last Frame",
+        continuity_mode=HARD_LATENT_PREFIX_MODE,
         seed_mode="Derived per chunk",
         base_seed=0,
         cache_path=DEFAULT_CACHE_PATH,
@@ -135,9 +136,9 @@ class JR_H3_SequentialContinuationGuide:
     RETURN_TYPES = ("CONDITIONING", "LATENT", "JR_H3_AUDIO_CHUNK_CONTEXT", "STRING")
     RETURN_NAMES = ("positive", "latent", "chunk_context", "status")
     DESCRIPTION = (
-        "In Previous Last Frame mode, applies the initial image to chunk 1 and the previous committed terminal "
-        "frame to later chunks through ComfyUI's native MiniMaxH3AddGuide at local frame 0. Independent MV mode "
-        "passes conditioning through unchanged."
+        "Defaults to a 12-step hard latent prefix from the previous sampled checkpoint, with its video mask locked "
+        "to zero and current absolute-time audio preserved. Previous Last Frame remains available as a PNG/VAE "
+        "fallback; Independent MV passes conditioning through unchanged."
     )
 
     @classmethod
