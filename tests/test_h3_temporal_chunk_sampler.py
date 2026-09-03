@@ -964,6 +964,8 @@ def test_node_schema_matches_previous_frame_sampler_contract():
         "latent_image",
         "chunk_duration_seconds",
         "aggressive_memory_cleanup",
+        "continuity_mode",
+        "hard_chunk_preset",
     ]
     assert schema["model"][0] == "MODEL"
     assert schema["positive"][0] == "CONDITIONING"
@@ -974,6 +976,9 @@ def test_node_schema_matches_previous_frame_sampler_contract():
     assert schema["latent_image"] == ("LATENT",)
     assert schema["chunk_duration_seconds"][1]["default"] == 15.0
     assert schema["aggressive_memory_cleanup"][1]["default"] is False
+    assert schema["continuity_mode"][0] == ["Hard AV Latent Prefix", "Legacy Independent Chunks"]
+    assert schema["continuity_mode"][1]["default"] == "Hard AV Latent Prefix"
+    assert schema["hard_chunk_preset"][1]["default"] == "5.875s / 141 frames / 235 ticks"
     assert "temporal_mode" not in schema
     assert "guider" not in schema
     assert node.RETURN_TYPES == ("LATENT", "STRING")

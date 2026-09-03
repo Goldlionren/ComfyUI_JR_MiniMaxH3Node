@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from ..utils.h3_temporal_chunk_sampler import sample_h3_temporal_chunks
+from ..utils.h3_temporal_chunk_sampler import (
+    CONTINUITY_MODES,
+    DEFAULT_HARD_CHUNK_PRESET,
+    HARD_AV_PREFIX_MODE,
+    HARD_CHUNK_PRESET_LABELS,
+    sample_h3_temporal_chunks,
+)
 
 
 class JR_H3_TemporalChunkSampler:
@@ -12,9 +18,9 @@ class JR_H3_TemporalChunkSampler:
     RETURN_NAMES = ("output", "status")
     DESCRIPTION = (
         "Sequentially slices an official MiniMax H3 AV NestedTensor along its shared timeline, "
-        "uses the original conditioning for chunk 1, then anchors every later chunk to the previous "
-        "decoded terminal frame through ComfyUI's native MiniMaxH3AddGuide at local frame 0. A fresh "
-        "Basic Guider is built for every chunk before native SamplerCustomAdvanced execution."
+        "with recommended fixed-profile Hard AV Latent Prefix continuity or the preserved legacy path. "
+        "Hard mode locks both sampled video and sampled audio overlap without decode/re-encode or AddGuide. "
+        "A fresh Basic Guider is built for every chunk before native SamplerCustomAdvanced execution."
     )
 
     @classmethod
@@ -31,7 +37,7 @@ class JR_H3_TemporalChunkSampler:
                 ),
                 "vae": (
                     "VAE",
-                    {"tooltip": "MiniMax H3 video VAE used to decode each previous terminal frame."},
+                    {"tooltip": "Used only by Legacy mode to decode each previous terminal frame."},
                 ),
                 "noise": ("NOISE",),
                 "sampler": ("SAMPLER",),
@@ -44,7 +50,9 @@ class JR_H3_TemporalChunkSampler:
                         "min": 1.0,
                         "max": 3600.0,
                         "step": 0.5,
-                        "tooltip": "Approximate maximum chunk duration. Internal cuts align to H3's 17-frame cycle.",
+                        "tooltip": (
+                            "Legacy-only approximate maximum duration. Internal cuts align to H3's 17-frame cycle."
+                        ),
                     },
                 ),
                 "aggressive_memory_cleanup": (
@@ -52,6 +60,26 @@ class JR_H3_TemporalChunkSampler:
                     {
                         "default": False,
                         "tooltip": "Run ComfyUI soft_empty_cache after each completed chunk. Slower; normally leave disabled.",
+                    },
+                ),
+                "continuity_mode": (
+                    list(CONTINUITY_MODES),
+                    {
+                        "default": HARD_AV_PREFIX_MODE,
+                        "tooltip": (
+                            "Hard AV Latent Prefix is recommended and uses the separate preset dropdown. "
+                            "Legacy Independent Chunks preserves the previous decoded-last-frame behavior."
+                        ),
+                    },
+                ),
+                "hard_chunk_preset": (
+                    list(HARD_CHUNK_PRESET_LABELS),
+                    {
+                        "default": DEFAULT_HARD_CHUNK_PRESET,
+                        "tooltip": (
+                            "Hard-mode local AV window. The 5.875s preset is recommended for latent upscaling "
+                            "and lower VRAM; every preset keeps the same 39-frame hard prefix."
+                        ),
                     },
                 ),
             }
@@ -68,6 +96,8 @@ class JR_H3_TemporalChunkSampler:
         latent_image,
         chunk_duration_seconds=15.0,
         aggressive_memory_cleanup=False,
+        continuity_mode=HARD_AV_PREFIX_MODE,
+        hard_chunk_preset=DEFAULT_HARD_CHUNK_PRESET,
     ):
         return sample_h3_temporal_chunks(
             model=model,
@@ -79,6 +109,8 @@ class JR_H3_TemporalChunkSampler:
             latent_image=latent_image,
             chunk_duration_seconds=chunk_duration_seconds,
             aggressive_memory_cleanup=aggressive_memory_cleanup,
+            continuity_mode=continuity_mode,
+            hard_chunk_preset=hard_chunk_preset,
         )
 
 

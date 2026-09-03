@@ -8,6 +8,8 @@ import torch
 from comfy.nested_tensor import NestedTensor
 from ComfyUI_JR_MiniMaxH3Node.nodes.h3_temporal_chunk_sampler import JR_H3_TemporalChunkSampler
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_temporal_chunk_sampler import (
+    HARD_AV_PREFIX_MODE,
+    LEGACY_INDEPENDENT_MODE,
     H3TemporalChunkSamplerError,
     _apply_native_previous_frame_guide,
     _decode_terminal_frame,
@@ -75,6 +77,7 @@ def _run(*, positive=None, chunk_seconds=1.0, sampled=None):
         build_guider=build_guider,
         apply_guide=apply_guide,
         decode_last_frame=decode_last_frame,
+        continuity_mode=LEGACY_INDEPENDENT_MODE,
     )
     return output, status, state
 
@@ -187,7 +190,7 @@ def test_guided_inputs_are_all_required_together():
         )
 
 
-def test_node_schema_exposes_model_positive_vae_and_removes_bc_and_external_guider():
+def test_node_schema_exposes_new_continuity_mode_and_keeps_bc_and_external_guider_removed():
     node = JR_H3_TemporalChunkSampler()
     schema = node.INPUT_TYPES()["required"]
     assert list(schema) == [
@@ -200,7 +203,12 @@ def test_node_schema_exposes_model_positive_vae_and_removes_bc_and_external_guid
         "latent_image",
         "chunk_duration_seconds",
         "aggressive_memory_cleanup",
+        "continuity_mode",
+        "hard_chunk_preset",
     ]
+    assert schema["continuity_mode"][0] == [HARD_AV_PREFIX_MODE, LEGACY_INDEPENDENT_MODE]
+    assert schema["continuity_mode"][1]["default"] == HARD_AV_PREFIX_MODE
+    assert schema["hard_chunk_preset"][1]["default"] == "5.875s / 141 frames / 235 ticks"
     assert "temporal_mode" not in schema
     assert "guider" not in schema
     assert node.RETURN_TYPES == ("LATENT", "STRING")

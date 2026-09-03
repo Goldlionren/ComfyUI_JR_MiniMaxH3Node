@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `Hard AV Latent Prefix` as the recommended default mode for `JR_H3_TemporalChunkSampler`, hard-locking the previous sampled video/audio tails with fixed 39-frame / 12-video-T / 65-audio-T overlap.
+- Added 5.875s, 8.000s, 10.125s, and 14.375s fixed hard-prefix presets, bounded final-window zero padding, fresh-only CPU timeline writes, and deterministic absolute-frame seed derivation.
+- Preserved `Legacy Independent Chunks` with its free `chunk_duration_seconds` input and added reliable frontend switching between the legacy duration widget and the Hard preset dropdown.
 - Added `Hard Latent Prefix` as the default Sequential Audio continuation method, locking the previous sampled video's final 12 latent steps / 39 decoded frames into the next chunk to improve long-video visual and motion continuity.
 - Extended hard-prefix continuation to every exact H3 chunk preset with 306/204/153/102-frame strides and 510/340/255/170-tick audio strides while keeping a fixed 65-tick overlap.
 - Added fail-closed hard-prefix checkpoint/profile validation, exact post-decode overlap trimming, schema-2 manifest accounting, and focused regression coverage.

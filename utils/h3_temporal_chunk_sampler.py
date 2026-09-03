@@ -27,6 +27,28 @@ FRAMES_PER_VIDEO_TOKEN = (1, 4, 4, 4, 4)
 FRAMES_PER_CYCLE = sum(FRAMES_PER_VIDEO_TOKEN)
 VIDEO_TOKENS_PER_CYCLE = len(FRAMES_PER_VIDEO_TOKEN)
 UINT64_MASK = (1 << 64) - 1
+LEGACY_INDEPENDENT_MODE = "Legacy Independent Chunks"
+HARD_AV_PREFIX_MODE = "Hard AV Latent Prefix"
+CONTINUITY_MODES = (HARD_AV_PREFIX_MODE, LEGACY_INDEPENDENT_MODE)
+HARD_WINDOW_FRAMES = 345
+HARD_VIDEO_WINDOW_T = 102
+HARD_AUDIO_WINDOW_T = 575
+HARD_OVERLAP_FRAMES = 39
+HARD_VIDEO_PREFIX_T = 12
+HARD_AUDIO_PREFIX_T = 65
+HARD_STRIDE_FRAMES = 306
+HARD_VIDEO_FRESH_T = 90
+HARD_AUDIO_FRESH_T = 510
+HARD_CHUNK_SECONDS = HARD_WINDOW_FRAMES / H3_FPS
+HARD_CHUNK_PRESETS = (
+    ("5.875s / 141 frames / 235 ticks", 141, 42, 235),
+    ("8.000s / 192 frames / 320 ticks", 192, 57, 320),
+    ("10.125s / 243 frames / 405 ticks", 243, 72, 405),
+    ("14.375s / 345 frames / 575 ticks", 345, 102, 575),
+)
+HARD_CHUNK_PRESET_LABELS = tuple(profile[0] for profile in HARD_CHUNK_PRESETS)
+DEFAULT_HARD_CHUNK_PRESET = HARD_CHUNK_PRESET_LABELS[0]
+_HARD_PROFILE_BY_LABEL = {profile[0]: profile[1:] for profile in HARD_CHUNK_PRESETS}
 TEMPORAL_MODE_A = "A - Legacy No Overlap"
 TEMPORAL_MODE_B = "B - Exact H3 Source Overlap"
 TEMPORAL_MODE_C = "C - Exact H3 Refined Overlap"
@@ -114,6 +136,23 @@ class H3TemporalOverlapPlan:
     window_audio_tokens: int
     overlap_video_tokens: int
     overlap_frames: int
+    windows: tuple[H3TemporalOverlapWindow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class H3HardAVPrefixPlan:
+    """Exact selectable-profile H3 windows and their non-duplicated global keep ranges."""
+
+    frame_count: int
+    video_latent_t: int
+    audio_latent_t: int
+    preset_label: str
+    window_frames: int
+    window_video_t: int
+    window_audio_t: int
+    stride_frames: int
+    fresh_video_t: int
+    fresh_audio_t: int
     windows: tuple[H3TemporalOverlapWindow, ...]
 
 
@@ -251,6 +290,105 @@ def plan_h3_temporal_chunks(
         requested_chunk_seconds=requested_seconds,
         target_video_tokens=target_video_tokens,
         chunks=tuple(chunks),
+    )
+
+
+def plan_h3_hard_av_prefix_windows(
+    video_t: int,
+    audio_t: int,
+    hard_chunk_preset: str,
+) -> H3HardAVPrefixPlan:
+    """Plan one of the exact hard-prefix AV profiles selected by its stable label."""
+
+    if not isinstance(hard_chunk_preset, str) or hard_chunk_preset not in _HARD_PROFILE_BY_LABEL:
+        raise _error(
+            f"hard_chunk_preset must be one of {list(HARD_CHUNK_PRESET_LABELS)}, "
+            f"received {hard_chunk_preset!r}."
+        )
+    if isinstance(video_t, bool) or not isinstance(video_t, int) or video_t <= 0:
+        raise _error("video temporal length must be a positive integer.")
+    if isinstance(audio_t, bool) or not isinstance(audio_t, int) or audio_t <= 0:
+        raise _error("audio temporal length must be a positive integer.")
+
+    window_frames, window_video_t, window_audio_t = _HARD_PROFILE_BY_LABEL[hard_chunk_preset]
+    stride_frames = window_frames - HARD_OVERLAP_FRAMES
+    fresh_video_t = window_video_t - HARD_VIDEO_PREFIX_T
+    fresh_audio_t = window_audio_t - HARD_AUDIO_PREFIX_T
+    if (
+        frame_boundary_for_video_token(window_video_t) != window_frames
+        or frame_boundary_for_video_token(HARD_VIDEO_PREFIX_T) != HARD_OVERLAP_FRAMES
+        or frame_boundary_for_video_token(fresh_video_t) != stride_frames
+        or round(window_frames * AUDIO_LATENT_FPS / H3_FPS) != window_audio_t
+        or round(HARD_OVERLAP_FRAMES * AUDIO_LATENT_FPS / H3_FPS) != HARD_AUDIO_PREFIX_T
+        or round(stride_frames * AUDIO_LATENT_FPS / H3_FPS) != fresh_audio_t
+    ):
+        raise _error(f"hard_chunk_preset {hard_chunk_preset!r} is internally inconsistent with the H3 AV grid.")
+
+    frame_count, _expected_audio_t, _audio_delta = _validate_full_timeline(video_t, audio_t)
+    remaining_video_t = max(0, video_t - window_video_t)
+    remaining_audio_t = max(0, audio_t - window_audio_t)
+    video_window_count = (remaining_video_t + fresh_video_t - 1) // fresh_video_t + 1
+    audio_window_count = (remaining_audio_t + fresh_audio_t - 1) // fresh_audio_t + 1
+    if video_window_count != audio_window_count:
+        raise _error(
+            f"{HARD_AV_PREFIX_MODE} preset {hard_chunk_preset!r} cannot cover the permitted video/audio boundary "
+            f"delta with the same number of windows: video needs {video_window_count}, audio needs "
+            f"{audio_window_count}."
+        )
+    window_count = video_window_count
+
+    windows: list[H3TemporalOverlapWindow] = []
+    committed_video_end = 0
+    committed_audio_end = 0
+    for index in range(window_count):
+        video_start = index * fresh_video_t
+        audio_start = index * fresh_audio_t
+        frame_start = index * stride_frames
+        video_end = video_start + window_video_t
+        audio_end = audio_start + window_audio_t
+        frame_end = frame_start + window_frames
+        keep_video_start = video_start if index == 0 else video_start + HARD_VIDEO_PREFIX_T
+        keep_audio_start = audio_start if index == 0 else audio_start + HARD_AUDIO_PREFIX_T
+        keep_video_end = min(video_end, video_t)
+        keep_audio_end = min(audio_end, audio_t)
+        if keep_video_start != committed_video_end or keep_audio_start != committed_audio_end:
+            raise _error("hard-prefix windows would create an AV gap or duplicate before the final padded window.")
+        if keep_video_end <= keep_video_start or keep_audio_end <= keep_audio_start:
+            raise _error("hard-prefix planning produced an empty fresh AV range.")
+        windows.append(
+            H3TemporalOverlapWindow(
+                sample=H3TemporalChunk(
+                    index=index,
+                    video_start=video_start,
+                    video_end=video_end,
+                    audio_start=audio_start,
+                    audio_end=audio_end,
+                    frame_start=frame_start,
+                    frame_end=frame_end,
+                ),
+                keep_video_start=keep_video_start,
+                keep_video_end=keep_video_end,
+                keep_audio_start=keep_audio_start,
+                keep_audio_end=keep_audio_end,
+            )
+        )
+        committed_video_end = keep_video_end
+        committed_audio_end = keep_audio_end
+
+    if committed_video_end != video_t or committed_audio_end != audio_t:
+        raise _error("fixed hard-prefix windows did not cover the complete global AV timeline.")
+    return H3HardAVPrefixPlan(
+        frame_count=frame_count,
+        video_latent_t=video_t,
+        audio_latent_t=audio_t,
+        preset_label=hard_chunk_preset,
+        window_frames=window_frames,
+        window_video_t=window_video_t,
+        window_audio_t=window_audio_t,
+        stride_frames=stride_frames,
+        fresh_video_t=fresh_video_t,
+        fresh_audio_t=fresh_audio_t,
+        windows=tuple(windows),
     )
 
 
@@ -434,12 +572,61 @@ def _extract_h3_streams(latent_image: Any) -> tuple[torch.Tensor, torch.Tensor]:
             raise _error(f"{name} stream could not be checked for finite values: {type(error).__name__}.") from None
         if not finite:
             raise _error(f"{name} stream contains NaN or Inf values.")
+    return video, audio
+
+
+def _reject_legacy_noise_mask(latent_image: Mapping[str, Any]) -> None:
     if "noise_mask" in latent_image:
         raise _error(
-            "noise_mask is not supported in phase 1 because its temporal mapping across the packed H3 AV streams "
-            "cannot be inferred safely. Remove the mask or use the native monolithic sampler."
+            "noise_mask is not supported in the legacy path because its temporal mapping across the packed H3 AV "
+            "streams cannot be inferred safely. Remove the mask or use the native monolithic sampler."
         )
-    return video, audio
+
+
+def _tensor_is_all_one(tensor: torch.Tensor, temporal_dim: int) -> bool:
+    try:
+        for start in range(0, int(tensor.shape[temporal_dim]), 64):
+            temporal_slice = tensor.narrow(
+                temporal_dim,
+                start,
+                min(64, int(tensor.shape[temporal_dim]) - start),
+            )
+            if not bool(torch.eq(temporal_slice, 1).all().item()):
+                return False
+    except (RuntimeError, TypeError):
+        return False
+    return True
+
+
+def _validate_trivial_hard_input_mask(
+    latent_image: Mapping[str, Any],
+    video: torch.Tensor,
+    audio: torch.Tensor,
+) -> None:
+    """Accept only absent/None or exact all-one AV masks before replacing them."""
+
+    if "noise_mask" not in latent_image or latent_image["noise_mask"] is None:
+        return
+    noise_mask = latent_image["noise_mask"]
+    if not getattr(noise_mask, "is_nested", False) or not callable(getattr(noise_mask, "unbind", None)):
+        raise _error(
+            f"{HARD_AV_PREFIX_MODE} accepts only an official two-stream all-one noise_mask. "
+            "Nontrivial or unknown mask semantics fail closed; Audio Driven latents are not supported."
+        )
+    masks = list(noise_mask.unbind())
+    if len(masks) != 2 or not all(isinstance(mask, torch.Tensor) for mask in masks):
+        raise _error(f"{HARD_AV_PREFIX_MODE} noise_mask must contain exactly video and audio tensor streams.")
+    video_mask, audio_mask = masks
+    if list(video_mask.shape) != list(video.shape) or list(audio_mask.shape) != list(audio.shape):
+        raise _error(
+            f"{HARD_AV_PREFIX_MODE} all-one noise_mask shapes must match the AV samples exactly; "
+            f"video mask {_shape(video_mask)} vs {_shape(video)}, audio mask {_shape(audio_mask)} vs {_shape(audio)}."
+        )
+    if not _tensor_is_all_one(video_mask, 2) or not _tensor_is_all_one(audio_mask, 3):
+        raise _error(
+            f"{HARD_AV_PREFIX_MODE} refuses an existing nontrivial noise_mask. Remove it and provide a normal "
+            "generated H3 AV latent; Audio Driven compatibility belongs to Sequential Audio."
+        )
 
 
 def _guider_has_temporal_keyframes(guider: Any) -> bool:
@@ -739,6 +926,7 @@ def _format_guided_status(
     return "\n".join(
         (
             *base[:8],
+            f"continuity_mode={LEGACY_INDEPENDENT_MODE}",
             "continuity=Previous Last Frame -> MiniMaxH3AddGuide(frame_idx=0)",
             f"guides_applied={max(0, len(plan.chunks) - 1)}",
             "guider=official BasicGuider rebuilt per chunk",
@@ -821,6 +1009,7 @@ def _sample_h3_temporal_overlap_windows(
     cleanup: CleanupCallback | None,
 ) -> tuple[dict[str, Any], str]:
     video, audio = _extract_h3_streams(latent_image)
+    _reject_legacy_noise_mask(latent_image)
     plan = plan_h3_temporal_overlap_windows(
         int(video.shape[2]),
         int(audio.shape[3]),
@@ -918,6 +1107,285 @@ def _sample_h3_temporal_overlap_windows(
     return output, _format_overlap_status(plan, temporal_mode, video.device, output_video, noise_mode)
 
 
+def _hard_noise_plan(plan: H3HardAVPrefixPlan) -> H3TemporalChunkPlan:
+    return H3TemporalChunkPlan(
+        frame_count=plan.frame_count,
+        video_latent_t=plan.video_latent_t,
+        audio_latent_t=plan.audio_latent_t,
+        expected_audio_t=plan.audio_latent_t,
+        audio_delta=0,
+        requested_chunk_seconds=plan.window_frames / H3_FPS,
+        target_video_tokens=plan.fresh_video_t,
+        chunks=tuple(window.sample for window in plan.windows),
+    )
+
+
+def _format_hard_prefix_status(
+    plan: H3HardAVPrefixPlan,
+    source_device: torch.device,
+    output_video: torch.Tensor,
+    noise_mode: str,
+    video_prefix_drift_corrections: int,
+    audio_prefix_drift_corrections: int,
+) -> str:
+    ranges = [
+        (
+            f"#{window.sample.index + 1} raw f[{window.sample.frame_start}:{window.sample.frame_end}) "
+            f"v[{window.sample.video_start}:{window.sample.video_end}) "
+            f"a[{window.sample.audio_start}:{window.sample.audio_end}) -> "
+            f"fresh v[{window.keep_video_start}:{window.keep_video_end}) "
+            f"a[{window.keep_audio_start}:{window.keep_audio_end}); "
+            f"tail_pad v={max(0, window.sample.video_end - plan.video_latent_t)} "
+            f"a={max(0, window.sample.audio_end - plan.audio_latent_t)}"
+        )
+        for window in plan.windows
+    ]
+    return "\n".join(
+        (
+            "Success: sequential native Hard AV Latent Prefix sampling",
+            f"continuity_mode={HARD_AV_PREFIX_MODE}",
+            f"hard_chunk_preset={plan.preset_label}",
+            f"global: video T={plan.video_latent_t}, audio T={plan.audio_latent_t}, frames={plan.frame_count}",
+            f"window: {plan.window_frames} frames / video T={plan.window_video_t} / audio T={plan.window_audio_t}",
+            f"hard prefix: {HARD_OVERLAP_FRAMES} frames / video T={HARD_VIDEO_PREFIX_T} / "
+            f"audio T={HARD_AUDIO_PREFIX_T}",
+            f"fresh stride: {plan.stride_frames} frames / video T={plan.fresh_video_t} / "
+            f"audio T={plan.fresh_audio_t}",
+            f"chunks={len(plan.windows)}; prefixes_applied={max(0, len(plan.windows) - 1)}",
+            "prefix_source=previous sampled AV tail; prefix_mask=0; fresh_mask=1",
+            "post_sample_prefix_relock=bit-identical; "
+            f"native_drift_corrected video_chunks={video_prefix_drift_corrections} "
+            f"audio_chunks={audio_prefix_drift_corrections}",
+            "continuation_guide=none; MiniMaxH3AddGuide/VAE decode not used",
+            "guider=official BasicGuider rebuilt per chunk from original positive",
+            f"source device: {source_device}",
+            f"output: CPU preallocated, dtype={output_video.dtype}; overlap copied once",
+            f"noise_mode={noise_mode}; seed_basis=absolute raw frame_start",
+            "ranges:",
+            *ranges,
+        )
+    )
+
+
+def _materialize_hard_window(
+    source: torch.Tensor,
+    *,
+    temporal_dim: int,
+    start: int,
+    length: int,
+    writable: bool,
+) -> tuple[torch.Tensor, int]:
+    total = int(source.shape[temporal_dim])
+    if start < 0 or start >= total:
+        raise _error(f"hard-prefix local window starts outside its source stream: start={start}, T={total}.")
+    available = min(length, total - start)
+    source_window = source.narrow(temporal_dim, start, available)
+    padding = length - available
+    if padding == 0:
+        return (source_window.clone() if writable else source_window), 0
+
+    shape = list(source.shape)
+    shape[temporal_dim] = length
+    window = torch.zeros(shape, dtype=source.dtype, device=source.device)
+    window.narrow(temporal_dim, 0, available).copy_(source_window)
+    return window, padding
+
+
+def _sample_h3_hard_av_prefix(
+    *,
+    model: Any,
+    positive: Any,
+    noise: Any,
+    sampler: Any,
+    sigmas: torch.Tensor,
+    latent_image: Mapping[str, Any],
+    hard_chunk_preset: str,
+    aggressive_memory_cleanup: bool,
+    sample_chunk: SampleChunk | None,
+    nested_factory: NestedFactory | None,
+    cleanup: CleanupCallback | None,
+    build_guider: BuildGuider | None,
+) -> tuple[dict[str, Any], str]:
+    video, audio = _extract_h3_streams(latent_image)
+    _validate_trivial_hard_input_mask(latent_image, video, audio)
+    plan = plan_h3_hard_av_prefix_windows(
+        int(video.shape[2]),
+        int(audio.shape[3]),
+        hard_chunk_preset,
+    )
+    if len(plan.windows) > 1 and _positive_has_temporal_keyframes(positive):
+        raise _error(
+            f"{HARD_AV_PREFIX_MODE} cannot be combined with minimax_keyframes/AddGuide conditioning. "
+            "Provide normal H3 positive conditioning without temporal keyframes."
+        )
+
+    chunk_noise_factory, noise_mode = _resolve_chunk_noise(noise, _hard_noise_plan(plan))
+    sample_chunk = sample_chunk or _sample_with_native_advanced_sampler
+    nested_factory = nested_factory or _make_official_nested
+    cleanup = cleanup or _default_cleanup
+    build_guider = build_guider or _build_native_basic_guider
+
+    output_video: torch.Tensor | None = None
+    output_audio: torch.Tensor | None = None
+    previous_video_tail: torch.Tensor | None = None
+    previous_audio_tail: torch.Tensor | None = None
+    video_prefix_drift_corrections = 0
+    audio_prefix_drift_corrections = 0
+
+    for window in plan.windows:
+        chunk = window.sample
+        chunk_noise = chunk_noise_factory(chunk)
+        source_video_window, _video_padding = _materialize_hard_window(
+            video,
+            temporal_dim=2,
+            start=chunk.video_start,
+            length=plan.window_video_t,
+            writable=chunk.index > 0,
+        )
+        source_audio_window, _audio_padding = _materialize_hard_window(
+            audio,
+            temporal_dim=3,
+            start=chunk.audio_start,
+            length=plan.window_audio_t,
+            writable=chunk.index > 0,
+        )
+
+        chunk_latent = dict(latent_image)
+        if chunk.index == 0:
+            chunk_video = source_video_window
+            chunk_audio = source_audio_window
+            chunk_latent.pop("noise_mask", None)
+        else:
+            if previous_video_tail is None or previous_audio_tail is None:
+                raise _error("previous sampled AV tails were not available for hard-prefix continuation.")
+            if previous_video_tail.dtype != video.dtype or previous_audio_tail.dtype != audio.dtype:
+                raise _error("previous sampled AV tail dtype changed and cannot be copied bit-identically.")
+            expected_video_tail_shape = list(video.shape)
+            expected_video_tail_shape[2] = HARD_VIDEO_PREFIX_T
+            expected_audio_tail_shape = list(audio.shape)
+            expected_audio_tail_shape[3] = HARD_AUDIO_PREFIX_T
+            if list(previous_video_tail.shape) != expected_video_tail_shape:
+                raise _error(
+                    f"previous sampled video tail has an incompatible shape: expected {expected_video_tail_shape}, "
+                    f"received {list(previous_video_tail.shape)}."
+                )
+            if list(previous_audio_tail.shape) != expected_audio_tail_shape:
+                raise _error(
+                    f"previous sampled audio tail has an incompatible shape: expected {expected_audio_tail_shape}, "
+                    f"received {list(previous_audio_tail.shape)}."
+                )
+
+            chunk_video = source_video_window
+            chunk_audio = source_audio_window
+            chunk_video[:, :, :HARD_VIDEO_PREFIX_T, :, :].copy_(previous_video_tail)
+            chunk_audio[:, :, :, :HARD_AUDIO_PREFIX_T].copy_(previous_audio_tail)
+            video_mask = torch.ones_like(chunk_video)
+            audio_mask = torch.ones_like(chunk_audio)
+            video_mask[:, :, :HARD_VIDEO_PREFIX_T, :, :] = 0
+            audio_mask[:, :, :, :HARD_AUDIO_PREFIX_T] = 0
+            chunk_latent["noise_mask"] = nested_factory((video_mask, audio_mask))
+
+        chunk_latent["samples"] = nested_factory((chunk_video, chunk_audio))
+        chunk_guider = build_guider(model, positive)
+        sampled_latent = sample_chunk(
+            noise=chunk_noise,
+            guider=chunk_guider,
+            sampler=sampler,
+            sigmas=sigmas,
+            latent_image=chunk_latent,
+        )
+        sampled_video, sampled_audio = _validate_sampled_chunk(sampled_latent, video, audio, chunk)
+        if sampled_video.dtype != video.dtype or sampled_audio.dtype != audio.dtype:
+            raise _error("native sampler changed AV dtype; hard-prefix continuation requires bit-identical dtype.")
+
+        if chunk.index > 0:
+            sampled_video_prefix = sampled_video[:, :, :HARD_VIDEO_PREFIX_T, :, :].detach().to(device="cpu")
+            sampled_audio_prefix = sampled_audio[:, :, :, :HARD_AUDIO_PREFIX_T].detach().to(device="cpu")
+            if not torch.equal(sampled_video_prefix, previous_video_tail):
+                video_prefix_drift_corrections += 1
+            if not torch.equal(sampled_audio_prefix, previous_audio_tail):
+                audio_prefix_drift_corrections += 1
+            del sampled_video_prefix, sampled_audio_prefix
+
+            # The native sampler performs its work in float32 and H3 applies latent
+            # in/out transforms around the packed AV stream.  A zero denoise mask
+            # therefore locks the prefix semantically during denoising, but the
+            # returned tensor can still differ by floating-point round-trip bits.
+            # Reassert the sampled tail after native sampling so the continuation
+            # contract is bit-identical without changing native sampler behavior.
+            sampled_video[:, :, :HARD_VIDEO_PREFIX_T, :, :].copy_(
+                previous_video_tail.to(device=sampled_video.device)
+            )
+            sampled_audio[:, :, :, :HARD_AUDIO_PREFIX_T].copy_(
+                previous_audio_tail.to(device=sampled_audio.device)
+            )
+
+            relocked_video_prefix = sampled_video[:, :, :HARD_VIDEO_PREFIX_T, :, :].detach().to(device="cpu")
+            relocked_audio_prefix = sampled_audio[:, :, :, :HARD_AUDIO_PREFIX_T].detach().to(device="cpu")
+            if not torch.equal(relocked_video_prefix, previous_video_tail):
+                raise _error(
+                    f"failed to restore the locked {HARD_VIDEO_PREFIX_T}-step video prefix "
+                    f"bit-identically for chunk {chunk.index + 1}."
+                )
+            if not torch.equal(relocked_audio_prefix, previous_audio_tail):
+                raise _error(
+                    f"failed to restore the locked {HARD_AUDIO_PREFIX_T}-tick audio prefix "
+                    f"bit-identically for chunk {chunk.index + 1}."
+                )
+            del relocked_video_prefix, relocked_audio_prefix
+
+        if output_video is None:
+            output_video = torch.empty(list(video.shape), dtype=sampled_video.dtype, device="cpu")
+            output_audio = torch.empty(list(audio.shape), dtype=sampled_audio.dtype, device="cpu")
+        if output_audio is None:
+            raise _error("CPU audio output buffer was not initialized.")
+
+        local_video_start = window.local_keep_video_start
+        local_audio_start = window.local_keep_audio_start
+        keep_video_t = window.keep_video_end - window.keep_video_start
+        keep_audio_t = window.keep_audio_end - window.keep_audio_start
+        output_video[:, :, window.keep_video_start : window.keep_video_end, :, :].copy_(
+            sampled_video[:, :, local_video_start : local_video_start + keep_video_t, :, :]
+        )
+        output_audio[:, :, :, window.keep_audio_start : window.keep_audio_end].copy_(
+            sampled_audio[:, :, :, local_audio_start : local_audio_start + keep_audio_t]
+        )
+
+        if chunk.index + 1 < len(plan.windows):
+            previous_video_tail = (
+                sampled_video[:, :, -HARD_VIDEO_PREFIX_T:, :, :].detach().to(device="cpu").clone().contiguous()
+            )
+            previous_audio_tail = (
+                sampled_audio[:, :, :, -HARD_AUDIO_PREFIX_T:].detach().to(device="cpu").clone().contiguous()
+            )
+        else:
+            previous_video_tail = None
+            previous_audio_tail = None
+
+        del sampled_video, sampled_audio, sampled_latent, chunk_guider, chunk_noise
+        del chunk_latent, chunk_video, chunk_audio, source_video_window, source_audio_window
+        if aggressive_memory_cleanup:
+            gc.collect()
+            cleanup()
+
+    if output_video is None or output_audio is None:
+        raise _error("no hard-prefix temporal windows were produced.")
+
+    output = dict(latent_image)
+    output.pop("noise_mask", None)
+    output.pop("downscale_ratio_spacial", None)
+    output.pop("downscale_ratio_temporal", None)
+    output["samples"] = nested_factory((output_video, output_audio))
+    return output, _format_hard_prefix_status(
+        plan,
+        video.device,
+        output_video,
+        noise_mode,
+        video_prefix_drift_corrections,
+        audio_prefix_drift_corrections,
+    )
+
+
 def sample_h3_temporal_chunks(
     *,
     model: Any = None,
@@ -937,14 +1405,20 @@ def sample_h3_temporal_chunks(
     decode_last_frame: DecodeLastFrame | None = None,
     guider: Any = None,
     temporal_mode: str = TEMPORAL_MODE_A,
+    continuity_mode: str = LEGACY_INDEPENDENT_MODE,
+    hard_chunk_preset: str = DEFAULT_HARD_CHUNK_PRESET,
 ) -> tuple[dict[str, Any], str]:
-    """Sample H3 chunks with a fresh Basic Guider and previous-frame continuation."""
+    """Sample H3 chunks using the selected production continuity strategy."""
 
+    if continuity_mode not in CONTINUITY_MODES:
+        raise _error(f"continuity_mode must be one of {list(CONTINUITY_MODES)}, received {continuity_mode!r}.")
     guided_inputs = (model is not None, positive is not None, vae is not None)
     guided_mode = all(guided_inputs)
     if any(guided_inputs) and not guided_mode:
         raise _error("guided sampling requires model, positive, and vae together.")
     if not guided_mode:
+        if continuity_mode == HARD_AV_PREFIX_MODE:
+            raise _error(f"{HARD_AV_PREFIX_MODE} requires the node's model, positive, and vae inputs.")
         if temporal_mode not in TEMPORAL_MODES:
             raise _error(f"temporal_mode must be one of {list(TEMPORAL_MODES)}, received {temporal_mode!r}.")
         if temporal_mode != TEMPORAL_MODE_A:
@@ -962,7 +1436,24 @@ def sample_h3_temporal_chunks(
                 cleanup=cleanup,
             )
 
+    if guided_mode and continuity_mode == HARD_AV_PREFIX_MODE:
+        return _sample_h3_hard_av_prefix(
+            model=model,
+            positive=positive,
+            noise=noise,
+            sampler=sampler,
+            sigmas=sigmas,
+            latent_image=latent_image,
+            hard_chunk_preset=hard_chunk_preset,
+            aggressive_memory_cleanup=aggressive_memory_cleanup,
+            sample_chunk=sample_chunk,
+            nested_factory=nested_factory,
+            cleanup=cleanup,
+            build_guider=build_guider,
+        )
+
     video, audio = _extract_h3_streams(latent_image)
+    _reject_legacy_noise_mask(latent_image)
     plan = plan_h3_temporal_chunks(int(video.shape[2]), int(audio.shape[3]), chunk_duration_seconds)
     if len(plan.chunks) > 1:
         if guided_mode and _positive_has_temporal_keyframes(positive):
@@ -1057,9 +1548,25 @@ def sample_h3_temporal_chunks(
 
 __all__ = [
     "AUDIO_LATENT_FPS",
+    "CONTINUITY_MODES",
+    "DEFAULT_HARD_CHUNK_PRESET",
     "ERROR_PREFIX",
     "FRAMES_PER_VIDEO_TOKEN",
+    "HARD_AUDIO_FRESH_T",
+    "HARD_AUDIO_PREFIX_T",
+    "HARD_AUDIO_WINDOW_T",
+    "HARD_AV_PREFIX_MODE",
+    "HARD_CHUNK_SECONDS",
+    "HARD_CHUNK_PRESETS",
+    "HARD_CHUNK_PRESET_LABELS",
+    "HARD_OVERLAP_FRAMES",
+    "HARD_STRIDE_FRAMES",
+    "HARD_VIDEO_FRESH_T",
+    "HARD_VIDEO_PREFIX_T",
+    "HARD_VIDEO_WINDOW_T",
+    "HARD_WINDOW_FRAMES",
     "H3_FPS",
+    "H3HardAVPrefixPlan",
     "H3TemporalChunk",
     "H3TemporalChunkPlan",
     "H3TemporalOverlapPlan",
@@ -1069,8 +1576,10 @@ __all__ = [
     "TEMPORAL_MODE_B",
     "TEMPORAL_MODE_C",
     "TEMPORAL_MODES",
+    "LEGACY_INDEPENDENT_MODE",
     "derive_chunk_seed",
     "frame_boundary_for_video_token",
+    "plan_h3_hard_av_prefix_windows",
     "plan_h3_temporal_chunks",
     "plan_h3_temporal_overlap_windows",
     "sample_h3_temporal_chunks",

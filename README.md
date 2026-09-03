@@ -339,25 +339,31 @@ Sigmas ──────────────────────┤
 H3 AV LATENT ────────────────┘
 ```
 
-`JR_H3_TemporalChunkSampler` 不再接收外部 GUIDER。它必须拿到 original `positive`，以便为每一段建立真正独立的 conditioning 和 Basic Guider：Chunk 1 使用 original positive；Chunk 2+ 先把上一段完整 VAE decode 后的最终 RGB 帧通过官方 `MiniMaxH3AddGuide(frame_idx=0)` 加到 original positive，再用得到的 chunk-specific positive 新建 Basic Guider，最后调用原生 `SamplerCustomAdvanced`。
+`JR_H3_TemporalChunkSampler` 不再接收外部 GUIDER。新增并默认选择推荐的 `Hard AV Latent Prefix`；下拉菜单还保留 `Legacy Independent Chunks`，用于继续运行升级前的末帧 AddGuide 工作流。Hard 只用于普通 H3 生成的 AV latent，不兼容 Audio Driven；长音频驱动继续使用 Sequential Audio 套件。
 
 ```text
-Chunk 1: original positive -> new Basic Guider -> sample -> decoded final frame
-Chunk 2+: previous final frame -> AddGuide(frame_idx=0) -> chunk positive -> new Basic Guider -> sample
+continuity_mode = Hard AV Latent Prefix
+hard_chunk_preset = 5.875s / 141 frames / 235 ticks   # 放大/低显存推荐
+
+Chunk 1: native sample one complete selected AV window
+Chunk 2+: copy previous sampled video T12 + audio T65 tails -> lock both prefixes -> native sample
+          -> write only video [12:] + audio [65:] fresh suffix to the global CPU buffers
 ```
 
-节点仍只输出完整 H3 AV `LATENT + status`。每段 video/audio 结果直接复制到预分配的全长 CPU 缓冲区；处理中只额外保留一张上一段 CPU 末帧，不收集全部 chunk 后再 `torch.cat`。为了获得真实像素末帧，每个非末段都会多做一次完整 video VAE decode；下游最终再 decode 完整 latent 时会有额外 VAE 计算，这是保持现有 LATENT 输出链的明确代价。
+Hard 模式使用独立下拉菜单，提供 `5.875s / 141 frames / 235 ticks`、`8.000s / 192 frames / 320 ticks`、`10.125s / 243 frames / 405 ticks`、`14.375s / 345 frames / 575 ticks` 四档，默认 5.875s，适合放大和低显存流程。四档都固定保留 raw 39 帧、video 12 T、audio 65 T hard prefix；fresh stride 依次为 raw `102/153/204/306` 帧、video `30/45/60/90 T`、audio `170/255/340/510 T`。选择 Hard 时只显示 `hard_chunk_preset`；选择 Legacy 时恢复自由输入的 `chunk_duration_seconds` 并隐藏 Hard preset。该 FLOAT 值不会参与 Hard 后端执行。
 
-H3 video/audio latent 的时间长度不同。内部切点对齐 video 的 5-token / 17-frame 周期，并从同一全局 24 fps frame boundary 换算 40 Hz audio boundary；最终 audio boundary 保留官方编码容许的 ±1 tick。旧 0.17 的 B/C overlap 实验已从节点 UI 移除，因为当前连续性方案只采用无 overlap 分段 + 上一段像素末帧 guide。
+两流 prefix mask 均为 0，fresh mask 均为 1；前缀必须来自上一段 sampled output。由于原生采样器的 float32 与 H3 latent in/out 往返可能产生末位浮点差异，采样完成后会将上一段 sampled tail 原地重新写回并做逐位校验，保证传给后续块的 AV 前缀 bit-identical。该模式不调用 `MiniMaxH3AddGuide`，不 decode/re-encode，也不会同时保留全部 chunk 或在末尾 `torch.cat`。
+
+Hard 模式允许任意合法 H3 总长度。最后不足一个 fresh stride 时，仍以所选固定 local window 采样：超出全局末尾的 video/audio latent 用零补齐，采样后只提交真实 fresh suffix，补齐结果丢弃，因此最终时间线没有 gap/duplicate，显存峰值也不超过所选档位。`Legacy Independent Chunks` 仍按原有 H3 5-token / 17-frame 周期规划 `chunk_duration_seconds`，Chunk 2+ 解码上一段末帧并调用 `MiniMaxH3AddGuide(frame_idx=0)`。
 
 重要边界：
 
 - 目标是限制采样期间随时间长度增长的 latent 与中间激活峰值；模型权重、conditioning、上游仍持有的整段 latent，以及当前块的原生 preview/x0 内存不包含在这项节省中。
-- 不存在跨块 hidden-state/KV carry、全局时间位置偏移、latent blending 或 decoded crossfade；连续性来自官方 frame-0 image guide，不承诺与整段单次采样数值等价。
-- 单块执行原样使用输入 NOISE，不改变原生 seed 语义。多块执行时，从 ComfyUI 实时节点注册表识别并调用官方 RandomNoise/DisableNoise，因此兼容核心 extra node 的路径模块加载身份；RandomNoise 使用 `base seed + absolute frame_start` 的稳定 uint64 派生子流，使相同 shape 的块可重复但不再逐位相同，DisableNoise 保持原生全零语义。其他 generic/custom NOISE 因 ComfyUI 没有公共 clone/offset/substream 协议而明确拒绝，不会静默读取或修改私有属性。状态输出会报告 `noise_mode=native_single`、`chunk_derived` 或 `native_zero`。
+- 不存在跨块 hidden-state/KV carry、全局时间位置偏移、latent blending 或 decoded crossfade，不承诺与整段单次采样数值等价。
+- 单块执行原样使用输入 NOISE。多块官方 RandomNoise 使用 base seed 与绝对 raw `frame_start` 派生稳定 uint64 子流，Hard 起点由所选 fresh stride 决定；DisableNoise 保持原生全零。其他 generic/custom NOISE 因无公共 substream 协议而拒绝。
 - `aggressive_memory_cleanup=false` 默认只依赖引用释放和 ComfyUI 正常内存管理；打开后才在每块结束调用 `soft_empty_cache`，通常更慢。
-- 明确拒绝 `noise_mask`，因为不能安全猜测它在 H3 packed AV 双流中的时间映射。
-- 多块 original positive 若已经含有 `minimax_keyframes` 会明确报错，避免绝对 full-timeline guide 与逐段局部 frame-0 guide 冲突；推荐使用没有目标帧 keyframe 的 Reference-to-Video positive。
+- Hard 输入只接受无 mask、`None` 或形状完全匹配的全 1 AV mask；非平凡/未知 mask 会 fail closed。Legacy 继续拒绝任何 `noise_mask`。
+- 多块 original positive 若已有 `minimax_keyframes` 会明确报错；Hard 不会再叠加 AddGuide，Legacy 也避免绝对 full-timeline guide 与局部 frame-0 guide 冲突。
 
 完整算法、输入校验、60 秒规划示例和内存口径见 [H3 Temporal Chunk Sampler](docs/H3_TEMPORAL_CHUNK_SAMPLER.md)。
 
