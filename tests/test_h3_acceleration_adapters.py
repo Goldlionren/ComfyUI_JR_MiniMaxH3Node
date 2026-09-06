@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import types
 
@@ -172,5 +173,10 @@ def test_non_h3_model_has_clear_error():
 
 
 def test_adapter_module_import_does_not_load_gpu_dependencies():
-    assert "sageattention" not in sys.modules
-    assert "triton" not in sys.modules
+    # Other nodes now use native V3 APIs; inspect this adapter in a clean process.
+    subprocess.run([
+        sys.executable, "-c",
+        "import runpy, sys; runpy.run_path(sys.argv[1]); "
+        "assert 'sageattention' not in sys.modules; assert 'triton' not in sys.modules",
+        adapters.__file__,
+    ], check=True, capture_output=True, text=True)

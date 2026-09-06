@@ -191,8 +191,8 @@ class JR_H3_SequentialLatentCheckpoint:
 class JR_H3_SequentialVideoOutput:
     CATEGORY = "JR MiniMax H3/Sequential Audio"
     FUNCTION = "commit"
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("filename", "status")
+    RETURN_TYPES = ("STRING", "STRING", "VIDEO")
+    RETURN_NAMES = ("filename", "status", "video")
     OUTPUT_NODE = True
     DESCRIPTION = (
         "Encodes and validates one silent H.264 segment, saves its terminal frame, commits the manifest, queues "
@@ -305,7 +305,17 @@ class JR_H3_SequentialVideoOutput:
                 )
         except (ImportError, RuntimeError):
             pass
-        return filename, status
+        # Only the completed, muxed file may reach downstream Save/Preview Video.
+        # A duplicate intermediate commit can also return has_next=False with no filename.
+        if filename and not has_next:
+            from comfy_api.latest import VideoFromFile
+
+            video = VideoFromFile(filename)
+        else:
+            from comfy_execution.graph import ExecutionBlocker
+
+            video = ExecutionBlocker(None)
+        return filename, status, video
 
 
 __all__ = [

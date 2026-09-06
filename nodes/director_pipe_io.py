@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from comfy_api.latest import io
+
 from ..utils.director_pipe_io import build_pipe_from_standard_inputs, unpack_director_pipe
 
 
-class JR_H3_DirectorPipeBuilder:
+class JR_H3_DirectorPipeBuilder(io.ComfyNode):
     CATEGORY = "JR MiniMax H3/Director"
-    FUNCTION = "build"
     RETURN_TYPES = ("JR_H3_DIRECTOR_PIPE",)
     RETURN_NAMES = ("pip",)
     DESCRIPTION = (
@@ -16,31 +17,39 @@ class JR_H3_DirectorPipeBuilder:
     )
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompt": ("STRING", {"multiline": True, "default": ""}),
-                "duration_seconds": (
-                    "FLOAT",
-                    {"default": 10.0, "min": 0.1, "max": 3600.0, "step": 0.1},
-                ),
-                "fps": (
-                    "FLOAT",
-                    {"default": 24.0, "min": 1.0, "max": 240.0, "step": 0.01},
-                ),
-            },
-            "optional": {
-                "first_frame": ("IMAGE",),
-                "last_frame": ("IMAGE",),
-                "reference_images": ("IMAGE",),
-                "reference_video": ("VIDEO",),
-                "reference_audio": ("AUDIO",),
-                "driving_audio": ("AUDIO",),
-            },
-        }
+    def define_schema(cls):
+        return io.Schema(
+            node_id="JR_H3_DirectorPipeBuilder",
+            display_name="JR MiniMax H3 Director PIPE Builder",
+            category=cls.CATEGORY,
+            description=cls.DESCRIPTION,
+            inputs=[
+                io.String.Input("prompt", multiline=True, default=""),
+                io.Float.Input("duration_seconds", default=10.0, min=0.1, max=3600.0, step=0.1),
+                io.Float.Input("fps", default=24.0, min=1.0, max=240.0, step=0.01),
+                io.Image.Input("first_frame", optional=True),
+                io.Image.Input("last_frame", optional=True),
+                io.Image.Input("reference_images", optional=True),
+                io.Video.Input("reference_video", optional=True),
+                io.Audio.Input("reference_audio", optional=True),
+                io.Audio.Input("driving_audio", optional=True),
+                io.Autogrow.Input("reference_videos", optional=True,
+                    template=io.Autogrow.TemplateNames(io.Video.Input("video"),
+                        names=["reference_video_2", "reference_video_3"], min=0)),
+                io.Autogrow.Input("reference_audios", optional=True,
+                    template=io.Autogrow.TemplateNames(io.Audio.Input("audio"),
+                        names=["reference_audio_2", "reference_audio_3"], min=0)),
+            ],
+            outputs=[io.Custom("JR_H3_DIRECTOR_PIPE").Output(display_name="pip")],
+        )
 
+    @classmethod
+    def execute(cls, **kwargs):
+        return io.NodeOutput(*cls.build(**kwargs))
+
+    @classmethod
     def build(
-        self,
+        cls,
         prompt,
         duration_seconds=10.0,
         fps=24.0,
@@ -50,6 +59,8 @@ class JR_H3_DirectorPipeBuilder:
         reference_video=None,
         reference_audio=None,
         driving_audio=None,
+        reference_videos=None,
+        reference_audios=None,
     ):
         pipe = build_pipe_from_standard_inputs(
             prompt=prompt,
@@ -61,6 +72,8 @@ class JR_H3_DirectorPipeBuilder:
             reference_video=reference_video,
             reference_audio=reference_audio,
             driving_audio=driving_audio,
+            reference_videos=tuple((reference_videos or {}).get(f"reference_video_{i}") for i in (2, 3)),
+            reference_audios=tuple((reference_audios or {}).get(f"reference_audio_{i}") for i in (2, 3)),
         )
         return (pipe,)
 

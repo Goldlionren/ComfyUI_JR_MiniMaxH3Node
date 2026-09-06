@@ -34,6 +34,8 @@ Optional standard inputs:
 - `reference_audio`: one standard ComfyUI AUDIO.
 - `driving_audio`: one standard ComfyUI AUDIO.
 
+Additional `reference_videos` and `reference_audios` use native Autogrow sockets for references 2 and 3. Connect a slot to expose the next one. The original input names and order remain intact for saved workflows. Connected references are registered in numeric slot order; empty slots are skipped. Unpack indexes refer to that compact registry order. Directed Conditioning receives up to three videos and three standalone audios; Driving Audio retains its existing routing rules and is not a fourth standalone audio slot.
+
 The generated PIPE contains one Shot spanning the requested duration. The exact input prompt is stored as the current `optimized_prompt`, so direct Builder → Conditioning use is byte-preserving. It is also present in the compiled single-Shot Director context, allowing a later Prompt Optimizer stage to use the normal authoritative PIPE path and replace the optimized stage. `reviewed_prompt` starts empty.
 
 First Frame and Last Frame keep their normal point-anchor roles. Reference media span the generated single Shot. Builder supports up to nine total Picture records across anchors and the reference IMAGE batch, matching the current native H3 Ref2V limit.

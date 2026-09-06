@@ -66,6 +66,8 @@ def test_node_contracts_are_compact_and_standard_typed():
         "reference_video",
         "reference_audio",
         "driving_audio",
+        "reference_videos",
+        "reference_audios",
     ]
     assert JR_H3_DirectorPipeBuilder.RETURN_TYPES == ("JR_H3_DIRECTOR_PIPE",)
     assert JR_H3_DirectorPipeBuilder.RETURN_NAMES == ("pip",)
@@ -250,3 +252,72 @@ def test_standard_video_builder_pipe_is_consumed_by_directed_conditioning():
     assert (prepared.width, prepared.height) == (96, 64)
     assert prepared.ref_videos[0][1] is video.frames
     assert video.trim_calls == [(0.0, 1.0, False)]
+
+
+def test_multiple_references_preserve_order_payloads_and_native_routing():
+    videos = [FakeVideo() for _ in range(3)]
+    audios = [_audio(channels=2) for _ in range(3)]
+    output = JR_H3_DirectorPipeBuilder.execute(
+        prompt="Prompt", duration_seconds=1.0, reference_video=videos[0], reference_audio=audios[0],
+        reference_videos={"reference_video_3": videos[2], "reference_video_2": videos[1]},
+        reference_audios={"reference_audio_3": audios[2], "reference_audio_2": audios[1]},
+    )
+    pipe = output.result[0]
+    validate_director_pipe(pipe)
+    prepared = prepare_directed_inputs(
+        pipe, mode_override="Auto", dimension_source="Prefer Pipe", width=64, height=64,
+        length=24, native_module=FakeNative,
+    )
+    assert len(prepared.ref_videos) == len(prepared.ref_audios) == 3
+    for i in range(3):
+        unpacked = unpack_director_pipe(pipe, reference_video_index=i + 1, reference_audio_index=i + 1,
+                                       reference_image_index=1, driving_audio_index=1)
+        assert unpacked.reference_video is videos[i]
+        assert unpacked.reference_audio["waveform"] is audios[i]["waveform"]
+        assert prepared.ref_videos[i][1] is videos[i].frames
+    assert [r.label for r in pipe.reference_registry if r.family == "Video"] == ["<Video 1>", "<Video 2>", "<Video 3>"]
+
+
+def test_autogrow_schema_and_sparse_reference_slots():
+    schema = JR_H3_DirectorPipeBuilder.INPUT_TYPES()
+    assert JR_H3_DirectorPipeBuilder.FUNCTION == "EXECUTE_NORMALIZED"
+    for kind in ("video", "audio"):
+        template = schema["optional"][f"reference_{kind}s"][1]["template"]
+        assert template["min"] == 0
+        assert template["names"] == [f"reference_{kind}_2", f"reference_{kind}_3"]
+    video = FakeVideo()
+    pipe, = JR_H3_DirectorPipeBuilder.build(prompt="Prompt", reference_videos={"reference_video_3": video})
+    assert unpack_director_pipe(pipe, reference_image_index=1, reference_video_index=1,
+                                reference_audio_index=1, driving_audio_index=1).reference_video is video
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"reference_videos": {"reference_video_2": object()}},
+    {"reference_audios": {"reference_audio_3": {"waveform": None, "sample_rate": 24000}}},
+])
+def test_additional_reference_inputs_are_validated(kwargs):
+    with pytest.raises(ValueError):
+        JR_H3_DirectorPipeBuilder.build(prompt="Prompt", **kwargs)
+
+
+def test_native_execution_expands_autogrow_and_preserves_legacy_prompt_inputs():
+    import asyncio
+
+    from comfy_api.latest import _io
+    from execution import _async_map_node_over_list
+
+    video = FakeVideo()
+    for live in (
+        {"prompt": "Prompt", "reference_video": video},
+        {"prompt": "Prompt", "reference_videos.reference_video_2": video},
+        {"prompt": "Prompt"},
+    ):
+        _, _, v3_data = _io.get_finalized_class_inputs(JR_H3_DirectorPipeBuilder.INPUT_TYPES(), live)
+        v3_data["hidden_inputs"] = {}
+        result = asyncio.run(_async_map_node_over_list(
+            "test", "1", JR_H3_DirectorPipeBuilder, {k: [v] for k, v in live.items()},
+            JR_H3_DirectorPipeBuilder.FUNCTION, v3_data=v3_data,
+        ))
+        pipe = result[0].result[0]
+        assert validate_director_pipe(pipe) is pipe
+        assert len(pipe.runtime_media) == (0 if len(live) == 1 else 1)

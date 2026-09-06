@@ -371,7 +371,7 @@ def test_final_chunk_output_still_registers_topology(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "server", fake_server)
     context = types.SimpleNamespace(job_id="short/r1", chunk_index=0, total_chunks=1)
-    _filename, status = node_module.JR_H3_SequentialVideoOutput().commit(
+    _filename, status, video = node_module.JR_H3_SequentialVideoOutput().commit(
         images=object(),
         chunk_context=context,
         auto_queue_next=True,
@@ -381,6 +381,7 @@ def test_final_chunk_output_still_registers_topology(monkeypatch):
     )
     assert calls == [{"job_id": "short/r1", "chunk_index": 0, "total_chunks": 1}]
     assert "last chunk" in status
+    assert video.get_stream_source() == "final.mp4"
 
 
 def test_output_node_contract():

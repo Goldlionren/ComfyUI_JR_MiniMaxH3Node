@@ -145,6 +145,8 @@ Director Desk 是不调用 LLM 的时间线编辑器。它把 Global Direction�
 
 不需要 Director Desk 时间线时，可以用 `Director PIPE Builder` 把最终 prompt、duration/fps、首尾帧、Reference IMAGE batch、标准 VIDEO、Reference AUDIO 和 Driving AUDIO 直接组装为同一种 PIPE；输入 prompt 会逐字保存为当前 optimized stage，同时保留一个确定性的单 Shot Director context。`Director PIPE Unpack` 接受任何来源的 PIPE，原样透传总线，并按 1-based index 输出选定的标准 Reference Image/Video/Audio、首尾帧、prompt stages、时长、fps、尺寸和不含二进制的 registry JSON。索引不存在时对应媒体输出为 `None`，完整媒体仍保留在透传 PIPE 中。详见 [Director PIPE Builder / Unpack](docs/DIRECTOR_PIPE_IO.md)。
 
+Builder 保留原有 `reference_video` / `reference_audio`，另外提供官方自动扩展接口 `reference_videos` / `reference_audios`，连接后继续出现第 2、3 个参考槽位，总计支持 3 个参考视频和 3 个参考音频。空槽跳过，参考编号按已连接的槽位顺序生成；Driving Audio 的既有路由限制不变。
+
 `director_prompt`、`optimized_prompt`、`reviewed_prompt` 等 STRING 输出用于监控、检查和调试；`JR_H3_DIRECTOR_PIPE` 才是 Director 主链唯一权威数据总线。最终提示词优先级固定为 `reviewed > optimized > director`。
 
 工作流只保存轻量时间线和 ComfyUI `input/temp/output` 资产 descriptor；不会保存 Tensor、base64、音频 waveform 或视频字节。First Frame 是固定在 0.0 秒的唯一点锚；Visual 和 Reference Audio 可以重叠，Driving Audio 不允许重叠。拖动、resize、split、duplicate、delete、role 和 Direction 编辑都在节点内完成，节点只在首次创建时采用约 `1000×650` 默认尺寸，不会在执行后缩回。
@@ -383,6 +385,8 @@ Load Audio + Audio VAE ------^                         | positive/latent + per-c
 ```
 
 ### 推荐使用：Hard Latent Prefix
+
+`Sequential Video Output` 保留原有 `filename` / `status` 输出，并新增标准 `video` 输出，可连接官方 Save Video 或支持 VIDEO 的预览节点。只有全部分块合并并混入完整音频后才输出视频；中间块会静默跳过此输出的下游分支。输出使用文件句柄，不会将完整视频重新解码到内存。连接 Save Video 会额外保存一份视频。
 
 在 `JR MiniMax H3 Sequential Audio Chunk Driver` 节点中，把 `continuity_mode` 下拉菜单选择为 **`Hard Latent Prefix`**，然后在 `chunk_preset` 中选择所需长度。四个档位都受支持；上游 Directed Video Conditioning 的 `length` 必须使用对应帧数：
 

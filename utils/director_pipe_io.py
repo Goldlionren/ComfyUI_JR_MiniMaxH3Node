@@ -164,6 +164,8 @@ def build_pipe_from_standard_inputs(
     reference_video: Any = None,
     reference_audio: Any = None,
     driving_audio: Any = None,
+    reference_videos: tuple[Any, ...] = (),
+    reference_audios: tuple[Any, ...] = (),
 ) -> DirectorPipe:
     """Build one immutable runtime-only Director PIPE from standard ComfyUI values."""
 
@@ -229,16 +231,18 @@ def build_pipe_from_standard_inputs(
                 duration,
             )
 
-    if reference_video is not None:
-        metadata = _video_metadata(reference_video)
+    for index, payload in enumerate((reference_video, *reference_videos), 1):
+        if payload is None:
+            continue
+        metadata = _video_metadata(payload)
         asset = _asset(
-            "reference-video-1",
+            f"reference-video-{index}",
             "video",
             width=metadata["width"],
             height=metadata["height"],
             duration_seconds=metadata["duration_seconds"],
         )
-        item_id = "runtime-reference-video-1"
+        item_id = f"runtime-reference-video-{index}"
         visuals.append(VisualState(
             id=item_id,
             kind="video",
@@ -249,10 +253,10 @@ def build_pipe_from_standard_inputs(
             source_out=None,
             direction="",
             notes="",
-            registry_order=1,
+            registry_order=index,
             asset=asset,
         ))
-        runtime.append(_runtime(asset, item_id, reference_video, metadata))
+        runtime.append(_runtime(asset, item_id, payload, metadata))
 
     def add_audio(key: str, role: str, payload: Any, order: int) -> None:
         metadata = _audio_metadata(payload, key)
@@ -272,10 +276,11 @@ def build_pipe_from_standard_inputs(
         ))
         runtime.append(_runtime(asset, item_id, payload, metadata))
 
-    if reference_audio is not None:
-        add_audio("reference-audio-1", "reference_audio", reference_audio, 1)
+    for index, payload in enumerate((reference_audio, *reference_audios), 1):
+        if payload is not None:
+            add_audio(f"reference-audio-{index}", "reference_audio", payload, index)
     if driving_audio is not None:
-        add_audio("driving-audio-1", "driving_audio", driving_audio, 2)
+        add_audio("driving-audio-1", "driving_audio", driving_audio, len(reference_audios) + 2)
 
     state = DirectorState(
         schema="jr_h3_director_state",
