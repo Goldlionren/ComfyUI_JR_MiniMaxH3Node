@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- User acceptance (2026-09-14): TST strength 0.2 gave encouraging visual results on the tested material; the experiment remains opt-in with unchanged defaults. The user also confirmed working external H3VAE_TRT engine decoding with a noticeable speed improvement (no quantified benchmark). Keep the upstream TRT Loader, model assets and engines external; JR retains capability checks and opt-in probes only, with no vendored loader or TensorRT dependency.
+
+- Local phase-2 experiment: added opt-in `enable_tst=false` / `tst_strength=0.1` to Unified without changing existing widgets or Sol `tau`. Independently implemented pooled temporal spectral Q correction; delegates to the captured Sol/Sage chain, uses native block IDs and isolated per-forward state. Morton, compile and unsupported attention forward paths are rejected. Progressive shares its complete sigma schedule; Adaptive Cache isolates TST configurations.
+- Added read-only H3 VAE capability checks with clear missing-metadata/encoder/decoder errors and an opt-in final-decode probe for native VAE or an existing local H3VAE_TRT engine. No TensorRT dependency, downloads, compiler, or shared VAE mutation. TRT Guided/tiled support is not claimed.
+
 - Recorded the user's RTX 5090 acceptance of Progressive Guided together with Unified Acceleration as a usable baseline. Scale 0.6 is a user-observed quality/adherence sweet spot on the tested material; defaults and experimental markers remain unchanged pending broader benchmarks.
 
 - Added experimental `JR_H3_ProgressiveGuidedSampler` for native independent references, first/last keyframes and fully locked audio, including combined guidance. Re-encodes clean keyframes at the low-stage canvas with the same H3 video VAE; preserves original high-stage conditioning, reference grids, audio values/dtype, masks and metadata. Partial masks and hard-prefix continuation remain unsupported.

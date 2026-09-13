@@ -29,6 +29,8 @@ Sol-Attn 不会在 SageAttention 之后再次执行完整 attention。适用调�
 
 ## 参数
 
+第二阶段可选实验：`enable_tst=false`、`tst_strength=0.1`。新增 widget 追加在原有输入之后；旧工作流不启用时保持原执行路径。启用时由 Unified 组合一个视频 Q 预变换，再委托给上面的既有 Sol/Sage 后端链，不增加第二次完整 attention。此实验要求 Morton/compile 关闭，详见 [TST 说明](H3_TST_EXPERIMENT.md)。
+
 | 参数 | 默认值 | 范围/选项 |
 | --- | --- | --- |
 | `enable` | `true` | 全局 bypass |

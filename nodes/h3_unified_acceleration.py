@@ -61,6 +61,9 @@ class JR_H3_UnifiedAcceleration:
             },
             "optional": {
                 "tau_profile": ("STRING", {"forceInput": True}),
+                "enable_tst": ("BOOLEAN", {"default": False, "tooltip": "Experimental temporal Q correction. Keep Morton and compile off."}),
+                "tst_strength": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01,
+                                            "tooltip": "Independent of Sol tau. Start with 0.1; compare motion and prompt adherence."}),
             },
         }
 
@@ -89,11 +92,18 @@ class JR_H3_UnifiedAcceleration:
         use_tma: bool = False,
         dense_blocks: str = "",
         tau_profile: str | None = None,
+        enable_tst: bool = False,
+        tst_strength: float = 0.1,
     ):
         if not enable:
             return (model,)
 
         adapters.ensure_minimax_h3_model(model)
+        if enable_tst:
+            from ..utils.h3_temporal_transport import validate_strength
+            validate_strength(tst_strength)
+            if tst_strength > 0 and (morton or allow_compile):
+                raise ValueError("JR H3 TST: disable Morton and allow_compile for this experiment.")
         patched = model
 
         # The order is a compatibility contract: Sol must capture Sage as its
@@ -129,6 +139,11 @@ class JR_H3_UnifiedAcceleration:
                 dense_blocks=dense_blocks,
                 tau_profile=tau_profile,
             )
+
+        if enable_tst and tst_strength > 0:
+            from ..utils.h3_temporal_transport import apply_temporal_transport
+            patched = apply_temporal_transport(patched, strength=tst_strength)
+            LOGGER.info("JR H3 TST: experimental Q pre-transform enabled, strength=%.3f; Sol/Sage delegation preserved", tst_strength)
 
         LOGGER.info(
             "JR H3 Unified Acceleration: Sage=%s LowVRAM=%s FFN=%s Sol=%s",

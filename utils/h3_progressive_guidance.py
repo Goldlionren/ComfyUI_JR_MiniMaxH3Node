@@ -124,10 +124,12 @@ def prepare_guidance(positive, latent_image, video, audio, plan, vae=None):
                     z = _tensor(ref.get("audio_latent"), "reference audio", audio=True)
                     if rt != z.shape[-1]:
                         raise _error("Reference audio metadata does not match its latent.")
-    if needs_vae and (vae is None or getattr(vae, "latent_channels", None) != 24 or
-                      not callable(getattr(vae, "encode", None)) or not callable(getattr(vae, "decode", None)) or
-                      not callable(getattr(vae, "spacial_compression_decode", None)) or vae.spacial_compression_decode() != 16):
-        raise _error("Connect the same H3 VIDEO VAE used to encode keyframes to the optional vae input (not the audio VAE).")
+    if needs_vae:
+        from .h3_vae_compat import inspect_h3_video_vae
+        capability = inspect_h3_video_vae(vae)
+        if not capability["guided_ready"]:
+            raise _error("Connect the same H3 VIDEO VAE used to encode keyframes to the optional vae input (not the audio VAE). "
+                         + "; ".join(capability["issues"]))
 
     low_positive = positive
     if needs_vae:

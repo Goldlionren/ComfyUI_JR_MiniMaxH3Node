@@ -183,6 +183,7 @@ class H3AdaptiveCacheRuntime:
             tensor_signature(context),
             payload.get("seed"), condition_items(payload.get("refs")), condition_items(payload.get("keyframes")),
             getattr(layout, "signature", None), tuple(getattr(layout, "segments", ())),
+            payload.get("jr_h3_tst_signature"),
         )
 
     def _begin_forward(self, video, audio, timestep, context, payload, model_obj):
@@ -411,6 +412,16 @@ class H3AdaptiveCacheRuntime:
     def diffusion_wrapper(self, executor, x, timestep, context, transformer_options=None, minimax_payload=None, **kwargs):
         transformer_options = transformer_options or {}
         payload = minimax_payload or {}
+        # Read configuration here so wrapper ordering cannot reuse a residual
+        # from a different TST setting or progressive full-schedule context.
+        if transformer_options.get("jr_h3_tst_config"):
+            payload = dict(payload)
+            payload["jr_h3_tst_signature"] = (transformer_options["jr_h3_tst_config"],
+                                                transformer_options.get("jr_h3_tst_schedule"))
+            transformer_options = dict(transformer_options)
+            transformer_options["jr_h3_tst_cache_active"] = True
+            if transformer_options.get("jr_h3_tst_forward") is not None:
+                transformer_options["jr_h3_tst_forward"]["cache_active"] = True
         video, audio = x[0], x[1]
         try:
             progress = self._begin_forward(video, audio, timestep, context, payload, executor.class_obj)

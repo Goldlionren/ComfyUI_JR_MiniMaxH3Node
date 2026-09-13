@@ -4,6 +4,10 @@
 
 当前包版本：`0.19.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
+本地第二阶段实验：Unified 新增默认关闭的 `enable_tst` / `tst_strength`，在视频 Q 预变换后继续交给 Sol/Sage；见 [TST 测试说明](docs/H3_TST_EXPERIMENT.md)。[可选 VAE 兼容探测](docs/H3_VAE_COMPATIBILITY.md) 不引入 TensorRT 依赖，目前不声明 TRT Guided 已兼容。
+
+2026-09-14 用户验收：TST `0.2` 在已测素材上效果良好；外部 H3VAE_TRT engine 解码正常且有明显提速体感，未量化整体加速倍率。继续使用上游 TRT Loader 和模型资源，不吸收进 JR；此结论不代表 Guided 往返编解码也已验证。
+
 本地实验功能：[JR H3 Progressive Sampler](docs/H3_PROGRESSIVE_SAMPLER.md)。支持空 AV latent 的 Euler 同 sigma schedule 空间切换；旧 dual sampling 保留。导入 [T2VA A/B 示例](examples/JR_H3_Progressive_T2VA_Experimental.json) 开始测试。
 
 新增 Progressive Guided Sampler：支持独立参考图、首帧／首尾帧、锁定音频及组合。示例：[Ref2VA](examples/JR_H3_Progressive_Ref2VA_Experimental.json)、[首尾帧](examples/JR_H3_Progressive_FirstLast_Experimental.json)、[音频驱动＋首帧](examples/JR_H3_Progressive_AudioDrive_Experimental.json)。默认 5 秒（H3 对齐约 5.17 秒），请选择自己的图片／音频。

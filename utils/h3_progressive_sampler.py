@@ -217,6 +217,11 @@ def sample_h3_progressive(*, model, positive, noise, sampler, sigmas, latent_ima
         guidance = prepare_guidance(positive, latent_image, video, audio, plan, vae)
     audio_locked = guidance is not None and guidance.audio_locked
     schedule = sigmas.detach().clone()
+    if getattr(model, "model_options", {}).get("transformer_options", {}).get("jr_h3_tst_config"):
+        # Isolated clone: both native guider calls share the original time axis,
+        # never persist this prompt's schedule on the caller's MODEL.
+        model = model.clone()
+        model.model_options["transformer_options"]["jr_h3_tst_schedule"] = tuple(schedule.cpu().tolist())
     transition_seed = (noise.seed + transition_seed_offset) & MAX_SEED
     progress = utils.ProgressBar(plan.total_steps)
     counts = [0, 0]
@@ -308,6 +313,9 @@ def sample_h3_progressive(*, model, positive, noise, sampler, sigmas, latent_ima
                   "Prototype: compare with cache/Sol/compile off first. Legacy dual sampling remains available.")
         if guidance:
             status += "\n" + guidance.description
+        tst_config = getattr(model, "model_options", {}).get("transformer_options", {}).get("jr_h3_tst_config")
+        if tst_config:
+            status += f"\nTST experimental: strength={tst_config[1]:g}; shared full sigma schedule; existing attention backend retained."
         logging.info("%s", status)
         return output, status
     finally:
