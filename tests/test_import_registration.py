@@ -2,6 +2,7 @@ import importlib
 import sys
 
 EXPECTED = {
+    "JR_H3_ProgressiveGuidedSampler",
     "JR_H3_DirectorDesk",
     "JR_H3_DirectorPipeBuilder",
     "JR_H3_DirectorPipeUnpack",
@@ -16,6 +17,7 @@ EXPECTED = {
     "JR_H3_UnifiedAcceleration",
     "JR_H3_HybridLoader",
     "JR_H3_TemporalChunkSampler",
+    "JR_H3_ProgressiveSampler",
     "JR_H3_SequentialAudioChunkDriver",
     "JR_H3_SequentialContinuationGuide",
     "JR_H3_SequentialLatentCheckpoint",

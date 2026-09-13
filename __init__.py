@@ -11,6 +11,8 @@ from .nodes.h3_directed_video_conditioning import JR_H3_DirectedVideoConditionin
 from .nodes.h3_hybrid_loader import JR_H3_HybridLoader
 from .nodes.h3_neural_latent_upscaler import JR_MiniMaxH3NeuralLatentUpscaler
 from .nodes.h3_openai_prompt_optimizer import JR_H3_OpenAICompatiblePromptOptimizer
+from .nodes.h3_progressive_guided_sampler import JR_H3_ProgressiveGuidedSampler
+from .nodes.h3_progressive_sampler import JR_H3_ProgressiveSampler
 from .nodes.h3_sequential_audio import (
     JR_H3_SequentialAudioChunkDriver,
     JR_H3_SequentialContinuationGuide,
@@ -48,6 +50,8 @@ NODE_CLASS_MAPPINGS = {
     "JR_H3_DirectedVideoConditioning": JR_H3_DirectedVideoConditioning,
     "JR_H3_HybridLoader": JR_H3_HybridLoader,
     "JR_H3_TemporalChunkSampler": JR_H3_TemporalChunkSampler,
+    "JR_H3_ProgressiveSampler": JR_H3_ProgressiveSampler,
+    "JR_H3_ProgressiveGuidedSampler": JR_H3_ProgressiveGuidedSampler,
     "JR_H3_PromptReviewPause": JR_H3_PromptReviewPause,
     "JR_H3_CacheConfigRouter": JR_H3_CacheConfigRouter,
     "JR_H3_AdaptiveCache": JR_H3_AdaptiveCache,
@@ -74,6 +78,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_DirectedVideoConditioning": "JR MiniMax H3 Directed Video Conditioning",
     "JR_H3_HybridLoader": "JR MiniMax H3 Hybrid Loader",
     "JR_H3_TemporalChunkSampler": "JR MiniMax H3 Temporal Chunk Sampler",
+    "JR_H3_ProgressiveSampler": "JR MiniMax H3 Progressive Sampler (Experimental)",
+    "JR_H3_ProgressiveGuidedSampler": "JR MiniMax H3 Progressive Guided Sampler (Experimental)",
     "JR_H3_PromptReviewPause": "JR MiniMax H3 Prompt Review & Continue",
     "JR_H3_CacheConfigRouter": "JR H3 Cache Config Router",
     "JR_H3_AdaptiveCache": "JR H3 Adaptive Cache",

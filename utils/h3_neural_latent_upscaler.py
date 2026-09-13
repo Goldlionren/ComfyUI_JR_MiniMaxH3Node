@@ -659,6 +659,39 @@ def upscale_h3_video_latent(
     return result, _format_status(samples, plan, model_name)
 
 
+def upscale_h3_video_to_size(
+    samples: torch.Tensor, output_h: int, output_w: int, *,
+    neural_runner: NeuralRunner | None = None, contract: H3SpatialContract | None = None,
+) -> torch.Tensor:
+    """Lift clean VAE-domain video latents to an exact native H3 spatial grid.
+
+    For progressive sampling callers must supply predicted x0, never noisy x_t.
+    The existing public scale/megapixel node retains its original sizing policy.
+    """
+    samples = _validate_video_latent({"samples": samples})
+    contract = contract or get_h3_spatial_contract()
+    ih, iw = samples.shape[-2:]
+    for value, alignment in ((ih, contract.latent_alignment_h), (iw, contract.latent_alignment_w),
+                             (output_h, contract.latent_alignment_h), (output_w, contract.latent_alignment_w)):
+        if not isinstance(value, int) or value <= 0 or value % alignment:
+            raise _error("Exact source/target size must use the native H3 spatial patch grid.")
+    if not (ih <= output_h <= ih * MAX_SCALE and iw <= output_w <= iw * MAX_SCALE):
+        raise _error("Exact target must upscale each spatial axis by 1x to 4x.")
+    if (ih, iw) == (output_h, output_w):
+        return samples
+    compression = contract.vae_compression
+    plan = H3UpscalePlan(
+        mode="exact", input_h=ih, input_w=iw, output_h=output_h, output_w=output_w,
+        input_pixel_h=ih * compression, input_pixel_w=iw * compression,
+        output_pixel_h=output_h * compression, output_pixel_w=output_w * compression,
+        requested_scale=None, requested_megapixels=None,
+        actual_megapixels=output_h * output_w * compression**2 / MEGAPIXEL,
+        effective_scale=math.sqrt(output_h * output_w / (ih * iw)),
+    )
+    output = neural_runner(samples, plan) if neural_runner else _run_checkpoint_backend(samples, plan)[0]
+    return _validate_backend_output(output, samples, plan)
+
+
 __all__ = [
     "ERROR_PREFIX",
     "H3NeuralLatentUpscalerError",
@@ -668,4 +701,5 @@ __all__ = [
     "get_h3_spatial_contract",
     "plan_h3_latent_upscale",
     "upscale_h3_video_latent",
+    "upscale_h3_video_to_size",
 ]

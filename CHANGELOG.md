@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Recorded the user's RTX 5090 acceptance of Progressive Guided together with Unified Acceleration as a usable baseline. Scale 0.6 is a user-observed quality/adherence sweet spot on the tested material; defaults and experimental markers remain unchanged pending broader benchmarks.
+
+- Added experimental `JR_H3_ProgressiveGuidedSampler` for native independent references, first/last keyframes and fully locked audio, including combined guidance. Re-encodes clean keyframes at the low-stage canvas with the same H3 video VAE; preserves original high-stage conditioning, reference grids, audio values/dtype, masks and metadata. Partial masks and hard-prefix continuation remain unsupported.
+- Added real native-H3 guided regression tests and an opt-in installed-video-VAE CUDA smoke, plus Ref2VA / FirstLast / AudioDrive workflows. Corrected progressive example duration to 5 seconds (124 aligned frames), removed stale named-widget shadows and connected scheduler/sampler to the same effective MODEL. No change to the original strict T2VA node or legacy workflows.
+
+- Fixed Progressive Sampler rejecting official RandomNoise/DisableNoise providers loaded by ComfyUI's path-based node loader. Reuses live-registry factory resolution for both validation and transition noise; added duplicate-module regression coverage and a production-loader CUDA smoke.
+
+- Added local experimental `JR_H3_ProgressiveSampler`: standard Euler, low-resolution x0 neural lift, deterministic boundary video noise and zero-noise continuation on one sigma schedule. Preserves H3 audio scaling/timeline and outer metadata; rejects unsupported masks, guides and nonempty latents.
+- Added an exact-size clean-video helper to the existing Neural Latent Upscaler without changing its public node, plus numerical/native-H3 regression tests and a fixed-seed T2VA A/B workflow. Scale 1 provides a native Euler baseline; legacy dual sampling remains available.
+
 - Added `Hard AV Latent Prefix` as the recommended default mode for `JR_H3_TemporalChunkSampler`, hard-locking the previous sampled video/audio tails with fixed 39-frame / 12-video-T / 65-audio-T overlap.
 - Added 5.875s, 8.000s, 10.125s, and 14.375s fixed hard-prefix presets, bounded final-window zero padding, fresh-only CPU timeline writes, and deterministic absolute-frame seed derivation.
 - Preserved `Legacy Independent Chunks` with its free `chunk_duration_seconds` input and added reliable frontend switching between the legacy duration widget and the Hard preset dropdown.

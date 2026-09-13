@@ -1,6 +1,16 @@
 # 节点参数参考
 
-本页按当前 Python 定义记录全部 23 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+本页按当前 Python 定义记录全部 25 个节点。保存工作流依赖稳定 Node ID，请不要用显示名称代替 Node ID。
+
+## Progressive Sampler（实验）
+
+Node ID：`JR_H3_ProgressiveSampler`。分类：`JR MiniMax H3/Sampling`。输出 `output: LATENT, status: STRING`。
+
+输入 MODEL、positive、NOISE、SAMPLER、SIGMAS、目标分辨率空 AV LATENT，参数 `transition_step=3`、`lowres_scale=0.5`、`transition_seed_offset=1`、`aggressive_memory_cleanup=false`。首版限定 batch=1、标准 Euler、无 mask/keyframes、denoise=1；scale=1 运行原生基线。详见 [输入表、接线与限制](H3_PROGRESSIVE_SAMPLER.md)。
+
+## Progressive Guided Sampler（实验）
+
+Node ID：`JR_H3_ProgressiveGuidedSampler`。输入／输出及参数与 Progressive Sampler 相同，新增可选 `vae: VAE`。支持独立参考图、首帧／首尾帧、完整锁定音频及组合；视频 keyframe 的低阶段重编码需要接同一个 H3 视频 VAE。保留原始高阶段 conditioning、音频 latent 与 noise_mask。仍拒绝局部 mask、hard-prefix 与非空 video。详见 [引导接线、示例与验收](H3_PROGRESSIVE_SAMPLER.md#progressive-guided-sampler参考图首尾帧音频驱动)。
 
 ## Hybrid Loader
 

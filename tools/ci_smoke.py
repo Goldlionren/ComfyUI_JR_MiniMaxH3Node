@@ -106,7 +106,7 @@ def main() -> int:
     if registered != set(package.NODE_DISPLAY_NAME_MAPPINGS):
         raise AssertionError("class/display registration keys differ")
     sequential = package.NODE_CLASS_MAPPINGS["JR_H3_SequentialVideoOutput"]
-    if sequential.RETURN_TYPES != ("STRING", "STRING"):
+    if sequential.RETURN_TYPES != ("STRING", "STRING", "VIDEO"):
         raise AssertionError("Sequential Video Output RETURN_TYPES changed")
     server_default = sequential.INPUT_TYPES()["optional"]["server_auto_continue"][1]["default"]
     if server_default is not False:
