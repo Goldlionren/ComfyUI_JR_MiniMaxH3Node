@@ -1,8 +1,7 @@
 from pathlib import Path
 
 import pytest
-
-from utils.h3_prompt_validator import (
+from ComfyUI_JR_MiniMaxH3Node.utils.h3_prompt_validator import (
     AUDIO_VALUES,
     REF_MODE,
     VISIBLE_RETENTION_VALUES,

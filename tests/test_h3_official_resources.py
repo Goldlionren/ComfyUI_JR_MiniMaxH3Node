@@ -8,8 +8,7 @@ import socket
 from pathlib import Path
 
 import pytest
-
-from utils import h3_official_resources as resources
+from ComfyUI_JR_MiniMaxH3Node.utils import h3_official_resources as resources
 
 
 def test_default_metadata_loads_with_utf8_contents() -> None:
