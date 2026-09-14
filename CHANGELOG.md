@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Extended experimental second-pass Streaming/Sparse KV to 10s/15s presets (243/362 native frames, 405/603 audio ticks), retaining the unchanged 124-frame default. Full first-pass story generation stays intact; logical ~5s windows reuse bounded micro-phases, continuous native positions and one noise field without KV/session resets. Added exact planner length outputs, effective layer-policy and sigma/cache diagnostics, long-timeline mask/repeatability/failure tests. Existing Hard Prefix, Progressive, Unified and external TRT behavior is unchanged; TaoMate sigma/renormalization differences are documented, not silently adopted.
+
 - Fixed the experimental Streaming sampler's Geometry Only output boundary: AV results now move to ComfyUI's `intermediate_device()`, matching native SamplerCustomAdvanced before node allocator cleanup. Added a handoff regression test. Local full-checkpoint RTX 5090 verification passed with normal asynchronous CUDA, Unified acceleration and external TRT decode; no sigma, seed, attention or KV algorithm changes.
 
 - User acceptance (2026-09-14): TST strength 0.2 gave encouraging visual results on the tested material; the experiment remains opt-in with unchanged defaults. The user also confirmed working external H3VAE_TRT engine decoding with a noticeable speed improvement (no quantified benchmark). Keep the upstream TRT Loader, model assets and engines external; JR retains capability checks and opt-in probes only, with no vendored loader or TensorRT dependency.

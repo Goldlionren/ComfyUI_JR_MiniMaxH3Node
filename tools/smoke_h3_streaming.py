@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--comfy-root", type=Path, required=True)
     parser.add_argument("--unified-plugins-root", type=Path, required=True)
     parser.add_argument("--layers", type=int, default=2)
+    parser.add_argument("--preset", default="TaoMate 5s Canonical", help="Planner preset; 10s/15s remain full single timelines")
+    parser.add_argument("--report", type=Path, help="Optional local JSON verification report")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root.parent))
@@ -60,7 +62,7 @@ def main():
         SolAttnPatch=sol.SolAttnPatch)
     unified = importlib.import_module(f"{root.name}.nodes.h3_unified_acceleration")
     streaming = importlib.import_module(f"{root.name}.utils.h3_streaming_sampler")
-    plan = importlib.import_module(f"{root.name}.utils.h3_stream_plan").canonical_plan()
+    plan = importlib.import_module(f"{root.name}.utils.h3_stream_plan").canonical_plan(args.preset)
     torch.manual_seed(42)
     config = H3Config(dict(hidden_size=512, num_layers=args.layers, token_refiner_num_layers=0,
         num_attention_heads=4, attention_head_dim=128, ffn_hidden_size=1024, text_dim=512,
@@ -77,9 +79,10 @@ def main():
                                    (.2, "Sparse KV", "cuda")):
         patcher = unified.JR_H3_UnifiedAcceleration().patch(original, enable_tst=strength > 0, tst_strength=strength,
                                                            head_chunks=4, ffn_seq_threshold=256)[0]
-        audio = torch.full((1, 32, 2, 207), .125)
-        latent = {"samples": NestedTensor((torch.zeros(1, 24, 37, 8, 8), audio)),
-                  "noise_mask": NestedTensor((torch.ones(1, 1, 37, 1, 1), torch.zeros(1, 1, 2, 207)))}
+        video_t, audio_t = plan.video_latent_count, plan.audio_latent_count
+        audio = torch.full((1, 32, 2, audio_t), .125)
+        latent = {"samples": NestedTensor((torch.zeros(1, 24, video_t, 8, 8), audio)),
+                  "noise_mask": NestedTensor((torch.ones(1, 1, video_t, 1, 1), torch.zeros(1, 1, 2, audio_t)))}
         inputs = dict(model=patcher, positive=[[torch.zeros(1, 2, 512), {}]], vae=vae, noise=Noise_RandomNoise(123),
                       sampler=ksampler("euler"), sigmas=torch.tensor([1., .6, .2, 0.]), latent_image=latent,
                       stream_plan=plan, streaming_mode=mode, cache_device=storage)
@@ -89,8 +92,11 @@ def main():
         if diffs != [0., 0.] or not torch.equal(first["samples"].unbind()[1], audio):
             raise AssertionError(f"Repeatability/locked audio failed: {diffs}")
         reports.append(dict(mode=mode, tst=strength, storage=storage, repeat_max_difference=diffs, status=status))
-    print(json.dumps(dict(device=torch.cuda.get_device_name(), tiny_layers=args.layers, reports=reports,
-                          sol_stats=sol.sol_attn_stats()), indent=2))
+    report = dict(device=torch.cuda.get_device_name(), tiny_layers=args.layers, preset=args.preset, reports=reports,
+                  sol_stats=sol.sol_attn_stats())
+    if args.report:
+        args.report.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":

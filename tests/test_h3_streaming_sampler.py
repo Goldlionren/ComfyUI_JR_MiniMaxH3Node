@@ -9,7 +9,7 @@ from comfy.samplers import CFGGuider, ksampler
 from comfy_extras.nodes_custom_sampler import Noise_RandomNoise
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_stream_attention import StreamingRuntime, phase_layout
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_stream_cache import JR_H3_CleanAVKVCache
-from ComfyUI_JR_MiniMaxH3Node.utils.h3_stream_plan import canonical_plan
+from ComfyUI_JR_MiniMaxH3Node.utils.h3_stream_plan import PRESETS, canonical_plan
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_streaming_sampler import sample_streaming
 from ComfyUI_JR_MiniMaxH3Node.utils.h3_temporal_transport import apply_temporal_transport
 from test_h3_progressive_sampler import tiny_patcher
@@ -26,13 +26,15 @@ def setup(monkeypatch, mode="Streaming Attention", layers=2):
                               "metadata": {"keep": True}}, stream_plan=canonical_plan(), streaming_mode=mode)
 
 
-def test_phase_positions_are_full_timeline_slices():
-    plan = canonical_plan()
-    payload = {"keyframes": [{"resolved_frame_index": 123, "latent": torch.zeros(1, 24, 1, 4, 4)}]}
-    full = PackedLayout(2, 37, 4, 4, 207, keyframes=payload["keyframes"])
-    fv = full.position_ids[-37*4:].reshape(37, 4, 3)
+@pytest.mark.parametrize("preset", PRESETS)
+def test_phase_positions_are_full_timeline_slices(preset):
+    plan = canonical_plan(preset)
+    video_t, audio_t = plan.video_latent_count, plan.audio_latent_count
+    payload = {"keyframes": [{"resolved_frame_index": plan.native_frame_count - 1, "latent": torch.zeros(1, 24, 1, 4, 4)}]}
+    full = PackedLayout(2, video_t, 4, 4, audio_t, keyframes=payload["keyframes"])
+    fv = full.position_ids[-video_t*4:].reshape(video_t, 4, 3)
     aa, ab, _ = next(s for s in full.segments if s[2] == "audio")
-    fa = full.position_ids[aa:ab].reshape(2, 207, 3)
+    fa = full.position_ids[aa:ab].reshape(2, audio_t, 3)
     for p in plan.phases:
         local = phase_layout(plan, p, 2, 4, 4, payload)
         la, lb, _ = next(s for s in local.segments if s[2] == "audio")
@@ -205,3 +207,104 @@ def test_dtype_input_mask_and_sparse_bytes(monkeypatch):
     args["latent_image"]["noise_mask"] = NestedTensor((torch.full_like(v, .5), torch.ones_like(a)))
     with pytest.raises(ValueError, match="binary"):
         sample_streaming(**args)
+
+
+def long_inputs(monkeypatch, preset):
+    args = setup(monkeypatch, "Sparse KV")
+    plan = canonical_plan(preset)
+    args["stream_plan"] = plan
+    args["sigmas"] = torch.tensor([.3, .2, .1, 0.])  # refinement, not a fresh full-noise generation
+    args["layer_policy"] = "every_2"
+    v = torch.full((1, 24, plan.video_latent_count, 2, 2), .25)
+    a = torch.full((1, 32, 2, plan.audio_latent_count), .125)
+    vm = torch.ones(1, 1, plan.video_latent_count, 1, 1)
+    vm[:, :, -1] = 0
+    args["latent_image"] = {"samples": NestedTensor((v, a)), "metadata": {"keep": True},
+        "noise_mask": NestedTensor((vm, torch.zeros(1, 1, 2, plan.audio_latent_count)))}
+    args["positive"][0][1]["minimax_keyframes"] = [
+        {"resolved_frame_index": plan.native_frame_count - 1, "latent": v[:, :, -1:].clone()}]
+    args["model"] = apply_temporal_transport(args["model"], strength=.2)
+    return args
+
+
+@pytest.mark.parametrize("preset", PRESETS[1:])
+@pytest.mark.parametrize("retention", ["previous_only", "sink_plus_recent_1", "sink_plus_recent_2"])
+def test_long_refinement_preserves_schedule_masks_noise_and_bounded_history(monkeypatch, preset, retention):
+    from comfy.samplers import KSAMPLER
+
+    args = long_inputs(monkeypatch, preset)
+    args["retention"] = retention
+    p = args["stream_plan"]
+    original_trim = JR_H3_CleanAVKVCache.trim
+    original_sample = KSAMPLER.sample
+    original_noise = Noise_RandomNoise.generate_noise
+    snapshots, schedules, noise_calls = [], [], []
+
+    def trim(cache):
+        original_trim(cache)
+        snapshots.append((cache, cache.metrics()))
+
+    def sample(self, model_wrap, sigmas, *a, **kw):
+        schedules.append(sigmas.clone())
+        return original_sample(self, model_wrap, sigmas, *a, **kw)
+
+    def noise(self, latent):
+        noise_calls.append(latent)
+        return original_noise(self, latent)
+
+    monkeypatch.setattr(JR_H3_CleanAVKVCache, "trim", trim)
+    monkeypatch.setattr(KSAMPLER, "sample", sample)
+    monkeypatch.setattr(Noise_RandomNoise, "generate_noise", noise)
+    before = tuple(t.clone() for t in args["latent_image"]["samples"].unbind())
+    first, status = sample_streaming(**args)
+    second, _ = sample_streaming(**args)
+    assert len(noise_calls) == 2 and all(x is args["latent_image"] for x in noise_calls)
+    assert len(schedules) == 2 * len(p.phases)
+    assert all(torch.equal(s, args["sigmas"]) for s in schedules)
+    for actual, repeated, source, original in zip(first["samples"].unbind(), second["samples"].unbind(),
+                                                args["latent_image"]["samples"].unbind(), before):
+        assert torch.equal(actual, repeated) and torch.equal(source, original)
+        assert actual.shape == source.shape and actual.dtype == source.dtype
+        assert torch.isfinite(actual).all()
+    assert torch.equal(first["samples"].unbind()[1], before[1])
+    assert torch.equal(first["samples"].unbind()[0][:, :, -1], before[0][:, :, -1])
+    assert first["metadata"] is args["latent_image"]["metadata"]
+    assert first["noise_mask"] is args["latent_image"]["noise_mask"]
+    recent = 2 if retention == "sink_plus_recent_2" else 1
+    sink = 0 if retention == "previous_only" else p.phases[0].video_latent_count
+    max_rows = max(s.video_latent_count + 2 * s.audio_latent_count for s in p.phases)
+    assert all(m["history_tokens"] <= sink + recent * max_rows for _, m in snapshots)
+    # Window boundary must retain prior history, rather than resetting to a new request.
+    assert len(snapshots) == 2 * len(p.phases)
+    assert all(m["history_tokens"] > 0 for _, m in snapshots)
+    assert all(c.nbytes == c.staged_bytes == 0 and not c.active for c, _ in snapshots)
+    assert args["model"].model.latent_shapes is None
+    assert f"Denoise forwards: {len(p.phases) * 3}; clean forwards: {len(p.phases)}" in status
+    assert "SIGMAS: 0.3, 0.2, 0.1, 0; unchanged" in status
+
+
+def test_long_timeline_mismatch_is_actionable(monkeypatch):
+    args = setup(monkeypatch)
+    args["stream_plan"] = canonical_plan(PRESETS[1])
+    with pytest.raises(ValueError, match="72 video latents / 405 audio latents.*Match the full first-pass duration"):
+        sample_streaming(**args)
+
+
+def test_failure_in_second_window_cleans_up_and_can_retry(monkeypatch):
+    args = long_inputs(monkeypatch, PRESETS[1])
+    original = JR_H3_CleanAVKVCache.stage
+    captured = []
+
+    def fail(cache, *a, **kw):
+        original(cache, *a, **kw)
+        captured.append(cache)
+        if cache._active == 4:
+            raise RuntimeError("injected second-window failure")
+
+    monkeypatch.setattr(JR_H3_CleanAVKVCache, "stage", fail)
+    with pytest.raises(RuntimeError, match="second-window"):
+        sample_streaming(**args)
+    assert captured and all(c.nbytes == c.staged_bytes == 0 and not c.active for c in captured)
+    assert args["model"].model.latent_shapes is None
+    monkeypatch.setattr(JR_H3_CleanAVKVCache, "stage", original)
+    sample_streaming(**args)

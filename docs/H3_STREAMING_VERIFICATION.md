@@ -1,5 +1,24 @@
 # Streaming engineering verification — 2026-09-14
 
+## 10s/15s second-pass extension
+
+Implementation baseline: `d13a0a4`, clean `feature/taomate-streaming`. Added duration presets only to the experimental planner/runtime; the full-story first pass, existing Hard Prefix, neural upscale and Unified algorithms are unchanged. Planner socket indices 0/1 remain unchanged; exact length outputs are appended. See `H3_STREAMING_SAMPLER.md` for duration setup and the TaoMate sigma audit. No upstream sigma/renormalization implementation was copied or enabled.
+
+- Targeted plan/cache/runtime: **53 passed**. Full suite: **908 passed, 1 skipped**, 27.65s; skip remains the non-CUDA dependency case. Ruff for changed Python files and `git diff --check` passed. Import/workflow smoke passed: 27 nodes, 25 workflows, same four tolerated legacy stale-link records.
+- Native tests cover 124/243/362 frames, no duplicate prefix/gaps, exact audio rounding, full-timeline RoPE slices including window boundaries and last-frame conditioning, three bounded retention policies, unchanged per-phase SIGMAS, exactly one noise draw per execution, repeatability, locked audio/final video slice, metadata/mask preservation, and failure during the second window followed by a successful retry.
+- Independent RTX 5090 test: **15s, 50-layer reduced-width random H3**, not full checkpoint weights. Installed Sage FP8++, LowVRAM head groups, Chunk FFN and Sol; full CPU KV with TST off/on 0.2, plus GPU Sparse KV/every_4 (13/50 layers). All settings repeated with AV max differences `[0,0]` and bit-identical locked audio. Each execution completed 36 denoise / 12 clean forwards. Sol reported no errors; its sparse kernel was ineligible and dense delegation remained active.
+- The same three RTX configurations also passed on a two-layer reduced model for both 10s and 15s. The 10s case completed 24 denoise / 8 clean forwards per execution; repeats had AV max differences `[0,0]`, locked audio unchanged and no Sol errors. Reports live in the task directory as `smoke-long-10s.json`, `smoke-long-15s.json` and `smoke-long-15s-50layers.json`.
+- In that reduced model, peak post-trim KV was 72.266 MiB for full CPU cache and 18.789 MiB for GPU sparse cache; bounds were 144.531 / 37.578 MiB. Those are not full-H3 memory or speed estimates. One/two-phase audio rounding variations can slightly change retained-byte peaks without unbounded growth.
+- The initial sandbox GPU attempt was blocked by writes to the normal Triton compilation cache; moving its environment path to a Chinese-named directory exposed an installed Triton Unicode decoding issue. The unchanged GPU test passed in a normal-permission independent process using the existing cache. No production debug flags, dependencies or kernels were modified to work around these test-environment issues.
+
+Reproduce (in addition to the suite commands below):
+
+```powershell
+& 'F:\ComfyUI-aki-v3\python\python.exe' tools/smoke_h3_streaming.py --comfy-root F:/ComfyUI-aki-v3/ComfyUI --unified-plugins-root F:/ComfyUI-aki-v3/ComfyUI/custom_nodes --layers 50 --preset 'JR 15s Experimental' --report '../smoke-long-15s-50layers.json'
+```
+
+This verifies execution structure, not full-checkpoint 10s/15s quality, real peak process RAM, TRT long-decode performance or seamless continuity. User acceptance still needs first-pass full duration and matching planner, then realistic-resolution Sparse KV/every_2 or every_4. Full first-pass/noise/source/output/final-decode allocations remain duration-dependent. Production deployment and restart state are recorded separately outside the repository; GitHub is not pushed.
+
 ## Branch / checkpoints
 
 The original audit below predates the user-authorized production test deployment. See the post-audit validation at the end for the current real-checkpoint test results and output-boundary fix.

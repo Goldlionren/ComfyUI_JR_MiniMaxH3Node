@@ -7,7 +7,7 @@ import torch
 
 from .h3_stream_attention import CleanCommitSampler, StreamingRuntime
 from .h3_stream_cache import JR_H3_CleanAVKVCache, select_layers
-from .h3_stream_plan import validate_plan
+from .h3_stream_plan import GROUP_COUNTS, validate_plan
 
 MODES = ("Geometry Only", "Micro Chunk", "Clean Commit", "Clean KV", "Streaming Attention", "Sparse KV")
 LOGGER = logging.getLogger(__name__)
@@ -55,12 +55,15 @@ def validate_inputs(model, positive, noise, sampler, sigmas, latent, plan):
     video, audio = samples.unbind()
     build_h3_av_latent({"samples": video}, {"samples": audio})
     if video.shape[0] != 1 or video.shape[2] != plan.video_latent_count or audio.shape[-1] != plan.audio_latent_count:
-        raise ValueError("JR H3 Streaming: canonical plan requires batch 1, 37 video latents / 207 audio latents (124 frames)")
+        raise ValueError(f"JR H3 Streaming: {plan.preset} requires batch 1, {plan.video_latent_count} video latents / "
+                         f"{plan.audio_latent_count} audio latents ({plan.native_frame_count} frames); "
+                         f"received batch {video.shape[0]}, video T={video.shape[2]}, audio T={audio.shape[-1]}. "
+                         "Match the full first-pass duration to the planner; changing the planner does not extend a latent.")
     for kf in positive[0][1].get("minimax_keyframes", ()):
         index = kf.get("resolved_frame_index")
         ref = kf.get("latent")
         if type(index) is not int or not 0 <= index < plan.native_frame_count:
-            raise ValueError("JR H3 Streaming: keyframe indices must be resolved on the complete 124-frame timeline")
+            raise ValueError(f"JR H3 Streaming: keyframe indices must be resolved on the complete {plan.native_frame_count}-frame timeline")
         if ref is not None and ref.shape[-2:] != video.shape[-2:]:
             raise ValueError("JR H3 Streaming: keyframe conditioning must match final latent spatial resolution")
     masks = None
@@ -180,6 +183,9 @@ def sample_streaming(*, model, positive, vae, noise, sampler, sigmas, latent_ima
         out_video, out_audio = torch.empty_like(video, device="cpu"), torch.empty_like(audio, device="cpu")
         wrapped_sampler = CleanCommitSampler(sampler, runtime)
         for phase in stream_plan.phases:
+            if phase.phase_index % len(GROUP_COUNTS) == 0:
+                LOGGER.info("JR H3 Streaming window %d/%d: global frame %d; continuing bounded KV and unchanged SIGMAS",
+                            phase.phase_index // len(GROUP_COUNTS) + 1, len(stream_plan.windows), phase.frame_start)
             runtime.phase = phase
             vs = slice(phase.video_latent_start, phase.video_latent_stop)
             au = slice(phase.audio_latent_start, phase.audio_latent_stop)
@@ -207,12 +213,18 @@ def sample_streaming(*, model, positive, vae, noise, sampler, sigmas, latent_ima
         peak = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
         reserved = torch.cuda.max_memory_reserved(device) if device.type == "cuda" else 0
         status = ["JR H3 Streaming Sampler (Experimental)", f"Mode: {streaming_mode}; phases: {len(phase_stats)}",
-                  "Geometry: 124 frames / 37 video latents / 207 audio ticks; single request",
+                  f"Geometry: {stream_plan.native_frame_count} frames / {stream_plan.video_latent_count} video latents / "
+                  f"{stream_plan.audio_latent_count} audio ticks; windows: {len(stream_plan.windows)}; single request",
+                  "SIGMAS: " + ", ".join(f"{float(s):.7g}" for s in sigmas) + "; unchanged for each micro-phase",
+                  f"Audio sigma mapping: native ModelSamplingAV; audio_scale={model.get_model_object('model_sampling').audio_scale:g}",
                   f"Denoise forwards: {runtime.denoise_forwards}; clean forwards: {runtime.clean_forwards}",
                   f"Cached layers: {metrics['cached_layers']}/{total_layers}; BF16 storage: {cache_device}",
                   f"KV: {metrics['kv_mib']:.3f} MiB; history video={metrics['video_history_tokens']}, audio={metrics['audio_history_tokens']}",
                   f"Retention: {retention}; commits: {metrics['retained_commits']}; audio reset every {audio_reset_interval_requests} requests (continuation disabled)",
                   f"KV layer-byte reduction vs all: {100 * (1 - len(chosen) / total_layers):.1f}% (same geometry)",
+                  f"Effective layer policy: {layer_policy if streaming_mode == 'Sparse KV' else 'all (layer_policy only applies in Sparse KV)'}",
+                  f"Peak post-trim KV: {max(s['kv_mib'] for s in phase_stats):.3f} MiB; "
+                  f"conservative KV+staging bound: {estimated_bytes / 1024**2:.3f} MiB (not process RAM)",
                   f"Total: {elapsed:.3f}s; clean-forward+commit host: {runtime.commit_seconds:.3f}s; trim host: {runtime.trim_seconds:.6f}s",
                   f"Attention: {runtime.kernel_calls} calls; host dispatch only: {runtime.attention_host_seconds:.3f}s (not GPU kernel time)",
                   f"Peak CUDA allocated: {peak / 1024**2:.1f} MiB; reserved: {reserved / 1024**2:.1f} MiB",

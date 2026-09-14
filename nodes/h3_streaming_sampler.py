@@ -10,7 +10,7 @@ class JR_H3_StreamingSampler:
     RETURN_TYPES = ("LATENT", "STRING")
     RETURN_NAMES = ("output", "status")
     EXPERIMENTAL = True
-    DESCRIPTION = "One canonical 124-frame request. Experimental clean KV, not the production Hard AV Prefix sampler."
+    DESCRIPTION = "5s/10s/15s AV refinement with bounded micro-phases. Keep pass 1 full-length. Not the Hard AV Prefix sampler."
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -20,7 +20,8 @@ class JR_H3_StreamingSampler:
             "stream_plan": ("JR_H3_STREAM_PLAN",),
             "streaming_mode": (list(MODES), {"default": "Geometry Only"}),
             "retention": (list(RETENTIONS), {"default": "sink_plus_recent_2"}),
-            "layer_policy": (list(LAYER_POLICIES), {"default": "every_4"}),
+            "layer_policy": (list(LAYER_POLICIES), {"default": "every_4",
+                "tooltip": "Only active in Sparse KV. Streaming Attention always caches all layers."}),
             "custom_layers": ("STRING", {"default": ""}),
             "cache_device": (["cpu", "cuda"], {"default": "cpu"}),
             "max_kv_mib": ("INT", {"default": 8192, "min": 64, "max": 262144}),
