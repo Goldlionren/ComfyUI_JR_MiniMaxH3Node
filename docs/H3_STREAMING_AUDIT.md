@@ -1,0 +1,29 @@
+# TaoMate streaming design checkpoint
+
+Baseline: `c9b1526405d9013476e61941f6c81e1b23b9635b` (main, clean), including the user's new ver2.5 16G workflow. Implementation belongs only to `feature/taomate-streaming`. No production deployment or automatic merge.
+
+## Current architecture audit
+
+- Root registration uses 25 stable V1 nodes. `nodes/` contains interfaces; `utils/` contains validation, native adapters and execution. Director compiles immutable PIPE and invokes native H3 conditioning; it does not own model execution. Examples and frontend widget contracts are regression-tested.
+- Progressive uses native Euler/CFGGuider with ModelSamplingAV, lifts only video x0 through the neural upscaler, preserves audio's carried sigma domain, and resumes the schedule. Guided rebuilds reference/anchor conditioning. Neither implementation is a streaming cache.
+- TemporalChunkSampler uses native SamplerCustomAdvanced and BasicGuider. Hard AV Prefix copies previously generated AV tails, locks them with a two-stream mask, reasserts exact prefix bits after sampling, and assembles fresh ranges into CPU buffers. Its presets, padding, noise seeds and legacy widgets are production contracts. Relevant history: `40b2413`, `55d1846`, `0ca5f8d`. Do not edit this path.
+- Native H3 `model_base.MiniMaxH3` scales audio into the video sigma domain, packs/unpacks NestedTensor through CFGGuider, preprocesses text and builds `minimax_payload`. DiT `forward` reverses audio carry before diffusion wrappers. `_forward` constructs PackedLayout, timestep/modality rows, QK-normalized/RoPE attention, and output heads.
+- FL2VA layout is text, keyframe conditioning (video and optional audio), target audio, target video. REF inserts reference blocks before targets. Stereo audio is channel-major, not interleaved. Only target AV rows may become persistent history.
+- Native video positions use exclusive sums of repeating `(1,4,4,4,4)` multiplied by `5/3`; audio positions advance by one per 40-Hz tick. Local phase positions must be slices of a full request layout. Merely adding an offset to a freshly reset video cycle is incorrect after latent 12.
+- Unified calls external Sage, KJ LowVRAM attention, Chunk FFN, then Sol. KJ may invoke attention multiple times per block in contiguous head groups. Sol owns module composition hooks and delegates ineligible kernels to the prior backend. Sol sparse requires equal Q/K shapes; streaming media queries are rectangular even before adding history.
+- TST (`f097e87`) transforms Q only after QK normalization/RoPE, with pooled per-frame statistics. It neither caches outputs nor skips blocks. Streaming can reuse its algebra per noisy forward; clean commits must explicitly bypass Q transport and still execute every required layer.
+- Adaptive Cache owns residual state and can skip middle/all layers. Reject it in the first streaming path rather than silently disable it or accept partial clean commits. Reject Morton, compile/unknown forward replacements, regional conditioning and unsupported masks until validated.
+- ModelPatcher.clone copies option containers and object-patch maps but shares underlying model weights and callable instances. Native sampling mutates `latent_shapes`, hook mode, loaded options and object patches. New state must live in one runtime object attached only to a clone, restore native `latent_shapes`, and clear transactional/cache references in `finally`. Never register global streaming hooks.
+
+## Decisions
+
+1. Geometry planner is frozen CPU-only data with exact integer half-even audio boundaries. Canonical phase counts are 12/10/10/5 video latents; audio boundaries 0/65/122/178/207. Native duration is 124/24 seconds, not exactly 5 seconds.
+2. Generate full-request noise once, then slice AV by the plan. Reuse one logical runtime across native phase sampling calls. This preserves global noise/positions/history, not four unrelated queue jobs. Restrict first sampler to deterministic Euler.
+3. Cache only target AV K/V from an extra clean forward while native models are loaded. Native H3 clamps video sigma to 1e-6 internally: this is near-clean, not an exact port of upstream timestep=1. No output replacement or upstream latent renormalization is assumed.
+4. Keep conditioning queries isolated to conditioning keys in streaming attention. Media queries use conditioning, retained history, current AV keys. No dense S-by-S mask is needed. Delegate rectangular attention through the existing backend; expose Sol dense fallback in status.
+5. BF16 cache owns storage, tracks head slices/layers transactionally, and trims to previous-only or first-video-sink plus one/two complete recent AV commits. Sink means first commit's video, without duplicating it when that commit is recent. Old sink audio is discarded. Cache/session never survives node execution.
+6. Full-layer KV is the structural correctness reference. Sparse layers change semantics and must be labeled experimental. No speed or full-model continuity claim follows from tiny-model tests.
+7. VAE is an external compatibility check, not an owned decoder or engine. Assemble all 37 video latents before final decode; independently decoding micro-phases would reset VAE temporal context. No new TRT dependency.
+8. Only one canonical request initially. Timeline offsets are represented but nonzero continuation is rejected until separately validated. User's long ver2.5 workflow remains unchanged; first experiment must explicitly use 124 frames and 207 audio latents.
+
+Upstream methodology inspected: https://github.com/TaoLiveAIGC/TaoMate-H3 (`streaming/geometry.py`, `attention_hook.py`, `runtime.py`, `cache.py`). No upstream implementation is vendored; no Hopper/distributed runtime is installed. Local ComfyUI reference is `d43a5fa20c8547ff42d13232f589a06536c42b97`.

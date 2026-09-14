@@ -21,6 +21,7 @@ from .nodes.h3_sequential_audio import (
 )
 from .nodes.h3_split_av_latent import JR_H3_SplitAVLatent
 from .nodes.h3_temporal_chunk_sampler import JR_H3_TemporalChunkSampler
+from .nodes.h3_taomate_chunk_planner import JR_H3_TaoMateChunkPlanner
 from .nodes.h3_unified_acceleration import JR_H3_UnifiedAcceleration
 from .nodes.last_frame import JR_H3_LastFrame
 from .nodes.prompt_review_pause import JR_H3_PromptReviewPause
@@ -35,6 +36,7 @@ register_prompt_review_routes()
 register_director_media_routes()
 
 NODE_CLASS_MAPPINGS = {
+    "JR_H3_TaoMateChunkPlanner": JR_H3_TaoMateChunkPlanner,
     "JR_H3_DirectorDesk": JR_H3_DirectorDesk,
     "JR_H3_DirectorPipeBuilder": JR_H3_DirectorPipeBuilder,
     "JR_H3_DirectorPipeUnpack": JR_H3_DirectorPipeUnpack,
@@ -63,6 +65,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "JR_H3_TaoMateChunkPlanner": "JR H3 TaoMate Chunk Planner (Experimental)",
     "JR_H3_DirectorDesk": "JR MiniMax H3 Director Desk",
     "JR_H3_DirectorPipeBuilder": "JR MiniMax H3 Director PIPE Builder",
     "JR_H3_DirectorPipeUnpack": "JR MiniMax H3 Director PIPE Unpack",
