@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 - Release preparation (2026-09-14)
+
+- Prepared a new package version for manual Registry publishing; publication and Registry review status are not implied by this version bump.
 
 - User acceptance: the 10s/15s second-pass streaming extension completed manual testing without reported issues, and the user approved merging the TaoMate-inspired streaming branch into main and publishing to GitHub. Keep full-story first-pass generation intact and preserve all legacy paths. Sparse KV/every_4 remains a speed/continuity trade-off (mild background drift observed); experimental labels and existing defaults remain unchanged.
 
