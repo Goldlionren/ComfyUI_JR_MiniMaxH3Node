@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed the experimental Streaming sampler's Geometry Only output boundary: AV results now move to ComfyUI's `intermediate_device()`, matching native SamplerCustomAdvanced before node allocator cleanup. Added a handoff regression test. Local full-checkpoint RTX 5090 verification passed with normal asynchronous CUDA, Unified acceleration and external TRT decode; no sigma, seed, attention or KV algorithm changes.
+
 - User acceptance (2026-09-14): TST strength 0.2 gave encouraging visual results on the tested material; the experiment remains opt-in with unchanged defaults. The user also confirmed working external H3VAE_TRT engine decoding with a noticeable speed improvement (no quantified benchmark). Keep the upstream TRT Loader, model assets and engines external; JR retains capability checks and opt-in probes only, with no vendored loader or TensorRT dependency.
 
 - Local phase-2 experiment: added opt-in `enable_tst=false` / `tst_strength=0.1` to Unified without changing existing widgets or Sol `tau`. Independently implemented pooled temporal spectral Q correction; delegates to the captured Sol/Sage chain, uses native block IDs and isolated per-forward state. Morton, compile and unsupported attention forward paths are rejected. Progressive shares its complete sigma schedule; Adaptive Cache isolates TST configurations.

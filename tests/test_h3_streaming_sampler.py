@@ -81,6 +81,28 @@ def test_geometry_only_matches_ordinary(monkeypatch):
     assert all(torch.equal(a, b) for a, b in zip(output["samples"].unbind(), expected.unbind()))
 
 
+def test_geometry_only_returns_samples_on_native_intermediate_device(monkeypatch):
+    import comfy.model_management
+
+    args = setup(monkeypatch, "Geometry Only")
+    sampled = args["latent_image"]["samples"]
+    transferred = NestedTensor(tuple(t.clone() for t in sampled.unbind()))
+    moves = []
+
+    def move(self, device):
+        assert self is sampled
+        moves.append(device)
+        return transferred
+
+    monkeypatch.setattr(CFGGuider, "sample", lambda *a, **kw: sampled)
+    monkeypatch.setattr(comfy.model_management, "intermediate_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(NestedTensor, "to", move)
+    output, _ = sample_streaming(**args)
+    assert moves == [torch.device("cpu")]
+    assert output["samples"] is transferred
+    assert output["metadata"] is args["latent_image"]["metadata"]
+
+
 def test_tst_repeat_and_locked_audio_with_anchor(monkeypatch):
     args = setup(monkeypatch)
     args["model"] = apply_temporal_transport(args["model"], strength=.2)

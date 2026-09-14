@@ -121,6 +121,7 @@ def _sync(device):
 def sample_streaming(*, model, positive, vae, noise, sampler, sigmas, latent_image, stream_plan,
                      streaming_mode="Geometry Only", retention="sink_plus_recent_2", layer_policy="every_4",
                      custom_layers="", cache_device="cpu", max_kv_mib=8192, audio_reset_interval_requests=1):
+    from comfy.model_management import intermediate_device
     from comfy.nested_tensor import NestedTensor
     from comfy.samplers import CFGGuider
 
@@ -173,7 +174,8 @@ def sample_streaming(*, model, positive, vae, noise, sampler, sigmas, latent_ima
         if streaming_mode == "Geometry Only":
             result = guider.sample(all_noise, latent_image["samples"], sampler, sigmas,
                                    denoise_mask=latent_image.get("noise_mask"), seed=noise.seed)
-            output = dict(latent_image, samples=result)
+            # Match SamplerCustomAdvanced's node boundary before allocator cleanup.
+            output = dict(latent_image, samples=result.to(intermediate_device()))
             return output, "JR H3 Streaming: Geometry Only — ordinary native sampling, no streaming patches or KV.\n" + stream_plan.status()
         out_video, out_audio = torch.empty_like(video, device="cpu"), torch.empty_like(audio, device="cpu")
         wrapped_sampler = CleanCommitSampler(sampler, runtime)

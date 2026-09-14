@@ -2,6 +2,8 @@
 
 ## Branch / checkpoints
 
+The original audit below predates the user-authorized production test deployment. See the post-audit validation at the end for the current real-checkpoint test results and output-boundary fix.
+
 `feature/taomate-streaming`, based on synchronized main `c9b1526405d9013476e61941f6c81e1b23b9635b`. Main and the production directory remain on their original implementation. The source implementation checkpoint is `8a10404`; later commits on this branch contain test harness, smoke tooling and documentation. Resolve final documentation HEAD with `git rev-parse feature/taomate-streaming` (a document cannot contain its own commit hash).
 
 Logical commits: audited geometry planner (`e25a436`); transactional bounded cache (`e3efa39`); runtime/clean commit/history attention/sparse integration (`8a10404`); verification and documentation follow separately. No remote feature push or merge is performed.
@@ -60,3 +62,22 @@ git -C 'C:/Users/Admin/Documents/Comfyui本地开发/taomate-streaming/ComfyUI_J
 To return, use `git switch feature/taomate-streaming` in that directory. Do not reset, force-push, or overwrite the production plugin.
 
 Skills used: ComfyUI basics/datatypes/lifecycle informed additive stable V1 registration, immutable plan/custom socket, preserved AV metadata and execution-local transactional cleanup. These constraints did not require a migration of existing nodes.
+
+## Post-audit production validation — 2026-09-14
+
+The user subsequently authorized a backed-up production test deployment and debugging of its first real-checkpoint failure. The original main branch, original workflows, dependencies, models and TRT engines were not changed; no GitHub push was made.
+
+The uncorrected Geometry Only path reproduced a CUDA illegal-address error at ComfyUI's node-final `reset_cast_buffers()` / offload-stream synchronization, followed by a cleanup failure that terminated `prompt_worker`. Disabling second-stage Sol alone did not fix it. A fresh process with `CUDA_LAUNCH_BLOCKING=1` completed the same Sol-off workflow, supporting an asynchronous lifecycle issue rather than proving a particular attention kernel was defective.
+
+Unlike native `SamplerCustomAdvanced`, Geometry Only returned the sampler's GPU AV result directly. It now calls `result.to(comfy.model_management.intermediate_device())` before leaving the node. This preserves NestedTensor streams and metadata and follows the native output handoff. No global synchronization/debug setting is kept, and no denoising, KV or attention math was changed. The precise internal allocator/kernel race was not independently localized; the missing native handoff and its corrective effect were tested.
+
+Validation after this change:
+
+- Full suite: **894 passed, 1 skipped**; streaming/plan/cache subset: **39 passed**; Ruff and diff whitespace checks pass.
+- Real Hybrid/pruned INT8 H3, first-stage Turbo LoRA + Progressive scale 0.6, second-stage TaoMate 3-step LoRA, 124 frames at 512×288. TST off; Sage FP8++, LowVRAM 4 head groups, FFN and Sol enabled. External TRT final decode.
+- `CUDA_LAUNCH_BLOCKING` absent; original production launch flags retained. Geometry Only completed with audio/video output, 35.95s for the whole cold workflow.
+- Streaming Attention completed in the same process: 4 phases, 12 denoise forwards, 4 clean forwards, 50/50 CPU KV layers, previous_only, 8192 MiB budget. Node time 25.212s; retained KV peak across phase reports 2540.234 MiB, final retained KV 1063.672 MiB. These are retained-cache measurements, not KV-plus-staging peak or total process memory.
+- Switching back from Streaming to Geometry Only also completed. The seed was incremented by one to force actual resampling rather than count a cached result as a repeat test; this checks lifecycle reuse, not fixed-seed identity.
+- ffprobe confirms both first Geometry and Streaming outputs contain **124 video frames, 512×288, 24fps and a 32kHz audio track**. Whole-workflow timing is not comparable between cold Geometry and Streaming with cached first-stage outputs. PyTorch CUDA allocator counters do not include all dynamic-VRAM/aimdo allocations; they must not be presented as total model VRAM.
+
+These runs establish real-workflow execution for the tested case, not subjective quality, exact reproducibility, a speedup, or full-model acceptance of Sparse KV/TST/combined anchors/audio-drive. User visual review remains required. The local deployment record and full original plugin backup live outside the repository in the task's `taomate-streaming` directory.
