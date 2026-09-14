@@ -114,6 +114,10 @@ class JR_H3_CleanAVKVCache:
             raise RuntimeError("JR H3 Streaming: incomplete clean layers; rollback required")
         if any(sum(p.video_k.shape[1] for p in parts) != self.heads for parts in self._staged.values()):
             raise RuntimeError("JR H3 Streaming: incomplete clean heads; rollback required")
+        shapes = {(p.video_tokens, p.audio_tokens, p.video_k.shape[-1])
+                  for parts in self._staged.values() for p in parts}
+        if len(shapes) != 1:
+            raise RuntimeError("JR H3 Streaming: inconsistent AV rows across clean layers")
         candidate = dict(self._committed)
         for layer, parts in self._staged.items():
             fields = ("video_k", "video_v", "audio_k", "audio_v")

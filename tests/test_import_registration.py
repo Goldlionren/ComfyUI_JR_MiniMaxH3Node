@@ -2,6 +2,8 @@ import importlib
 import sys
 
 EXPECTED = {
+    "JR_H3_TaoMateChunkPlanner",
+    "JR_H3_StreamingSampler",
     "JR_H3_ProgressiveGuidedSampler",
     "JR_H3_DirectorDesk",
     "JR_H3_DirectorPipeBuilder",
