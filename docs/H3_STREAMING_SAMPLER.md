@@ -1,6 +1,6 @@
 # JR TaoMate-inspired streaming — experimental branch
 
-This is a parallel path, not an upgrade/replacement of Hard AV Latent Prefix. The user's existing ver2.5 16G workflow is unchanged. Production test deployment is separately recorded in the task-directory `PRODUCTION_TEST.md` outside the repository. No main-branch merge, GitHub push, Registry release or model/engine installation is included.
+This is a parallel path, not an upgrade/replacement of Hard AV Latent Prefix. The user's existing ver2.5 16G workflow is unchanged. After manual testing of the duration extension, the user approved integration into main and publication to GitHub. Experimental labels and defaults remain unchanged; this is not broad hardware/quality certification. Production test deployment is separately recorded in the task-directory `PRODUCTION_TEST.md` outside the repository. No Registry release or model/engine installation is included.
 
 ## Public nodes and modes
 

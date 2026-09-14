@@ -1,5 +1,9 @@
 # Streaming engineering verification — 2026-09-14
 
+## User acceptance and main integration
+
+Following the 10s/15s extension at `5cd1792`, the user reported testing without issues and explicitly approved merging into main and publishing to GitHub. The engineering and deployment records below describe earlier checkpoints; their no-merge/no-push restrictions applied before that approval. Keep the experimental labels, legacy workflows and first-pass full-story generation unchanged. This acceptance does not establish identical quality on all hardware, masks or prompts; Sparse KV/every_4 has a user-observed mild background-drift trade-off.
+
 ## 10s/15s second-pass extension
 
 Implementation baseline: `d13a0a4`, clean `feature/taomate-streaming`. Added duration presets only to the experimental planner/runtime; the full-story first pass, existing Hard Prefix, neural upscale and Unified algorithms are unchanged. Planner socket indices 0/1 remain unchanged; exact length outputs are appended. See `H3_STREAMING_SAMPLER.md` for duration setup and the TaoMate sigma audit. No upstream sigma/renormalization implementation was copied or enabled.

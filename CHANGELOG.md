@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- User acceptance: the 10s/15s second-pass streaming extension completed manual testing without reported issues, and the user approved merging the TaoMate-inspired streaming branch into main and publishing to GitHub. Keep full-story first-pass generation intact and preserve all legacy paths. Sparse KV/every_4 remains a speed/continuity trade-off (mild background drift observed); experimental labels and existing defaults remain unchanged.
+
 - Extended experimental second-pass Streaming/Sparse KV to 10s/15s presets (243/362 native frames, 405/603 audio ticks), retaining the unchanged 124-frame default. Full first-pass story generation stays intact; logical ~5s windows reuse bounded micro-phases, continuous native positions and one noise field without KV/session resets. Added exact planner length outputs, effective layer-policy and sigma/cache diagnostics, long-timeline mask/repeatability/failure tests. Existing Hard Prefix, Progressive, Unified and external TRT behavior is unchanged; TaoMate sigma/renormalization differences are documented, not silently adopted.
 
 - Fixed the experimental Streaming sampler's Geometry Only output boundary: AV results now move to ComfyUI's `intermediate_device()`, matching native SamplerCustomAdvanced before node allocator cleanup. Added a handoff regression test. Local full-checkpoint RTX 5090 verification passed with normal asynchronous CUDA, Unified acceleration and external TRT decode; no sigma, seed, attention or KV algorithm changes.
