@@ -1,0 +1,375 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "MiniMaxH3TurboLoRA",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors",
+      "strength": 1.0,
+      "low_vram": true
+    }
+  },
+  "3": {
+    "class_type": "MiniMaxH3SigmaShift",
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "shift_video": 12.0,
+      "shift_audio": 3.0
+    }
+  },
+  "4": {
+    "class_type": "JR_H3_UnifiedAccelerationV2",
+    "inputs": {
+      "enable": true,
+      "sage_attention": "sageattn_qk_int8_pv_fp8_cuda++",
+      "allow_compile": false,
+      "enable_low_vram_attention": true,
+      "head_chunks": 4,
+      "enable_low_vram_ffn": true,
+      "ffn_chunks": 3,
+      "ffn_seq_threshold": 4096,
+      "enable_sol_attn": true,
+      "tau": 1.3,
+      "start_percent": 0.2,
+      "end_percent": 0.9,
+      "min_tokens": 12288,
+      "int8_qk": true,
+      "int8_pv": true,
+      "sink_conditioning": "exact_kv_and_rows",
+      "morton": false,
+      "morton_curve": "2d_frame",
+      "verbose": true,
+      "use_tma": false,
+      "dense_blocks": "",
+      "model": [
+        "3",
+        0
+      ],
+      "sparse_backend": "core",
+      "extra_tokens": 256
+    }
+  },
+  "5": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "5",
+        0
+      ],
+      "text": "A red ceramic teapot rests on a wooden table beside a sunlit window. The camera slowly moves closer. Steam rises gently from the teapot. Natural lighting, realistic textures, a quiet continuous shot. overall_soundscape: Soft room ambience, no music, no speech."
+    }
+  },
+  "7": {
+    "class_type": "EmptyMiniMaxH3LatentAV",
+    "inputs": {
+      "width": 640,
+      "height": 640,
+      "length": 175
+    }
+  },
+  "8": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 20260929
+    }
+  },
+  "9": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "conditioning": [
+        "6",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 4,
+      "denoise": 1.0
+    }
+  },
+  "11": {
+    "class_type": "MiniMaxH3TurboSampler",
+    "inputs": {}
+  },
+  "12": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "8",
+        0
+      ],
+      "guider": [
+        "9",
+        0
+      ],
+      "sampler": [
+        "11",
+        0
+      ],
+      "sigmas": [
+        "10",
+        0
+      ],
+      "latent_image": [
+        "7",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "JR_H3_SplitAVLatent",
+    "inputs": {
+      "av_latent": [
+        "12",
+        0
+      ]
+    }
+  },
+  "15": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "17": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "13",
+        1
+      ],
+      "vae": [
+        "15",
+        0
+      ]
+    }
+  },
+  "20": {
+    "class_type": "JR_MiniMaxH3NeuralLatentUpscaler",
+    "inputs": {
+      "video_latent": [
+        "13",
+        0
+      ],
+      "resize_mode": "scale",
+      "scale": 1.6,
+      "target_megapixels": 1.0
+    }
+  },
+  "21": {
+    "class_type": "JR_H3ToLTXLatentAdapter",
+    "inputs": {
+      "video_latent": [
+        "20",
+        0
+      ],
+      "adapter_name": "H3-to-LTX-Latent-Adapter\\model.safetensors"
+    }
+  },
+  "30": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "31": {
+    "class_type": "JR_LTXBridgeTextEncoderLoader",
+    "inputs": {
+      "text_encoder": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "ltx_transformer": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+    }
+  },
+  "32": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "31",
+        0
+      ],
+      "text": "4K, refined, high quality, cinematic detail, clean textures, natural motion."
+    }
+  },
+  "33": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "32",
+        0
+      ],
+      "negative": [
+        "32",
+        0
+      ],
+      "frame_rate": 24.0
+    }
+  },
+  "34": {
+    "class_type": "BlockSparseAttention",
+    "inputs": {
+      "model": [
+        "30",
+        0
+      ],
+      "selection": "sol-attn",
+      "selection.tau": 1.3,
+      "start_percent": 0.0,
+      "end_percent": 1.0,
+      "dense_blocks": "",
+      "min_tokens": 12288,
+      "extra_tokens": 256,
+      "sink_conditioning": "off",
+      "verbose": true
+    }
+  },
+  "35": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+    }
+  },
+  "36": {
+    "class_type": "JR_H3LTXRefineSetup",
+    "inputs": {
+      "ltx_video_latent": [
+        "21",
+        0
+      ],
+      "original_h3_audio": [
+        "17",
+        0
+      ],
+      "ltx_audio_vae": [
+        "35",
+        0
+      ],
+      "steps": 3,
+      "denoise": 0.25,
+      "scheduler": "simple",
+      "ltx_model": [
+        "34",
+        0
+      ]
+    }
+  },
+  "37": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "34",
+        0
+      ],
+      "conditioning": [
+        "33",
+        0
+      ]
+    }
+  },
+  "38": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "39": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 20260930
+    }
+  },
+  "40": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "39",
+        0
+      ],
+      "guider": [
+        "37",
+        0
+      ],
+      "sampler": [
+        "38",
+        0
+      ],
+      "sigmas": [
+        "36",
+        1
+      ],
+      "latent_image": [
+        "36",
+        0
+      ]
+    }
+  },
+  "41": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "40",
+        0
+      ]
+    }
+  },
+  "42": {
+    "class_type": "SaveLatent",
+    "inputs": {
+      "samples": [
+        "41",
+        0
+      ],
+      "filename_prefix": "sol_h3_ltx_validation/refined_1024_175f"
+    }
+  },
+  "43": {
+    "class_type": "SaveLatent",
+    "inputs": {
+      "samples": [
+        "13",
+        0
+      ],
+      "filename_prefix": "sol_h3_ltx_validation/draft_640_175f"
+    }
+  },
+  "44": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": [
+        "17",
+        0
+      ],
+      "filename_prefix": "sol_h3_ltx_validation/original_h3_audio"
+    }
+  }
+}

@@ -2,6 +2,8 @@ import importlib
 import sys
 
 EXPECTED = {
+    "JR_LTXBridgeTextEncoderLoader",
+    "JR_H3ToLTXLatentAdapter", "JR_H3LTXRefineSetup", "JR_H3LTXFinishMedia",
     "JR_H3_TaoMateChunkPlanner",
     "JR_H3_StreamingSampler",
     "JR_H3_ProgressiveGuidedSampler",
@@ -17,6 +19,7 @@ EXPECTED = {
     "JR_H3_ResolutionScaleCalculator", "JR_H3_EnhancedVideoCombine", "JR_H3_LastFrame",
     "JR_H3_CacheConfigRouter", "JR_H3_AdaptiveCache",
     "JR_H3_UnifiedAcceleration",
+    "JR_H3_UnifiedAccelerationV2",
     "JR_H3_HybridLoader",
     "JR_H3_TemporalChunkSampler",
     "JR_H3_ProgressiveSampler",
@@ -32,7 +35,7 @@ def test_root_import_and_exact_registration(package_name):
     assert set(package.NODE_CLASS_MAPPINGS) == EXPECTED
     assert set(package.NODE_DISPLAY_NAME_MAPPINGS) == EXPECTED
     assert all(
-        name.startswith(("JR MiniMax H3", "JR H3")) or name == "H3 Unified Acceleration"
+        name.startswith(("JR MiniMax H3", "JR H3", "JR LTX Bridge")) or name == "H3 Unified Acceleration"
         for name in package.NODE_DISPLAY_NAME_MAPPINGS.values()
     )
     assert package.__version__ == "0.20.0"

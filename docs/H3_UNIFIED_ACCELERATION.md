@@ -1,5 +1,7 @@
 # H3 Unified Acceleration
 
+可显式添加独立实验节点 [H3 Unified Acceleration v2](H3_UNIFIED_ACCELERATION_V2.md)，选择 Core/comfy-kitchen 或 legacy 后端。原节点和已保存工作流保持原有行为；v2 尚不自动提升 Core 为默认后端。
+
 > 本页以当前 `JR_H3_UnifiedAcceleration` 和运行时适配器为准。该节点是外部 KJ/Sol 节点的编排层，不包含或复制其 kernels。
 
 ## 当前兼容性摘要

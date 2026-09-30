@@ -9,6 +9,12 @@ from .nodes.h3_av_latent_builder import JR_MiniMaxH3AVLatentBuilder
 from .nodes.h3_cache_config_router import JR_H3_CacheConfigRouter
 from .nodes.h3_directed_video_conditioning import JR_H3_DirectedVideoConditioning
 from .nodes.h3_hybrid_loader import JR_H3_HybridLoader
+from .nodes.h3_ltx_bridge import (
+    JR_H3LTXFinishMedia,
+    JR_H3LTXRefineSetup,
+    JR_H3ToLTXLatentAdapter,
+    JR_LTXBridgeTextEncoderLoader,
+)
 from .nodes.h3_neural_latent_upscaler import JR_MiniMaxH3NeuralLatentUpscaler
 from .nodes.h3_openai_prompt_optimizer import JR_H3_OpenAICompatiblePromptOptimizer
 from .nodes.h3_progressive_guided_sampler import JR_H3_ProgressiveGuidedSampler
@@ -24,6 +30,7 @@ from .nodes.h3_streaming_sampler import JR_H3_StreamingSampler
 from .nodes.h3_taomate_chunk_planner import JR_H3_TaoMateChunkPlanner
 from .nodes.h3_temporal_chunk_sampler import JR_H3_TemporalChunkSampler
 from .nodes.h3_unified_acceleration import JR_H3_UnifiedAcceleration
+from .nodes.h3_unified_acceleration_v2 import JR_H3_UnifiedAccelerationV2
 from .nodes.last_frame import JR_H3_LastFrame
 from .nodes.prompt_review_pause import JR_H3_PromptReviewPause
 from .nodes.resolution_scale_calculator import JR_H3_ResolutionScaleCalculator
@@ -37,6 +44,11 @@ register_prompt_review_routes()
 register_director_media_routes()
 
 NODE_CLASS_MAPPINGS = {
+    "JR_H3ToLTXLatentAdapter": JR_H3ToLTXLatentAdapter,
+    "JR_H3LTXRefineSetup": JR_H3LTXRefineSetup,
+    "JR_H3LTXFinishMedia": JR_H3LTXFinishMedia,
+    "JR_LTXBridgeTextEncoderLoader": JR_LTXBridgeTextEncoderLoader,
+
     "JR_H3_StreamingSampler": JR_H3_StreamingSampler,
     "JR_H3_TaoMateChunkPlanner": JR_H3_TaoMateChunkPlanner,
     "JR_H3_DirectorDesk": JR_H3_DirectorDesk,
@@ -60,6 +72,7 @@ NODE_CLASS_MAPPINGS = {
     "JR_H3_CacheConfigRouter": JR_H3_CacheConfigRouter,
     "JR_H3_AdaptiveCache": JR_H3_AdaptiveCache,
     "JR_H3_UnifiedAcceleration": JR_H3_UnifiedAcceleration,
+    "JR_H3_UnifiedAccelerationV2": JR_H3_UnifiedAccelerationV2,
     "JR_H3_RTXUpscalerRefiner": JR_H3_RTXUpscalerRefiner,
     "JR_H3_ResolutionScaleCalculator": JR_H3_ResolutionScaleCalculator,
     "JR_H3_EnhancedVideoCombine": JR_H3_EnhancedVideoCombine,
@@ -67,6 +80,11 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "JR_H3ToLTXLatentAdapter": "JR H3 → LTX Latent Adapter (Experimental)",
+    "JR_H3LTXRefineSetup": "JR H3 → LTX Refine Setup (Experimental)",
+    "JR_H3LTXFinishMedia": "JR H3 → LTX Finish Media (Experimental)",
+    "JR_LTXBridgeTextEncoderLoader": "JR LTX Bridge Text Encoder Loader (Experimental)",
+
     "JR_H3_StreamingSampler": "JR H3 Streaming Sampler (Experimental)",
     "JR_H3_TaoMateChunkPlanner": "JR H3 TaoMate Chunk Planner (Experimental)",
     "JR_H3_DirectorDesk": "JR MiniMax H3 Director Desk",
@@ -90,6 +108,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "JR_H3_CacheConfigRouter": "JR H3 Cache Config Router",
     "JR_H3_AdaptiveCache": "JR H3 Adaptive Cache",
     "JR_H3_UnifiedAcceleration": "H3 Unified Acceleration",
+    "JR_H3_UnifiedAccelerationV2": "JR H3 Unified Acceleration v2 (Experimental)",
     "JR_H3_RTXUpscalerRefiner": "JR MiniMax H3 RTX Upscaler & Refiner",
     "JR_H3_ResolutionScaleCalculator": "JR MiniMax H3 Resolution Scale Calculator",
     "JR_H3_EnhancedVideoCombine": "JR MiniMax H3 Enhanced Video Combine",

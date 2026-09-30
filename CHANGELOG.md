@@ -1,5 +1,13 @@
 # Changelog
 
+## GitHub main update - 2026-09-30
+
+- Add experimental Unified Acceleration v2 with explicit legacy/Core/auto sparse backend selection and compatibility checks, preserving the original Unified node.
+- Add the experimental native H3-to-LTX bridge, released-checkpoint validation, padded video timeline handling, original H3 audio preservation, and matching native LTX text encoder loading.
+- Expose refinement steps and native ComfyUI denoise/scheduler controls (defaults: 3 / 0.25 / simple); retain the exact original three-step recipe as an explicit option and for legacy API prompts.
+- Provide editable and API examples with the required LTX MODEL connection, documentation, CPU regression tests and opt-in GPU validation. Weights are downloaded separately; examples use experimental settings and do not promise reference/identity preservation.
+
+
 ## 0.20.0 - Release preparation (2026-09-14)
 
 - Prepared a new package version for manual Registry publishing; publication and Registry review status are not implied by this version bump.

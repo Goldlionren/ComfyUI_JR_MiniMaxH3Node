@@ -43,6 +43,18 @@ def _validate_workflows(project: Path, registered: set[str]) -> tuple[int, list[
         workflow = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(workflow, dict):
             raise AssertionError(f"{path}: workflow root must be an object")
+        if path.name.endswith(".api.json"):
+            for node_id, node in workflow.items():
+                if not isinstance(node, dict) or not isinstance(node.get("inputs"), dict):
+                    raise AssertionError(f"{path}: malformed API node {node_id}")
+                class_type = node.get("class_type", "")
+                if class_type.startswith("JR_") and class_type not in registered:
+                    raise AssertionError(f"{path}: unregistered JR API node {class_type}")
+                for value in node["inputs"].values():
+                    if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
+                        if str(value[0]) not in workflow:
+                            raise AssertionError(f"{path}: dangling API link {value}")
+            continue
         nodes = workflow.get("nodes")
         links = workflow.get("links")
         if not isinstance(nodes, list) or not isinstance(links, list):
@@ -59,7 +71,7 @@ def _validate_workflows(project: Path, registered: set[str]) -> tuple[int, list[
                 for node in nodes
                 if isinstance(node, dict)
                 and isinstance(node.get("type"), str)
-                and node["type"].startswith(("JR_H3_", "JR_MiniMaxH3"))
+                and node["type"].startswith("JR_")
                 and node["type"] not in registered
             }
         )

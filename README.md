@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 25 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 32 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
 当前包版本：`0.20.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
@@ -11,6 +11,13 @@
 本地实验功能：[JR H3 Progressive Sampler](docs/H3_PROGRESSIVE_SAMPLER.md)。支持空 AV latent 的 Euler 同 sigma schedule 空间切换；旧 dual sampling 保留。导入 [T2VA A/B 示例](examples/JR_H3_Progressive_T2VA_Experimental.json) 开始测试。
 
 新增 Progressive Guided Sampler：支持独立参考图、首帧／首尾帧、锁定音频及组合。示例：[Ref2VA](examples/JR_H3_Progressive_Ref2VA_Experimental.json)、[首尾帧](examples/JR_H3_Progressive_FirstLast_Experimental.json)、[音频驱动＋首帧](examples/JR_H3_Progressive_AudioDrive_Experimental.json)。默认 5 秒（H3 对齐约 5.17 秒），请选择自己的图片／音频。
+
+## Sol-H3 实验更新（2026-09-30）
+
+- [Unified Acceleration v2](docs/H3_UNIFIED_ACCELERATION_V2.md)：独立新节点，可选 ComfyUI Core sparse 后端，保留旧版和 legacy 默认。
+- [H3 → LTX Bridge](docs/H3_LTX_BRIDGE.md)：H3 草稿 → 学习型 latent 放大 → 训练适配器 → LTX 细化 → 视频解码与原 H3 音频合成。
+- Refine Setup 显示 `steps`、`denoise`、`scheduler`，默认 3 步、0.25、simple。**必须把与 BasicGuider 相同的 LTX MODEL 接到 `ltx_model`**；不接会明确报错。
+- [可调示例工作流](examples/H3_to_LTX_640_to_1024_175f_adjustable.json) 已接好模型线。模型权重、KJNodes、Core sparse 和匹配的 ComfyUI 运行环境需要另行安装；详细版本与质量限制见上述说明。
 
 ## 节点一览
 
