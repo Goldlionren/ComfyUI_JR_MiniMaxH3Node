@@ -80,7 +80,7 @@ Without a paired IMAGE, Directed Conditioning decodes the master once for vision
 
 When pre-encoded anchors are combined with independent references, the adapter keeps actual first/last `minimax_keyframes` alongside native `minimax_refs`; IMAGE-only legacy Ref2V routing is unchanged. Reference images/videos/audio still require their normal encoders. Driving Audio in PIPE retains its reference-audio routing; locking target audio still uses the separate Audio Driven Latent Builder. Combined-task checkpoint quality is not guaranteed by payload compatibility.
 
-No VAE, CLIP or model is monkey-patched. This opt-in path uses an explicit adapter because the installed native conditioning nodes do not accept pre-encoded keyframes. Its current contract is tested against local ComfyUI 0.35.0; this does not resolve the existing GitHub CI pin to 0.34.0.
+No VAE, CLIP or model is monkey-patched. This opt-in path uses an explicit adapter because the installed native conditioning nodes do not accept pre-encoded keyframes. Initially tested against ComfyUI 0.35.0; the 2026-10-09 integration aligns the GitHub CI pin with the validated ComfyUI 0.39.0 production source (`926d828`).
 
 Validation: compare IMAGE-only with IMAGE+LATENT at fixed seed/size, check VAE encode call counts, verify original masters before/after, then repeat multiple Hermes continuation rounds. Test normal and Progressive Guided sampling separately. The separate experimental [Tail Frame Latent](H3_TAIL_FRAME_LATENT.md) node now supplies a true decoded endpoint through one explicit encode, keeping source resolution. Zero-encode extraction and high-resolution enhancement remain separate work.
 
