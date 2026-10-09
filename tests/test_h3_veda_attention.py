@@ -4,8 +4,10 @@ import types
 
 import pytest
 from comfy_api.latest import io
+from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
 from ComfyUI_JR_MiniMaxH3Node.nodes.h3_veda_attention import JR_H3_VedaAttention
 from ComfyUI_JR_MiniMaxH3Node.utils import h3_veda_attention as veda
+from test_h3_progressive_sampler import tiny_patcher
 
 
 class Model:
@@ -198,6 +200,42 @@ def test_downstream_core_block_rejected(vendor):
     result.model_options["transformer_options"]["patches_replace"] = {"dit": {(0, 0): object()}}
     with pytest.raises(RuntimeError, match="downstream"):
         result.callbacks["on_pre_run"][veda.CONFIG_KEY][0](result)
+
+
+@pytest.mark.parametrize("shift_first", [False, True])
+def test_native_sigma_shift_preserves_veda_attention_stack(vendor, monkeypatch, shift_first):
+    source = tiny_patcher(monkeypatch)
+    source.get_model_object("model_sampling").set_noise_scale(0.75)
+    source_object_patches = dict(source.object_patches)
+    model = source
+    if shift_first:
+        model = MiniMaxH3SigmaShift.execute(model, shift_video=6.0, shift_audio=3.0).result[0]
+    patched, _ = veda.apply(model, **no_memory())
+    shifted = patched if shift_first else MiniMaxH3SigmaShift.execute(
+        patched, shift_video=6.0, shift_audio=3.0,
+    ).result[0]
+    override = patched.model_options["transformer_options"]["optimized_attention_override"]
+    shifted.pre_run()
+    shifted.pre_run()  # native cached branch may run again
+    assert shifted.model_options["transformer_options"]["optimized_attention_override"] is override
+    sampling = shifted.get_model_object("model_sampling")
+    assert sampling.shift == 6.0
+    assert sampling.audio_shift == 3.0
+    assert sampling.noise_scale == 0.75
+    assert veda.CONFIG_KEY not in source.model_options["transformer_options"]
+    assert source.object_patches == source_object_patches
+
+
+@pytest.mark.parametrize("mutation", ["override", "forward"])
+def test_native_sigma_shift_still_rejects_late_attention_changes(vendor, monkeypatch, mutation):
+    patched, _ = veda.apply(tiny_patcher(monkeypatch), **no_memory())
+    shifted = MiniMaxH3SigmaShift.execute(patched, shift_video=6.0, shift_audio=3.0).result[0]
+    if mutation == "override":
+        shifted.model_options["transformer_options"]["optimized_attention_override"] = lambda *args: None
+    else:
+        shifted.add_object_patch("diffusion_model.blocks.0.attn.forward", lambda *args: None)
+    with pytest.raises(RuntimeError, match="downstream"):
+        shifted.pre_run()
 
 
 def test_r2va_metadata_failure_is_actionable(monkeypatch):

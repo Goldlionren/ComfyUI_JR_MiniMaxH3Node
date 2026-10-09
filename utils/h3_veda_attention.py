@@ -84,6 +84,13 @@ def _veda_handler(unique_id, kwargs):
     return handler
 
 
+def _guarded_object_patches(model):
+    # Native SigmaShift clones the MODEL and replaces its sampling schedule.
+    # That is independent of VEDA's attention/forward patches.
+    return {key: value for key, value in getattr(model, "object_patches", {}).items()
+            if key != "model_sampling"}
+
+
 def _attach_guard(model, record):
     options = model.model_options.setdefault("transformer_options", {})
     expected_override = options.get("optimized_attention_override")
@@ -91,13 +98,13 @@ def _attach_guard(model, record):
         raise RuntimeError("JR H3 VEDA: upstream returned a MODEL without a usable attention override.")
     options[CONFIG_KEY] = record
     expected_blocks = dict(options.get("patches_replace", {}).get("dit", {}))
-    expected_objects = dict(getattr(model, "object_patches", {}))
+    expected_objects = _guarded_object_patches(model)
 
     def check(patcher):
         current = patcher.model_options.get("transformer_options", {})
         if (current.get("optimized_attention_override") is not expected_override
                 or current.get("patches_replace", {}).get("dit", {}) != expected_blocks
-                or getattr(patcher, "object_patches", {}) != expected_objects
+                or _guarded_object_patches(patcher) != expected_objects
                 or current.get("jr_h3_tst_config")
                 or current.get("jr_h3_unified_v2") or current.get("sol_compose")):
             raise RuntimeError(

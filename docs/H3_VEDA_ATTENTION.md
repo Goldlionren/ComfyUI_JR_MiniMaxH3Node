@@ -13,6 +13,8 @@ H3 loader → LoRA / sigma 配置 ┬→ 原 Unified V2 / Core Sol-H3 → 原采
 
 每次比较运行一条采样分支。不要把 VEDA 串在 Unified V2 前后。已安装 Sol/Core、其他 attention override、TST 或 block/forward replacement 时节点会明确报错；采样前再次检查下游覆盖。
 
+原生 `MiniMaxH3SigmaShift`（显示为 `ModelSamplingMiniMaxH3`）可放在 VEDA 前后：它只更换 `model_sampling` 并配置 video/audio shift，不替换注意力。`LoRA → VEDA → SigmaShift → BasicGuider → SamplerCustomAdvanced` 是允许的接线。注意力、block/forward 补丁仍不能在 VEDA 之后被覆盖。
+
 节点只克隆自身的 MODEL，不改变输入分支。enable=false 在模型/依赖检查前直接透传。关闭节点不会移除输入已有的补丁。
 
 ## 依赖与参数
@@ -44,3 +46,5 @@ STRING 输出只是配置状态，不能证明发生了 sparse 计算。请看�
 2026-10-09 本地验证：完整回归 1003 passed / 7 skipped；Ruff、compileall、注册与工作流 smoke 通过（33 个注册节点）。跳过项为 opt-in GPU/权重集成及非 CUDA 路径检查。Git 对照确认原 Unified V1/V2、Sol-H3 后端/适配器和 examples 无差异。
 
 2026-10-09 部署：开发目录是指向 F:/AI/custom_nodes/ComfyUI_JR_MiniMaxH3Node 的 junction，该套已同步；另已部署到 F:/ComfyUI-aki-v3/ComfyUI/custom_nodes/ComfyUI_JR_MiniMaxH3Node。只添加 nodes/h3_veda_attention.py、utils/h3_veda_attention.py 和三项注册；旧 Sol-H3 文件哈希、已有注册保持不变。生产 Python 导入、关闭透传、官方 VEDA 的 execute 签名和 V3 hidden 绑定通过；没有运行生成。备份与记录位于工作区 veda-production-deploy-20261009/081421-268170。用户自行进行生成测试。
+
+2026-10-09 后续合并与修复：开发路径已改为独立 Git 仓库，GitHub main `9c960a9` 与 CutAudio、尾帧、Director latent 等本地成果完整合并，注册 36 个节点；合并记录位于工作区 jr-reconcile-20261009。实际工作流发现 SigmaShift 位于 VEDA 之后时，旧保护逻辑将正常的 `model_sampling` 替换误报为注意力覆盖；已将采样调度器排除在该对象补丁比较之外，保留对注意力/forward 覆盖的拒绝，并增加原生小模型及 SigmaShift 前后顺序回归。
