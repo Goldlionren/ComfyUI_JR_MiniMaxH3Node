@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Added independent experimental `JR_H3_VedaAttention`, using the installed official VEDA extension with lazy dependencies and explicit compatibility guards. Existing Unified/Sol-H3 implementations and defaults remain unchanged. See `docs/H3_VEDA_ATTENTION.md`.
+
+- Added `JR Cut Audio`: local upload/file selection, waveform and draggable playhead/range, second-based selection, audition volume, original/cut downloads and an explicit Cut lock producing standard AUDIO. Preserves decoded PCM rate/channels/gain; saved sample ranges are source-hash checked. CPU-only PyAV, bounded requests and no automatic downstream queue. See `docs/CUT_AUDIO.md`; production deployment is separate.
+
+- Added an optional append-only `model_name` dropdown to JR Neural Latent Upscaler. Default `auto` preserves legacy checkpoint ranking; explicit choices load only the selected local model, with actual/selected names reported in status and missing models rejected without substitution. No bundled weights, downloads, Loader node or changes to Progressive's internal auto selection.
+
+- Extended Progressive Guided to JR sequential MV's exact 12-token / 39-frame hard video prefix with an empty generation suffix and fully locked audio. Low-stage clean spatial copies, original high-stage anchors, per-step native masks and exact final prefix/audio preservation; no extra VAE round trip or changes to chunk timelines, checkpoint/queue APIs, node sockets or strict T2VA behavior. Added native miniature H3 and three-chunk disk-backed regression coverage. Production quality/speed acceptance and deployment remain separate.
+
+- Appended `tail_context_latent` to Tail Frame Latent without changing its existing output slots. Preserves the original native decoder window (normally T=7 / 22 frames), source dtype/device and owned storage, avoiding image re-encode in the context output. Empty Audio Latent for Tail now automatically matches T=1 or T=5k+2 (T=7 -> 37 audio ticks), preserving the legacy two-tick path. Added endpoint, storage, timeline and native short-clip sampling regressions; single-frame reconstruction quality remains unresolved.
+
+- Added experimental `JR_H3_EmptyAudioLatentForTail` for a clean single-frame H3 tail: two zero audio ticks matching video dtype/device, no encoder or manual duration. AV Latent Builder now accepts exactly video T=1/audio T=2 while retaining all legacy full-video checks. Native small-model second-pass/TST tests cover AV assembly, sampling, split and single-frame decode. Empty audio is not encoded silence or an original timeline crop; full-checkpoint quality remains user-tested.
+
+- Added experimental `JR_H3_TailFrameLatent`: true decoded video endpoint to paired IMAGE and image-keyframe LATENT, with one explicit VAE encode, reviewed 7-token tail-context decoding, full-decode comparison and optional already-decoded/trimmed frames. Keeps final-pass resolution; not lossless extraction, super-resolution or zero-encode continuation. See `docs/H3_TAIL_FRAME_LATENT.md`.
+
+- Added experimental Director PIPE `first_latent` / `last_latent` inputs and appended Unpack outputs. Clean single-frame H3 masters stay at original resolution; explicit native-payload conditioning uses independent canvas copies, paired IMAGEs for vision, and skips their VAE encode. Progressive Guided derives its low-stage copies directly from these masters. Legacy IMAGE-only paths are unchanged. Tail-frame extraction/upscaling and full-model multi-round quality acceptance remain separate work; no production deployment or GitHub publication is implied.
+
 ## GitHub main update - 2026-09-30
 
 - Add experimental Unified Acceleration v2 with explicit legacy/Core/auto sparse backend selection and compatibility checks, preserving the original Unified node.

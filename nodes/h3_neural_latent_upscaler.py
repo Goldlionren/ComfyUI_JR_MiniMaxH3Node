@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..utils.h3_neural_latent_upscaler import upscale_h3_video_latent
+from ..utils.h3_neural_latent_upscaler import list_h3_upscaler_models, upscale_h3_video_latent
 
 
 class JR_MiniMaxH3NeuralLatentUpscaler:
@@ -12,7 +12,8 @@ class JR_MiniMaxH3NeuralLatentUpscaler:
     RETURN_NAMES = ("video_latent", "status")
     DESCRIPTION = (
         "Uses a user-supplied H3-specific 3D neural checkpoint to spatially upscale a plain "
-        "24-channel MiniMax H3 video latent while preserving B/C/T and LATENT metadata."
+        "24-channel MiniMax H3 video latent while preserving B/C/T and LATENT metadata. "
+        "Choose model_name explicitly or keep auto for the legacy dtype-based selection. No automatic downloads."
     )
 
     @classmethod
@@ -26,11 +27,19 @@ class JR_MiniMaxH3NeuralLatentUpscaler:
                     "FLOAT",
                     {"default": 2.0, "min": 0.01, "max": 64.0, "step": 0.01},
                 ),
-            }
+            },
+            "optional": {
+                "model_name": (list_h3_upscaler_models(), {
+                    "default": "auto",
+                    "tooltip": "H3 neural checkpoint in models/latent_upscale_models. Auto preserves legacy dtype-based selection; an explicit missing model errors instead of switching models. Status reports the actual model used.",
+                }),
+            },
         }
 
-    def upscale(self, video_latent, resize_mode, scale, target_megapixels):
-        return upscale_h3_video_latent(video_latent, resize_mode, scale, target_megapixels)
+    def upscale(self, video_latent, resize_mode, scale, target_megapixels, model_name="auto"):
+        return upscale_h3_video_latent(
+            video_latent, resize_mode, scale, target_megapixels, model_name=model_name,
+        )
 
 
 __all__ = ["JR_MiniMaxH3NeuralLatentUpscaler"]

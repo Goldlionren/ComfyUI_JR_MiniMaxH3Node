@@ -53,7 +53,7 @@ def plan_progressive(sigmas, transition_step, lowres_scale, target_h, target_w):
             bool((values[1:] >= values[:-1]).any()) or values[-1] != 0):
         raise _error("Use at least two Euler steps with finite, strictly decreasing sigmas in [0,1], ending at zero.")
     if not math.isclose(float(values[0]), 1.0, abs_tol=1e-5):
-        raise _error("The empty-latent prototype requires a full denoise schedule starting at sigma 1 (denoise=1).")
+        raise _error("Progressive sampling requires a full denoise schedule starting at sigma 1 (denoise=1).")
     if type(transition_step) is not int or not 1 <= transition_step < len(values) - 1:
         raise _error("transition_step must be >= 1 and smaller than the total number of steps.")
     if not math.isfinite(lowres_scale) or not 0.25 <= lowres_scale <= 1.0:
@@ -129,7 +129,9 @@ def _validate_inputs(model, positive, noise, sampler, latent_image, *, guided=Fa
         raise _error("AV tensors must use fp32, fp16 or bf16.")
     if not guided and latent_image.get("noise_mask") is not None:
         raise _error("noise_mask is not supported. Audio-driven, hard-prefix and inpainting workflows must use legacy sampling.")
-    if bool(torch.count_nonzero(video)) or (not guided and bool(torch.count_nonzero(audio))):
+    # Guided validates the exact locked-prefix/empty-suffix contract before VAE
+    # work. The original T2VA node remains strictly empty and unmasked.
+    if not guided and (bool(torch.count_nonzero(video)) or bool(torch.count_nonzero(audio))):
         raise _error("Connect an empty target-resolution AV latent; encoded, sampled or continuation latents are unsupported.")
     if not isinstance(positive, (list, tuple)) or not positive:
         raise _error("positive must contain native H3 text conditioning.")
@@ -240,8 +242,10 @@ def sample_h3_progressive(*, model, positive, noise, sampler, sigmas, latent_ima
     _reset_cache(model)
     try:
         initial = dict(latent_image)
-        # Public empty latents remain zero: never interpolate or normalize them.
+        # Public generation area remains zero. Guided copies/resizes only clean
+        # locked context; the caller's high-resolution master is never modified.
         initial["samples"] = NestedTensor((
+            guidance.low_video(video, plan.low_h, plan.low_w) if guidance else
             torch.zeros((*video.shape[:-2], plan.low_h, plan.low_w), dtype=video.dtype, device="cpu"),
             audio.detach().cpu().clone() if audio_locked else torch.zeros_like(audio, device="cpu"),
         ))
@@ -275,7 +279,8 @@ def sample_h3_progressive(*, model, positive, noise, sampler, sigmas, latent_ima
             if audio_locked:
                 # The inpaint anchor is CLEAN public audio, never the inverse-scaled
                 # noisy boundary state. H3 will apply its own sigma/audio scaling.
-                resume = NestedTensor((resume.unbind()[0], audio.detach().to(device="cpu", dtype=torch.float32).clone()))
+                resume = NestedTensor((guidance.restore_prefix(resume.unbind()[0], video),
+                                       audio.detach().to(device="cpu", dtype=torch.float32).clone()))
             captured.clear()
             del transition_noise, transition_template
             if any(not bool(torch.isfinite(t).all()) for t in resume.unbind()):
@@ -296,7 +301,8 @@ def sample_h3_progressive(*, model, positive, noise, sampler, sigmas, latent_ima
             raise RuntimeError(PREFIX + "Native sampler produced NaN or Inf.")
         if audio_locked:
             # Avoid round-trip normalization drift, including fp16/bf16 sources.
-            samples = NestedTensor((output_video.to(dtype=video.dtype), audio.detach().clone()))
+            samples = NestedTensor((guidance.restore_prefix(output_video.to(dtype=video.dtype), video),
+                                    audio.detach().clone()))
             if not bool(torch.isfinite(samples.unbind()[0]).all()):
                 raise RuntimeError(PREFIX + "Video output overflowed the original AV dtype.")
         output = dict(latent_image)

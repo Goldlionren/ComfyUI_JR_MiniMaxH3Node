@@ -1,14 +1,15 @@
-"""Stage-local H3 guide geometry and strict full-audio-lock support.
+"""Stage-local H3 guides, full audio locks and sequential hard-prefix support.
 
 Independent references have their own spatial grid. Keyframes share the target
-grid and must be re-encoded at the low canvas. Never resize encoded noisy state
-or mutate the user's high-resolution conditioning.
+grid. Legacy keyframes are re-encoded at the low canvas; explicitly supplied
+clean masters use independent spatial copies. Never resize noisy state.
 """
 
 from dataclasses import dataclass
 
 import torch
 
+from .h3_keyframe_latent import CROP_KEY, MASTER_KEY, resize_keyframe_latent, validate_keyframe_latent
 from .h3_progressive_sampler import _error
 
 
@@ -39,9 +40,11 @@ def _audio_lock(latent_image, video, audio):
 
     mask = latent_image.get("noise_mask")
     if mask is None:
+        if bool(torch.count_nonzero(video)):
+            raise _error("Connect an empty target video or a fully masked JR 12-token hard prefix.")
         if bool(torch.count_nonzero(audio)):
             raise _error("Nonempty audio requires a fully locked audio mask from JR Audio Driven Latent Builder.")
-        return False
+        return False, 0
     if type(mask) is not NestedTensor or len(mask.unbind()) != 2:
         raise _error("noise_mask must be an H3 AV NestedTensor (video=1, audio=0 or 1).")
     vm, am = mask.unbind()
@@ -49,12 +52,24 @@ def _audio_lock(latent_image, video, audio):
         if (not isinstance(value, torch.Tensor) or value.shape != target.shape or
                 value.layout != torch.strided or value.device.type == "meta" or not bool(torch.isfinite(value).all())):
             raise _error("Guided noise_mask must have exact AV stream shapes and finite values.")
-    if not bool((vm == 1).all()):
-        raise _error("Video masks / hard-prefix continuation are unsupported; video noise_mask must be all 1.")
     locked = bool((am == 0).all())
     if not locked and (not bool((am == 1).all()) or bool(torch.count_nonzero(audio))):
         raise _error("Audio noise_mask must be all 0 (locked) or all 1 with empty audio; partial/soft locks are unsupported.")
-    return locked
+    prefix_steps = 0
+    if not bool((vm == 1).all()):
+        # Share the disk-backed driver's temporal contract, not an arbitrary
+        # inpainting mask. A fresh generation suffix must remain empty.
+        from .h3_sequential_audio import HARD_CONTEXT_LATENT_STEPS
+
+        prefix_steps = HARD_CONTEXT_LATENT_STEPS
+        if (video.shape[2] <= prefix_steps or not locked or
+                not bool((vm[:, :, :prefix_steps] == 0).all()) or
+                not bool((vm[:, :, prefix_steps:] == 1).all())):
+            raise _error("Video noise_mask must be all 1, or a JR 12-token hard prefix (0) followed by "
+                         "an unlocked suffix (1), with fully locked audio. Spatial/soft/other video masks are unsupported.")
+    if bool(torch.count_nonzero(video[:, :, prefix_steps:])):
+        raise _error("Connect an empty target video generation area; only the locked JR hard prefix may be nonempty.")
+    return locked, prefix_steps
 
 
 @dataclass
@@ -63,6 +78,7 @@ class ProgressiveGuidance:
     audio_locked: bool
     has_mask: bool
     description: str
+    prefix_steps: int = 0
 
     def mask_for(self, samples):
         from comfy.nested_tensor import NestedTensor
@@ -70,17 +86,41 @@ class ProgressiveGuidance:
         if not self.has_mask:
             return None
         video, audio = samples.unbind()
-        return NestedTensor((torch.ones_like(video),
+        video_mask = torch.ones_like(video)
+        video_mask[:, :, :self.prefix_steps] = 0
+        return NestedTensor((video_mask,
                              torch.zeros_like(audio) if self.audio_locked else torch.ones_like(audio)))
+
+    def low_video(self, source, height, width):
+        """Resize only CLEAN context, spatially per token; never the noisy state."""
+        output = torch.zeros((*source.shape[:-2], height, width), dtype=source.dtype, device="cpu")
+        if self.prefix_steps:
+            prefix = source[:, :, :self.prefix_steps].detach().to(device="cpu", dtype=torch.float32)
+            if prefix.shape[-2:] != (height, width):
+                # Treat each temporal slice as an image: no mixing across time.
+                slices = prefix[0].movedim(1, 0)
+                prefix = torch.nn.functional.interpolate(slices, size=(height, width), mode="area")
+                prefix = prefix.movedim(0, 1).unsqueeze(0)
+            output[:, :, :self.prefix_steps] = prefix.to(dtype=source.dtype)
+        return output
+
+    def restore_prefix(self, output, source):
+        """Restore the original CLEAN high-resolution anchor, with owned storage."""
+        if not self.prefix_steps:
+            return output
+        output = output.clone()
+        output[:, :, :self.prefix_steps] = source[:, :, :self.prefix_steps].to(output)
+        return output
 
 
 def prepare_guidance(positive, latent_image, video, audio, plan, vae=None):
     from comfy.ldm.minimax.model import FRAME_PER_TOKEN, FRAME_RESCALE
 
-    locked = _audio_lock(latent_image, video, audio)
+    locked, prefix_steps = _audio_lock(latent_image, video, audio)
     frame_count = sum(FRAME_PER_TOKEN[k % 5] for k in range(video.shape[2]))
     keyframe_count = reference_count = 0
     needs_vae = False
+    needs_resize = False
     # Validate everything before any expensive VAE work.
     for _, metadata in positive:
         for kf in _blocks(metadata, "minimax_keyframes"):
@@ -100,7 +140,13 @@ def prepare_guidance(positive, latent_image, video, audio, plan, vae=None):
                 duration = sum(FRAME_PER_TOKEN[k % 5] for k in range(vt))
                 if index + duration > frame_count:
                     raise _error("Keyframe clip extends beyond the target timeline.")
-                needs_vae |= not plan.identity
+                if MASTER_KEY in kf:
+                    validate_keyframe_latent({"samples": kf[MASTER_KEY]}, "pre-encoded keyframe master")
+                    if vt != 1 or kf.get(CROP_KEY) not in {"disabled", "center"}:
+                        raise _error("Pre-encoded master requires a single-frame keyframe and an explicit crop mode.")
+                else:
+                    needs_vae |= not plan.identity
+                needs_resize |= not plan.identity
             if kf.get("audio_latent") is not None:
                 z = _tensor(kf["audio_latent"], "keyframe audio", audio=True)
                 if z.shape[-1] > audio.shape[-1] - FRAME_RESCALE * index:
@@ -132,7 +178,7 @@ def prepare_guidance(positive, latent_image, video, audio, plan, vae=None):
                          + "; ".join(capability["issues"]))
 
     low_positive = positive
-    if needs_vae:
+    if needs_resize:
         from comfy.utils import common_upscale
 
         low_positive, converted = [], {}
@@ -144,6 +190,12 @@ def prepare_guidance(positive, latent_image, video, audio, plan, vae=None):
                     kf = dict(original)
                     z = kf.get("latent")
                     if z is not None:
+                        if MASTER_KEY in kf:
+                            kf["latent"] = resize_keyframe_latent(
+                                kf[MASTER_KEY], plan.low_w * 16, plan.low_h * 16, kf[CROP_KEY]
+                            ).to(device=z.device, dtype=z.dtype)
+                            low_keyframes.append(kf)
+                            continue
                         if id(z) not in converted:
                             pixels = vae.decode(z)
                             # Native video VAE returns [B,frames,H,W,C]; the
@@ -168,4 +220,7 @@ def prepare_guidance(positive, latent_image, video, audio, plan, vae=None):
             low_positive.append([text, low_metadata])
     return ProgressiveGuidance(low_positive, locked, latent_image.get("noise_mask") is not None,
                                f"Guides: {reference_count} independent refs, {keyframe_count} keyframe blocks; "
-                               f"audio {'LOCKED (original latent preserved)' if locked else 'generated'}")
+                               f"audio {'LOCKED (original latent preserved)' if locked else 'generated'}"
+                               + (f"; hard prefix LOCKED: {prefix_steps} latent tokens / 39 frames; "
+                                  "original high-resolution context restored" if prefix_steps else ""),
+                               prefix_steps=prefix_steps)

@@ -27,6 +27,7 @@ from .director_state import (
     canonical_time,
 )
 from .h3_directed_conditioning import materialize_runtime_audio, validated_runtime_media
+from .h3_keyframe_latent import validate_keyframe_latent
 
 MAX_REFERENCE_IMAGES = 9
 
@@ -50,6 +51,8 @@ class UnpackedDirectorPipe:
     driving_audio: Any
     registry_json: str
     status: str
+    first_latent: Any = None
+    last_latent: Any = None
 
 
 def _prompt(value: Any) -> str:
@@ -166,6 +169,8 @@ def build_pipe_from_standard_inputs(
     driving_audio: Any = None,
     reference_videos: tuple[Any, ...] = (),
     reference_audios: tuple[Any, ...] = (),
+    first_latent: Any = None,
+    last_latent: Any = None,
 ) -> DirectorPipe:
     """Build one immutable runtime-only Director PIPE from standard ComfyUI values."""
 
@@ -183,8 +188,15 @@ def build_pipe_from_standard_inputs(
     audios: list[AudioState] = []
     runtime: list[RuntimeMedia] = []
 
-    def add_image(key: str, role: str, payload: Any, order: int, start: float, end: float) -> None:
-        _, width, height = _image_shape(payload, key, require_single=True)
+    def add_image(key: str, role: str, payload: Any, order: int, start: float, end: float, latent=None) -> None:
+        stored_latent = None
+        if latent is not None:
+            z = validate_keyframe_latent(latent, role.replace("frame", "latent"))
+            stored_latent = dict(latent, samples=z.detach().clone())
+        if payload is not None:
+            _, width, height = _image_shape(payload, key, require_single=True)
+        else:
+            height, width = (int(s) * 16 for s in stored_latent["samples"].shape[-2:])
         asset = _asset(key, "image", width=width, height=height)
         item_id = f"runtime-{key}"
         visuals.append(VisualState(
@@ -200,12 +212,13 @@ def build_pipe_from_standard_inputs(
             registry_order=order,
             asset=asset,
         ))
-        runtime.append(_runtime(asset, item_id, payload, {"height": height, "width": width}))
+        runtime.append(RuntimeMedia(asset.id, item_id, "image", payload,
+                                    (("height", height), ("width", width)), stored_latent))
 
-    if first_frame is not None:
-        add_image("first-frame", "first_frame", first_frame, 1, 0.0, 0.0)
-    if last_frame is not None:
-        add_image("last-frame", "last_frame", last_frame, 2, duration, duration)
+    if first_frame is not None or first_latent is not None:
+        add_image("first-frame", "first_frame", first_frame, 1, 0.0, 0.0, first_latent)
+    if last_frame is not None or last_latent is not None:
+        add_image("last-frame", "last_frame", last_frame, 2, duration, duration, last_latent)
 
     reference_count = 0
     if reference_images is not None:
@@ -216,7 +229,7 @@ def build_pipe_from_standard_inputs(
         )
         if reference_count > MAX_REFERENCE_IMAGES:
             raise ValueError(f"reference_images supports at most {MAX_REFERENCE_IMAGES} IMAGEs.")
-        picture_total = reference_count + int(first_frame is not None) + int(last_frame is not None)
+        picture_total = reference_count + int(first_frame is not None or first_latent is not None) + int(last_frame is not None or last_latent is not None)
         if picture_total > MAX_REFERENCE_IMAGES:
             raise ValueError(
                 "first_frame, last_frame and reference_images together exceed the native 9-Picture limit."
@@ -312,6 +325,8 @@ def _image_for_record(pipe: DirectorPipe, record: Any | None) -> Any:
     if record is None:
         return None
     media = validated_runtime_media(pipe, record.item_id, "Picture")
+    if media.payload is None and media.keyframe_latent is not None:
+        return None
     _image_shape(media.payload, record.label, require_single=True)
     return media.payload
 
@@ -431,6 +446,8 @@ def unpack_director_pipe(
         driving_audio=_audio_for_record(pipe, selected_driving_audio),
         registry_json=registry_json,
         status=status,
+        first_latent=(pipe.media_for_item(anchors_first[0].item_id).keyframe_latent if anchors_first else None),
+        last_latent=(pipe.media_for_item(anchors_last[0].item_id).keyframe_latent if anchors_last else None),
     )
 
 

@@ -59,6 +59,11 @@ def pipe_to_optimizer_context(pipe: DirectorPipe, image_send_size: int) -> Direc
                 source, registry_role, source_key=record.item_id, identifier=record.label,
             )
             media = runtime_by_item.get(record.item_id)
+            if media is not None and media.payload is None and media.keyframe_latent is not None:
+                raise ValueError(
+                    f"Director PIP {record.role}: connect the matching IMAGE as well as LATENT "
+                    "for the prompt optimizer's vision input; the optimizer cannot decode latents."
+                )
             if media is None or media.kind != "image" or media.payload is None:
                 raise ValueError(f"Director PIP image payload is missing for {record.label}.")
             urls = image_batch_to_jpeg_data_urls(media.payload, int(image_send_size))

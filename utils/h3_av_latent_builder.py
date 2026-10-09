@@ -117,22 +117,24 @@ def _check_finite(tensor: torch.Tensor, name: str) -> None:
 
 
 def _check_temporal_compatibility(video_t: int, audio_t: int) -> H3TimelineMatch:
-    if video_t < 2 or (video_t - 2) % 5 != 0:
+    if video_t != 1 and (video_t < 2 or (video_t - 2) % 5 != 0):
         raise _error(
             "video_latent has an invalid H3 temporal grid. "
-            "Expected T_video = 5k + 2, corresponding to the official 17k + 5 frame grid, "
+            "Expected T_video = 5k + 2 (official 17k + 5 frame grid), or T_video=1 for single-frame refinement, "
             f"but received T_video={video_t}."
         )
-    block_count = (video_t - 2) // 5
-    frame_count = 5 + 17 * block_count
+    frame_count = 1 if video_t == 1 else 5 + 17 * ((video_t - 2) // 5)
     expected_audio_t = round(frame_count * AUDIO_LATENT_FPS / H3_FPS)
     delta = audio_t - expected_audio_t
-    if abs(delta) > AUDIO_TEMPORAL_TOLERANCE:
+    # The experimental image branch has exactly two audio ticks. Keep the legacy
+    # video encoder-boundary tolerance unchanged, rather than applying it to T=1.
+    tolerance = 0 if video_t == 1 else AUDIO_TEMPORAL_TOLERANCE
+    if abs(delta) > tolerance:
         raise _error(
             "video/audio temporal mismatch.\n\n"
-            f"video latent T: {video_t} (official timeline: {frame_count} frames at {H3_FPS} fps)\n"
+            f"video latent T: {video_t} (timeline: {frame_count} frames at {H3_FPS} fps)\n"
             f"audio latent T: {audio_t}\n"
-            f"expected audio latent T: {expected_audio_t} ± {AUDIO_TEMPORAL_TOLERANCE}\n\n"
+            f"expected audio latent T: {expected_audio_t} ± {tolerance}\n\n"
             "These two latents do not appear to represent the same H3 timeline."
         )
     return H3TimelineMatch(
@@ -159,7 +161,7 @@ def _format_status(video: torch.Tensor, audio: torch.Tensor, timeline: H3Timelin
     audio_seconds = timeline.audio_latent_t / AUDIO_LATENT_FPS
     return "\n".join(
         (
-            "Success",
+            "Success (experimental single-frame refinement)" if timeline.video_latent_t == 1 else "Success",
             f"video: {_shape(video)}",
             f"audio: {_shape(audio)}",
             f"batch: {video.shape[0]}",

@@ -46,6 +46,7 @@ class RuntimeMedia:
     kind: str
     payload: Any = field(repr=False)
     metadata: tuple[tuple[str, Any], ...] = ()
+    keyframe_latent: Any = field(default=None, repr=False)
 
     def metadata_dict(self) -> dict[str, Any]:
         return dict(self.metadata)
@@ -189,6 +190,12 @@ def validate_director_pipe(value: Any) -> DirectorPipe:
             raise ValueError(f"Director PIP runtime media asset_id does not match item {media.item_id!r}.")
         if media.kind != item.asset.kind:
             raise ValueError(f"Director PIP runtime media kind does not match item {media.item_id!r}.")
+        if media.keyframe_latent is not None:
+            from .h3_keyframe_latent import validate_keyframe_latent
+
+            if media.kind != "image" or item.role not in {"first_frame", "last_frame"}:
+                raise ValueError("Pre-encoded H3 latents are only supported for first/last frame anchors.")
+            validate_keyframe_latent(media.keyframe_latent, item.role)
         seen.add(media.item_id)
     return value
 

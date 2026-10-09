@@ -34,7 +34,7 @@ AUDIO -> H3 Audio VAE Encode -> audio_latent        ┘
 3. audio 必须是 floating、strided、materialized tensor `[B,32,2,T]`。
 4. batch、dtype 和 device 必须完全一致；不会自动 cast 或跨设备复制。
 5. 所有 tensor 值必须为 finite，NaN/Inf 会在组装前拒绝。
-6. video temporal grid 必须满足 `T_video=5k+2`。
+6. 完整视频 temporal grid 必须满足 `T_video=5k+2`；实验性单帧二采另接受 `T_video=1`，此时 audio 必须恰好 `T=2`。
 
 当前 ComfyUI 官方 MiniMax H3 实现将 `17k+5` 个 24 fps 原始帧编码为 `5k+2` 个 video latent token，并按 40 latent ticks/s 计算 audio 长度：
 
@@ -44,6 +44,10 @@ expected_audio_t = round(frame_count × 40 / 24)
 ```
 
 audio 允许相对该公式 ±1 tick，用于容纳编码边界的单 tick 舍入差异。例：video `T=37` 对应 124 帧，目标 audio `T=207`；`T=206..208` 可接受，而 `T=400` 会明确报 temporal mismatch。
+
+单帧二采使用 `round(1 × 40 / 24)=2` 音频 ticks，不套用完整视频的 ±1 容差。
+用 [Empty Audio Latent for Tail](H3_EMPTY_AUDIO_LATENT_FOR_TAIL.md) 从单帧视频自动创建匹配 dtype/device 的空音频。
+这不会把视频补成 5 帧，也不会截取或保留原视频的声音。
 
 ## 非职责范围
 

@@ -32,6 +32,7 @@ class DirectedInputs:
     ref_images: tuple[tuple[str, Any], ...] = ()
     ref_videos: tuple[tuple[str, Any], ...] = ()
     ref_audios: tuple[tuple[str, Any], ...] = ()
+    latent_anchors: tuple[tuple[str, RuntimeMedia], ...] = ()
 
 
 def _media_map(pipe: DirectorPipe) -> dict[str, RuntimeMedia]:
@@ -313,6 +314,11 @@ def prepare_directed_inputs(
         for record in records
     )
     anchor_records = tuple(record for record in records if record.role in {"first_frame", "last_frame"})
+    latent_anchors = tuple(
+        (record.role, validated_runtime_media(pipe, record.item_id, "Picture"))
+        for record in anchor_records
+        if validated_runtime_media(pipe, record.item_id, "Picture").keyframe_latent is not None
+    )
     if mode_override == "Auto":
         mode = "Reference to Video" if reference_only else "Image to Video"
     elif mode_override in {"Image to Video", "Reference to Video"}:
@@ -335,6 +341,8 @@ def prepare_directed_inputs(
             for record in anchor_records
         }
         for role, media in frames.items():
+            if media.keyframe_latent is not None and media.payload is None:
+                continue
             if media is None or media.payload is None:
                 raise ValueError(f"Director PIP {role} has no runtime IMAGE payload.")
             shape = getattr(media.payload, "shape", ())
@@ -348,6 +356,7 @@ def prepare_directed_inputs(
             length=length,
             first_frame=frames.get("first_frame").payload if frames.get("first_frame") else None,
             last_frame=frames.get("last_frame").payload if frames.get("last_frame") else None,
+            latent_anchors=latent_anchors,
         )
 
     pictures = [record for record in records if record.family == "Picture"]
@@ -362,6 +371,9 @@ def prepare_directed_inputs(
     ref_images = []
     for index, record in enumerate(pictures):
         media = validated_runtime_media(pipe, record.item_id, "Picture")
+        if media.keyframe_latent is not None and media.payload is None:
+            ref_images.append((f"ref_image_{index}", None))
+            continue
         if media.payload is None:
             raise ValueError(f"Director PIP {record.label} has no runtime IMAGE payload.")
         shape = getattr(media.payload, "shape", ())
@@ -395,6 +407,7 @@ def prepare_directed_inputs(
         ref_images=tuple(ref_images),
         ref_videos=tuple(ref_videos),
         ref_audios=tuple(ref_audios),
+        latent_anchors=latent_anchors,
     )
 
 

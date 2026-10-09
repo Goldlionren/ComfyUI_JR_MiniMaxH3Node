@@ -433,12 +433,30 @@ def _candidate_checkpoint_names() -> list[str]:
     ]
 
 
-def _select_checkpoint(input_dtype: torch.dtype) -> tuple[str, str]:
+def list_h3_upscaler_models() -> list[str]:
+    """List names only; opening the node never loads/downloads model weights."""
+    try:
+        candidates = _candidate_checkpoint_names()
+    except H3NeuralLatentUpscalerError:
+        # Keep the node and legacy workflows loadable when the model folder is
+        # absent. Actual upscale execution retains the actionable error.
+        candidates = []
+    return ["auto", *sorted(set(candidates), key=lambda name: (name.casefold(), name))]
+
+
+def _select_checkpoint(input_dtype: torch.dtype, model_name: str = "auto") -> tuple[str, str]:
     try:
         import folder_paths
     except ImportError:
         raise RuntimeError(f"{ERROR_PREFIX}\nComfyUI folder_paths is unavailable.") from None
     candidates = _candidate_checkpoint_names()
+    if not isinstance(model_name, str) or not model_name:
+        raise _error("model_name must be 'auto' or a listed H3 upscaler checkpoint name.")
+    if model_name != "auto":
+        if model_name not in candidates:
+            raise _error(f"Selected H3 upscaler checkpoint is unavailable: {model_name!r}. "
+                         "Refresh the model list and choose an installed model; automatic substitution is disabled.")
+        return model_name, folder_paths.get_full_path_or_raise(MODEL_FOLDER, model_name)
     model_roots = folder_paths.get_folder_paths(MODEL_FOLDER)
     expected_path = str(Path(model_roots[0]) if model_roots else Path(folder_paths.models_dir) / MODEL_FOLDER)
     if not candidates:
@@ -542,12 +560,14 @@ def _run_temporally_chunked(
 NeuralRunner = Callable[[torch.Tensor, H3UpscalePlan], torch.Tensor]
 
 
-def _run_checkpoint_backend(samples: torch.Tensor, plan: H3UpscalePlan) -> tuple[torch.Tensor, str]:
+def _run_checkpoint_backend(
+    samples: torch.Tensor, plan: H3UpscalePlan, model_name: str = "auto",
+) -> tuple[torch.Tensor, str]:
     try:
         import comfy.model_management as model_management
     except ImportError:
         raise RuntimeError(f"{ERROR_PREFIX}\nComfyUI model management is unavailable.") from None
-    model_name, path = _select_checkpoint(samples.dtype)
+    model_name, path = _select_checkpoint(samples.dtype, model_name)
     cached = _load_cached_model(path)
     patcher = cached.patcher
     model_management.load_models_gpu([patcher], force_full_load=True)
@@ -632,12 +652,17 @@ def upscale_h3_video_latent(
     scale: float,
     target_megapixels: float,
     *,
+    model_name: str = "auto",
     neural_runner: NeuralRunner | None = None,
     contract: H3SpatialContract | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Validate, plan and neurally upscale one plain H3 video LATENT."""
 
     samples = _validate_video_latent(video_latent)
+    if model_name != "auto":
+        # Validate explicit selection even for identity size, without loading
+        # weights. Never reinterpret a missing named model as 'auto'.
+        _select_checkpoint(samples.dtype, model_name)
     plan = plan_h3_latent_upscale(
         input_h=int(samples.shape[3]),
         input_w=int(samples.shape[4]),
@@ -649,14 +674,14 @@ def upscale_h3_video_latent(
     result = dict(video_latent)
     if plan.output_h == plan.input_h and plan.output_w == plan.input_w:
         result["samples"] = samples
-        return result, _format_status(samples, plan, "identity (checkpoint not loaded)")
+        return result, _format_status(samples, plan, "identity (checkpoint not loaded)") + f"\nmodel selection: {model_name}"
     if neural_runner is None:
-        output, model_name = _run_checkpoint_backend(samples, plan)
+        output, actual_model = _run_checkpoint_backend(samples, plan, model_name)
     else:
         output = neural_runner(samples, plan)
-        model_name = "test neural runner"
+        actual_model = "test neural runner"
     result["samples"] = _validate_backend_output(output, samples, plan)
-    return result, _format_status(samples, plan, model_name)
+    return result, _format_status(samples, plan, actual_model) + f"\nmodel selection: {model_name}"
 
 
 def upscale_h3_video_to_size(
@@ -699,6 +724,7 @@ __all__ = [
     "H3UpscalePlan",
     "build_network_from_state_dict",
     "get_h3_spatial_contract",
+    "list_h3_upscaler_models",
     "plan_h3_latent_upscale",
     "upscale_h3_video_latent",
     "upscale_h3_video_to_size",

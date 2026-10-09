@@ -12,7 +12,8 @@ class JR_MiniMaxH3AVLatentBuilder:
     RETURN_NAMES = ("latent", "status")
     DESCRIPTION = (
         "Validates separately encoded MiniMax H3 video/audio latent tensors and wraps them "
-        "as the official two-stream H3 NestedTensor LATENT without encoding, casting or copying."
+        "as the official two-stream H3 NestedTensor LATENT without encoding, casting or copying. "
+        "Also accepts experimental single-frame refinement: video T=1 with audio T=2."
     )
 
     @classmethod

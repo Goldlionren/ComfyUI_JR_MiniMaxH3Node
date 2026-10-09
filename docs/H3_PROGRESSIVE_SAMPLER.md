@@ -69,7 +69,7 @@ Neural Upscaler 使用现有 `models/latent_upscale_models/minimax_h3_latent_ups
 ## Progressive Guided Sampler：参考图、首尾帧、音频驱动
 
 新增独立 Node ID：`JR_H3_ProgressiveGuidedSampler`，显示名称 `JR MiniMax H3 Progressive Guided Sampler (Experimental)`。
-保留原 T2VA 节点的严格行为。输入与输出同原节点，另有可选 `vae: VAE`：存在视频 keyframe 且 scale<1 时必须接**编码引导所用的同一个 H3 视频 VAE**，不能接音频 VAE。
+保留原 T2VA 节点的严格行为。输入与输出同原节点，另有可选 `vae: VAE`：存在传统视频 keyframe 且 scale<1 时必须接**编码引导所用的同一个 H3 视频 VAE**，不能接音频 VAE。Director PIPE 显式输入的单帧 clean latent master 使用独立空间副本；全部 keyframe 都携带 master 时不需要此 VAE。
 
 | 用法 | 接线 | 示例 |
 | --- | --- | --- |
@@ -83,11 +83,33 @@ Neural Upscaler 使用现有 `models/latent_upscale_models/minimax_h3_latent_ups
 
 ### 引导在切换处如何保留
 
+- 实验性 `Director PIPE Builder.first_latent / last_latent` 经 Directed Conditioning 携带高清 master 标记。低阶段直接从 master 制作匹配画布的 latent 副本，不从已经缩小的高阶段副本再缩一次；保留首帧 stretch / 尾帧 center-crop 规则。高阶段 conditioning 和 master 都不被修改。该路径避免 VAE 往返，但 latent 插值仍可能改变细节，需实测连续接续画质。详见 [Director PIPE 输入契约](DIRECTOR_PIPE_IO.md)。下面的解码／重编码规则仅适用于没有 master 标记的传统 keyframe。
+
 - `minimax_refs` 使用独立空间网格，两阶段保留原始 block、顺序、尺寸、音视频 tensor 和 metadata，不将参考图缩成目标低分辨率。
 - `minimax_keyframes` 使用目标空间网格。低阶段将干净 keyframe latent 经 video VAE 解码、像素域 area 缩小、同一 VAE 重编码；保留帧索引、时间长度、audio_latent 和其他 metadata。高阶段直接使用原始 conditioning，不用重编码结果覆盖它。重复引用只编码一次。scale=1 不加载／调用 VAE。
-- 接受无 mask 的空 AV，或形状与 AV 完全一致的官方 NestedTensor mask：video 全 1；audio 全 0（锁定）或全 1（必须为空 audio）。拒绝局部／软音频 mask、video mask、hard-prefix、已采样 video、batch>1、conditioning mask/area/control/hooks。
+- 接受无 mask 的空 AV，或形状与 AV 完全一致的官方 NestedTensor mask：video 全 1；audio 全 0（锁定）或全 1（必须为空 audio）。另支持下节的 JR 无限 MV 12-token hard prefix。仍拒绝局部／软音频 mask、其他 video mask、生成区非空的已采样 video、batch>1、conditioning mask/area/control/hooks。
 - audio 锁定时，低阶段原生 inpaint 注入原始干净 audio；切换后恢复相同干净 audio 作为高阶段锚点，不使用 noisy resume audio。最终再次保留原始音频数值与 dtype，外层 noise_mask、batch_index 和 metadata 不变。仍使用有效 MODEL 的 AV sigma shift。
 - 两阶段使用独立原生 Guider，PackedLayout 根据实际 target grid 重建。沿用开始／切换／finally 的 Adaptive Cache reset。拒绝隐式替换 Euler 的 wrapper。
+
+### 无限 MV：Hard Latent Prefix（2026-09-17，开发版）
+
+仍使用同一个 `JR_H3_ProgressiveGuidedSampler`，不新增节点、插槽或开关。第一段走原来的空视频／锁音频路径；后续段自动识别 `JR_H3_SequentialContinuationGuide` 的硬前缀：video 前 12 个 latent token 全锁（mask=0，39 帧），其余 token 全开放（mask=1）且输入为空，audio 全锁。仅支持完整 denoise=1 的标准 Euler schedule；不是任意 latent 的二采／局部重绘入口。
+
+接线：
+
+1. `SequentialAudioChunkDriver` → `SequentialContinuationGuide` 保持原样，模式保留 **Hard Latent Prefix**。
+2. Guide 的 `positive`、`latent` 分别接 Guided 的 `positive`、`latent_image`。使用同一最终 MODEL 计算 sigmas；原 BasicGuider 不再接采样器。
+3. Driver 的 `chunk_seed` 接官方 RandomNoise 的 `noise_seed`（把控件转换为输入），RandomNoise → Guided.noise。不要让独立随机 seed 绕过 Driver 的派生规则。
+4. Guided 的 `LATENT` 接原 `SequentialLatentCheckpoint`；Guide 的 context 继续直达 Checkpoint。后续 Split AV、Decode、SequentialVideoOutput、队列续跑接线不变。
+5. 纯 hard prefix + 独立 refs 不需要 VAE 输入；若同时使用传统 keyframes，仍需接同一个视频 VAE。不要对前缀再单独 encode/decode。
+
+低阶段只对干净前缀逐 token 做空间 area 缩小，时间维度不变。生成区维持空 latent，音频原样保留。切换时沿用已有 x0 神经放大／sigma resume，然后用**原始高分辨率干净前缀**覆盖 resume 的锁定区；不把 noisy resume 当作 clean anchor。两阶段每次模型调用均走 ComfyUI 原生 H3 inpaint 注入（包含原生视觉条件 timestep 和音频 shift），mask 同步适配空间尺寸。高阶段仍使用零新增噪声；因此锁定视频条件的微量 noise augmentation 与低阶段不完全相同，这不是普通全分辨率采样的数学等价变换。
+
+最终再恢复原始前缀和 audio 的精确数值，避免 dtype／归一化往返漂移。这不是只在输出上拼接：真实小型 H3 回归检查了每步注入和阶段输入。原始 latent、mask、metadata 不被修改。现有 Adaptive Cache 在阶段边界继续 reset，TST 仍共享完整 sigma schedule；不更换 Unified 的 attention backend。
+
+建议先用新的 `run_id` 做至少三段 A/B，保留原缓存以便比较。先关自动续跑，手动验收前两次接头，再开队列。可从用户之前偏好的 scale=0.6、现有 6 步／transition_step=4 起测；scale=1 是不发生空间切换的对照。8 秒 preset 仍为 192 帧／57 video tokens／320 audio ticks，第二段起仍裁掉 39 帧重叠；本功能不改变分段时长或音频播放速度。
+
+重点对比接头身份／背景／动作、口型、连续三段的漂移和耗时；前缀数值锁定不保证新生成区语义／画质不变。验收使用合成数据、真实小型 H3 和原生 Guider/Euler，覆盖三段磁盘 checkpoint/恢复、TST 开关、RandomNoise/DisableNoise、精确音频/前缀、fp32/fp16/bf16、固定配置重现和错误 mask 拒绝。神经放大与媒体 codec 在回归中使用替身，完整模型视觉质量与实际速度仍需生产 A/B；此开发变更不代表已同步生产或 GitHub。
 
 ### 验收与已知风险
 
