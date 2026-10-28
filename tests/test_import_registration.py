@@ -2,8 +2,12 @@ import importlib
 import sys
 
 EXPECTED = {
+    "JR_H3_VedaAttention",
     "JR_LTXBridgeTextEncoderLoader",
     "JR_H3ToLTXLatentAdapter", "JR_H3LTXRefineSetup", "JR_H3LTXFinishMedia",
+    "JR_CutAudio",
+    "JR_H3_EmptyAudioLatentForTail",
+    "JR_H3_TailFrameLatent",
     "JR_H3_TaoMateChunkPlanner",
     "JR_H3_StreamingSampler",
     "JR_H3_ProgressiveGuidedSampler",
@@ -35,7 +39,7 @@ def test_root_import_and_exact_registration(package_name):
     assert set(package.NODE_CLASS_MAPPINGS) == EXPECTED
     assert set(package.NODE_DISPLAY_NAME_MAPPINGS) == EXPECTED
     assert all(
-        name.startswith(("JR MiniMax H3", "JR H3", "JR LTX Bridge")) or name == "H3 Unified Acceleration"
+        name.startswith(("JR MiniMax H3", "JR H3", "JR LTX Bridge")) or name in {"H3 Unified Acceleration", "JR Cut Audio"}
         for name in package.NODE_DISPLAY_NAME_MAPPINGS.values()
     )
     assert package.__version__ == "0.20.0"

@@ -12,7 +12,8 @@ class JR_H3_DirectedVideoConditioning:
     RETURN_NAMES = ("positive", "latent")
     DESCRIPTION = (
         "Consumes the immutable Director PIP and delegates to ComfyUI's current native "
-        "MiniMax H3 Image-to-Video or Reference-to-Video conditioning implementation."
+        "MiniMax H3 Image-to-Video or Reference-to-Video conditioning implementation. "
+        "Pre-encoded PIPE anchors use an explicit native-payload adapter and preserve their high-resolution masters."
     )
 
     @classmethod
@@ -81,6 +82,10 @@ class JR_H3_DirectedVideoConditioning:
             length=length,
             native_module=native,
         )
+        if prepared.latent_anchors:
+            from ..utils.h3_preencoded_conditioning import condition_preencoded_anchors
+
+            return condition_preencoded_anchors(prepared, pipe, clip, vae, audio_vae, native, ref_image_size)
         if prepared.mode == "Image to Video":
             result = native_classes["Image to Video"].execute(
                 clip=clip,

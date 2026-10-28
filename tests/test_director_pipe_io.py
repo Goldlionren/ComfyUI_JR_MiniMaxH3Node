@@ -68,6 +68,8 @@ def test_node_contracts_are_compact_and_standard_typed():
         "driving_audio",
         "reference_videos",
         "reference_audios",
+        "first_latent",
+        "last_latent",
     ]
     assert JR_H3_DirectorPipeBuilder.RETURN_TYPES == ("JR_H3_DIRECTOR_PIPE",)
     assert JR_H3_DirectorPipeBuilder.RETURN_NAMES == ("pip",)
@@ -98,6 +100,8 @@ def test_node_contracts_are_compact_and_standard_typed():
         "driving_audio",
         "registry_json",
         "status",
+        "first_latent",
+        "last_latent",
     )
     assert len(JR_H3_DirectorPipeUnpack.RETURN_TYPES) == len(JR_H3_DirectorPipeUnpack.RETURN_NAMES)
 

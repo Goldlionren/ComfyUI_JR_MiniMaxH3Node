@@ -1,6 +1,6 @@
 # ComfyUI JR MiniMax H3 Node
 
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 32 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 36 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
 当前包版本：`0.20.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
 
@@ -10,7 +10,9 @@
 
 本地实验功能：[JR H3 Progressive Sampler](docs/H3_PROGRESSIVE_SAMPLER.md)。支持空 AV latent 的 Euler 同 sigma schedule 空间切换；旧 dual sampling 保留。导入 [T2VA A/B 示例](examples/JR_H3_Progressive_T2VA_Experimental.json) 开始测试。
 
-新增 Progressive Guided Sampler：支持独立参考图、首帧／首尾帧、锁定音频及组合。示例：[Ref2VA](examples/JR_H3_Progressive_Ref2VA_Experimental.json)、[首尾帧](examples/JR_H3_Progressive_FirstLast_Experimental.json)、[音频驱动＋首帧](examples/JR_H3_Progressive_AudioDrive_Experimental.json)。默认 5 秒（H3 对齐约 5.17 秒），请选择自己的图片／音频。
+新增 Progressive Guided Sampler：支持独立参考图、首帧／首尾帧、锁定音频及组合。开发版亦支持无限 MV 的 JR 12-token Hard Latent Prefix，原节点与续跑接线保留，见[接线与验收说明](docs/H3_PROGRESSIVE_SAMPLER.md)。示例：[Ref2VA](examples/JR_H3_Progressive_Ref2VA_Experimental.json)、[首尾帧](examples/JR_H3_Progressive_FirstLast_Experimental.json)、[音频驱动＋首帧](examples/JR_H3_Progressive_AudioDrive_Experimental.json)。默认 5 秒（H3 对齐约 5.17 秒），请选择自己的图片／音频。
+
+独立实验：[JR H3 VEDA Attention](docs/H3_VEDA_ATTENTION.md)。从干净 H3 MODEL 分支接入，与 Sol-H3 二选一；现有 Unified/Sol-H3 实现和默认值不变。
 
 ## Sol-H3 实验更新（2026-09-30）
 
@@ -21,8 +23,11 @@
 
 ## 节点一览
 
+新增 [JR Cut Audio](docs/CUT_AUDIO.md)：上传音乐、波形定位、按秒选区、Cut 锁定、下载原音频／剪辑 WAV，输出标准 AUDIO；不需要运行视频模型。
+
 | 显示名称 | 稳定 Node ID | 分类 | 主要输出 |
 | --- | --- | --- | --- |
+| JR Cut Audio | `JR_CutAudio` | Audio | 剪辑 AUDIO、时长（秒）、状态 |
 | JR MiniMax H3 Hybrid Loader | `JR_H3_HybridLoader` | Loaders | 一个原生 `MODEL` |
 | JR MiniMax H3 Director Desk | `JR_H3_DirectorDesk` | Director | 原始 Director Prompt、`JR_H3_DIRECTOR_PIPE` |
 | JR MiniMax H3 Director PIPE Builder | `JR_H3_DirectorPipeBuilder` | Director | 标准 STRING/IMAGE/VIDEO/AUDIO 组装的 PIPE |
@@ -48,6 +53,8 @@
 | JR MiniMax H3 RTX Upscaler & Refiner | `JR_H3_RTXUpscalerRefiner` | Video | 后处理 IMAGE |
 | JR MiniMax H3 Enhanced Video Combine | `JR_H3_EnhancedVideoCombine` | Video | IMAGE 帧、保存路径 |
 | JR MiniMax H3 Last Frame | `JR_H3_LastFrame` | Utility | 最后一帧 IMAGE |
+| JR MiniMax H3 Tail Frame Latent (Experimental) | `JR_H3_TailFrameLatent` | Latent | 尾帧 IMAGE / 单帧 LATENT，另保留原始尾部上下文 LATENT |
+| JR MiniMax H3 Empty Audio Latent for Tail (Experimental) | `JR_H3_EmptyAudioLatentForTail` | Latent | 为尾部短片或旧单帧自动匹配长度及 dtype/device 的空音频 LATENT |
 
 完整输入、默认值、范围和输出见 [节点参数参考](docs/NODE_REFERENCE.md)。
 
@@ -309,6 +316,8 @@ AUDIO -> H3 Audio VAE Encode -> audio_latent        ┘
 
 节点严格要求 video 为 `[B,24,T,H,W]`、audio 为 `[B,32,2,T_audio]`，batch、dtype 和 device 完全一致，数值全部 finite。官方 H3 时间网格为 `T_video=5k+2`，对应 `17k+5` 个 24 fps 原始帧；音频按 40 latent ticks/s 校验，并只容许 ±1 tick 的编码边界差异。节点不会 clone、cast 或移动输入 tensor。详见 [H3 AV Latent Builder](docs/H3_AV_LATENT_BUILDER.md)。
 
+实验性尾帧二采另支持 `T_video=1`、`T_audio=2`（严格两 tick）。将放大后的单帧 latent 分别接到 Builder 的 video 输入和新节点 `Empty Audio Latent for Tail`，后者输出接 Builder 的 audio 输入，即可进入普通二采。它是零初始化占位，不是原视频的末尾音频或编码静音；二采音频直接弃用。详见[接线与边界](docs/H3_EMPTY_AUDIO_LATENT_FOR_TAIL.md)。
+
 `JR_H3_AudioDrivenLatentBuilder` 用外部经 MiniMax H3 Audio VAE 编码的 audio latent 替换现有 H3 AV latent 的 audio 分支。它保留上游 video noise mask（缺失时才生成 `ones_like(video)`），并强制 audio mask 为 `zeros_like(audio)`，使采样时 video 可生成而 audio 被锁定。
 
 ```text
@@ -479,6 +488,10 @@ H.264 NVENC 常见最大宽度为 4096。横向拼接后出现 `4352×2880` 等�
 ## Last Frame
 
 `Last Frame` 要求非空 `[B,H,W,C]` IMAGE batch，并保持 batch 轴返回最后一帧。若输入来自 Enhanced Video Combine，必须启用 `pass_frames=true`；`save_last_frame=true` 只负责写 PNG，不等同于图中的 IMAGE 输出。
+
+新增实验性 `Tail Frame Latent`：接最终采样后的 `Split AV Latent.video_latent` 和 H3 视频 VAE，获取真实尾帧，编码一次后同时输出 `tail_image` / `tail_latent`，分别用于壁纸与下一轮 Director 的 `first_frame` / `first_latent`。可接已有解码 IMAGE 跳过重复解码。保持视频最终尺寸，不是零编码提取或高清增强；不能把最后一个压缩时间片直接当作单帧 latent。详见[接线、边界与测试方法](docs/H3_TAIL_FRAME_LATENT.md)。
+
+尾部放大测试改用追加的 `tail_context_latent`：保留正常尾帧解码所需的原始窗口，通常为 7 个时间片 / 22 帧；Empty Audio 自动匹配 37 ticks。先直接 Decode 取最后一张验证一致性，再接放大与普通二采。旧单帧 latent 直接重建已观察到亮度/条纹异常，尚未解决；新上下文不能直接作为 Director 的单帧引导。
 
 ## 示例
 

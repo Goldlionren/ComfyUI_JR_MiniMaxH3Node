@@ -12,7 +12,7 @@ class JR_H3_DirectorPipeBuilder(io.ComfyNode):
     RETURN_TYPES = ("JR_H3_DIRECTOR_PIPE",)
     RETURN_NAMES = ("pip",)
     DESCRIPTION = (
-        "Builds an immutable Director PIPE from standard ComfyUI STRING, IMAGE, VIDEO and AUDIO values. "
+        "Builds an immutable Director PIPE from standard ComfyUI STRING, IMAGE, VIDEO, AUDIO and optional H3 frame LATENTs. "
         "Runtime tensors/media stay out of workflow JSON."
     )
 
@@ -39,6 +39,10 @@ class JR_H3_DirectorPipeBuilder(io.ComfyNode):
                 io.Autogrow.Input("reference_audios", optional=True,
                     template=io.Autogrow.TemplateNames(io.Audio.Input("audio"),
                         names=["reference_audio_2", "reference_audio_3"], min=0)),
+                io.Latent.Input("first_latent", optional=True,
+                    tooltip="Clean single-frame H3 latent [1,24,1,H,W]. Reuses a spatial copy without VAE encoding; pair with first_frame for vision."),
+                io.Latent.Input("last_latent", optional=True,
+                    tooltip="Clean single-frame H3 latent. The high-resolution master is preserved; pair with last_frame for vision."),
             ],
             outputs=[io.Custom("JR_H3_DIRECTOR_PIPE").Output(display_name="pip")],
         )
@@ -61,6 +65,8 @@ class JR_H3_DirectorPipeBuilder(io.ComfyNode):
         driving_audio=None,
         reference_videos=None,
         reference_audios=None,
+        first_latent=None,
+        last_latent=None,
     ):
         pipe = build_pipe_from_standard_inputs(
             prompt=prompt,
@@ -74,6 +80,8 @@ class JR_H3_DirectorPipeBuilder(io.ComfyNode):
             driving_audio=driving_audio,
             reference_videos=tuple((reference_videos or {}).get(f"reference_video_{i}") for i in (2, 3)),
             reference_audios=tuple((reference_audios or {}).get(f"reference_audio_{i}") for i in (2, 3)),
+            first_latent=first_latent,
+            last_latent=last_latent,
         )
         return (pipe,)
 
@@ -99,6 +107,8 @@ class JR_H3_DirectorPipeUnpack:
         "AUDIO",
         "STRING",
         "STRING",
+        "LATENT",
+        "LATENT",
     )
     RETURN_NAMES = (
         "pip",
@@ -118,10 +128,12 @@ class JR_H3_DirectorPipeUnpack:
         "driving_audio",
         "registry_json",
         "status",
+        "first_latent",
+        "last_latent",
     )
     DESCRIPTION = (
         "Passes the immutable Director PIPE through and exposes prompt stages, timeline metadata and "
-        "index-selected standard IMAGE, VIDEO and AUDIO values without mutating the input PIPE."
+        "index-selected standard IMAGE, VIDEO, AUDIO and original frame LATENT values without mutating the input PIPE."
     )
 
     @classmethod
@@ -181,6 +193,8 @@ class JR_H3_DirectorPipeUnpack:
             unpacked.driving_audio,
             unpacked.registry_json,
             unpacked.status,
+            unpacked.first_latent,
+            unpacked.last_latent,
         )
 
 

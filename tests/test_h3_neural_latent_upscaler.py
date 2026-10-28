@@ -64,7 +64,7 @@ def _assert_error(latent, expected, *, mode="scale", scale=1.5, target=2.0):
     assert expected in str(exc.value)
 
 
-def test_node_schema_is_plain_video_latent_and_size_only_controls():
+def test_node_schema_preserves_original_inputs_and_appends_optional_model():
     node = JR_MiniMaxH3NeuralLatentUpscaler()
     schema = node.INPUT_TYPES()
     assert list(schema["required"]) == ["video_latent", "resize_mode", "scale", "target_megapixels"]
@@ -72,6 +72,9 @@ def test_node_schema_is_plain_video_latent_and_size_only_controls():
     assert schema["required"]["resize_mode"][0] == ["scale", "megapixels"]
     assert schema["required"]["scale"][1]["default"] == 1.5
     assert schema["required"]["target_megapixels"][1]["default"] == 2.0
+    assert list(schema["optional"]) == ["model_name"]
+    assert schema["optional"]["model_name"][0][0] == "auto"
+    assert schema["optional"]["model_name"][1]["default"] == "auto"
     assert node.RETURN_TYPES == ("LATENT", "STRING")
     assert node.RETURN_NAMES == ("video_latent", "status")
     assert node.CATEGORY == "JR MiniMax H3/Latent"
@@ -320,7 +323,7 @@ def test_checkpoint_backend_uses_model_specific_comfy_offload(monkeypatch):
         temporal_context=1,
     )
     calls = []
-    monkeypatch.setattr(module, "_select_checkpoint", lambda _dtype: ("synthetic.safetensors", "synthetic"))
+    monkeypatch.setattr(module, "_select_checkpoint", lambda _dtype, model_name="auto": ("synthetic.safetensors", "synthetic"))
     monkeypatch.setattr(module, "_load_cached_model", lambda _path: cached)
     monkeypatch.setattr(module, "_normalization_tensors", lambda device, dtype: (torch.zeros((1, 24, 1, 1, 1)), torch.ones((1, 24, 1, 1, 1))))
     monkeypatch.setattr(module, "_run_temporally_chunked", lambda model, latent, plan, context: latent)
@@ -347,3 +350,88 @@ def test_checkpoint_backend_uses_model_specific_comfy_offload(monkeypatch):
     assert name == "synthetic.safetensors"
     assert calls[0] == ("load", [patcher], True)
     assert calls[-1] == ("unload", patcher, False, False)
+
+
+def test_model_list_filters_sorts_and_never_loads_weights(monkeypatch):
+    import ComfyUI_JR_MiniMaxH3Node.utils.h3_neural_latent_upscaler as module
+    import folder_paths
+
+    names = ["z/h3_upscaler_fp16.safetensors", "h3_upscaler_fp32.pth", "unrelated.safetensors",
+             "h3_upscaler.txt", "z/h3_upscaler_fp16.safetensors"]
+    monkeypatch.setattr(folder_paths, "get_filename_list", lambda _folder: names)
+    monkeypatch.setattr(module, "_load_cached_model", lambda *a: pytest.fail("Schema loaded weights"))
+    assert module.list_h3_upscaler_models() == ["auto", "h3_upscaler_fp32.pth", "z/h3_upscaler_fp16.safetensors"]
+    names.clear()
+    assert module.list_h3_upscaler_models() == ["auto"]
+
+
+def test_missing_model_folder_still_allows_schema(monkeypatch):
+    import ComfyUI_JR_MiniMaxH3Node.utils.h3_neural_latent_upscaler as module
+    import folder_paths
+
+    def absent(_folder):
+        raise KeyError(_folder)
+
+    monkeypatch.setattr(folder_paths, "get_filename_list", absent)
+    assert module.list_h3_upscaler_models() == ["auto"]
+    with pytest.raises(H3NeuralLatentUpscalerError, match="model folder"):
+        _select_checkpoint(torch.float32)
+
+
+def test_explicit_selection_overrides_dtype_and_auto_preserves_ranking(monkeypatch):
+    import ComfyUI_JR_MiniMaxH3Node.utils.h3_neural_latent_upscaler as module
+    import folder_paths
+
+    names = ["h3_upscaler_fp32.pth", "h3_upscaler_fp32.safetensors", "sub/h3_upscaler_fp16.safetensors"]
+    monkeypatch.setattr(module, "_candidate_checkpoint_names", lambda: names)
+    monkeypatch.setattr(folder_paths, "get_folder_paths", lambda _folder: ["X:/models"])
+    monkeypatch.setattr(folder_paths, "get_full_path_or_raise", lambda _folder, name: f"X:/models/{name}")
+    assert _select_checkpoint(torch.float32)[0] == names[1]
+    assert _select_checkpoint(torch.float16)[0] == names[2]
+    assert _select_checkpoint(torch.float32, names[2]) == (names[2], f"X:/models/{names[2]}")
+
+
+@pytest.mark.parametrize("name", ["missing_h3_upscaler.safetensors", "../h3_upscaler.pth", "X:/h3_upscaler.pth", "", None])
+def test_invalid_explicit_selection_never_falls_back(monkeypatch, name):
+    import ComfyUI_JR_MiniMaxH3Node.utils.h3_neural_latent_upscaler as module
+    import folder_paths
+
+    monkeypatch.setattr(module, "_candidate_checkpoint_names", lambda: ["h3_upscaler_fp16.safetensors"])
+    monkeypatch.setattr(folder_paths, "get_full_path_or_raise", lambda *a: pytest.fail("Invalid model resolved"))
+    with pytest.raises(H3NeuralLatentUpscalerError):
+        JR_MiniMaxH3NeuralLatentUpscaler().upscale(
+            {"samples": _video(temporal=2, height=4, width=4)}, "scale", 1., 2., model_name=name,
+        )
+
+
+def test_real_synthetic_checkpoints_explicit_auto_and_legacy_node_call(tmp_path, monkeypatch):
+    import ComfyUI_JR_MiniMaxH3Node.utils.h3_neural_latent_upscaler as module
+    import folder_paths
+    from safetensors.torch import save_file
+
+    monkeypatch.setitem(folder_paths.folder_names_and_paths, module.MODEL_FOLDER, ([str(tmp_path)], {".safetensors"}))
+    monkeypatch.setattr(folder_paths, "filename_list_cache", {})
+    monkeypatch.setattr(module, "_MODEL_CACHE", {})
+    names = ["h3_upscaler_fp32.safetensors", "h3_upscaler_other.safetensors"]
+    for seed, name in enumerate(names):
+        torch.manual_seed(seed)
+        save_file(_tiny_network().state_dict(), str(tmp_path / name))
+    latent = {"samples": torch.randn(1, 24, 2, 4, 4), "metadata": object()}
+    before = latent["samples"].clone()
+    node = JR_MiniMaxH3NeuralLatentUpscaler()
+    explicit, status = node.upscale(latent, "scale", 1.5, 2., model_name=names[0])
+    legacy, auto_status = node.upscale(latent, "scale", 1.5, 2.)
+    other, other_status = node.upscale(latent, "scale", 1.5, 2., model_name=names[1])
+    assert torch.equal(explicit["samples"], legacy["samples"])
+    assert not torch.equal(explicit["samples"], other["samples"])
+    assert explicit["samples"].shape == (1, 24, 2, 6, 6)
+    assert torch.isfinite(other["samples"]).all()
+    assert explicit["metadata"] is latent["metadata"] and torch.equal(latent["samples"], before)
+    assert f"model: {names[0]}" in status and f"model selection: {names[0]}" in status
+    assert "model selection: auto" in auto_status and f"model: {names[0]}" in auto_status
+    assert f"model: {names[1]}" in other_status
+
+    monkeypatch.setattr(module, "_load_cached_model", lambda *a: pytest.fail("Identity loaded weights"))
+    identity, status = node.upscale(latent, "scale", 1., 2., model_name=names[1])
+    assert identity["samples"] is latent["samples"]
+    assert "checkpoint not loaded" in status and f"model selection: {names[1]}" in status

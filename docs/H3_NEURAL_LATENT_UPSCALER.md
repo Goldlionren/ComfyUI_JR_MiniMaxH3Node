@@ -26,6 +26,20 @@ ComfyUI/models/latent_upscale_models/
 
 候选文件必须是 `.safetensors` / `.pth` / `.pt`，且文件名包含 H3 与 upscaler 标识。多文件时优先匹配输入 dtype，再优先 SafeTensors，最后按文件名确定性选择。缺少模型、签名不兼容、非 24-channel、包含未支持 attention block 或 state-dict 不完整都会 fail closed。节点不会下载模型。
 
+### 显式模型选择（2026-09-17，开发版）
+
+节点末尾新增可选 `model_name` 下拉框，默认 `auto`。原有控件顺序、LATENT 输入和输出插槽不变；旧 API 工作流不传此参数时仍按原规则自动选择。
+
+- `auto`：沿用上面的 dtype / SafeTensors 优先级。
+- 具体文件名：只加载这一份权重，不因输入 dtype 不同而换模型；输出仍恢复输入 dtype/device。支持 ComfyUI 登记模型目录下的子目录。
+- 指定文件缺失或不兼容：明确报错，不退回 auto、不退回插值。
+- `status` 的 `model:` 显示实际加载的权重名，`model selection:` 显示选择的是 auto 还是指定名称。
+- 尺寸不变时不加载权重，状态明确显示 `identity (checkpoint not loaded)`；显式选择仍会检查文件是否在可用列表中。
+
+无需额外 Loader；权重不内置、不下载、不随 JR 发布。放入模型后刷新 ComfyUI 页面/节点定义；安装此代码更新后需要重启后端。如果旧节点仍不显示新控件，重新创建该节点。模型名称变化属于原生节点输入变化，会触发重新计算；同名文件覆盖等外部变化仍建议重启后端，以清除旧权重缓存。
+
+此选择仅作用于独立的 JR Neural Latent Upscaler 节点；不会改变 Progressive Sampler / Guided 内部的默认 auto 权重选择，也不会替代高分辨率剩余去噪步骤。
+
 参考 checkpoint：`LBH-123-AI/Minimax_h3_latent_Upscaler`。其 Hugging Face 模型卡声明 Apache-2.0；checkpoint 不随本仓库分发。配套 GitHub custom-node 仓库在 2026-08-25 审计时没有 LICENSE 文件，因此 JR 没有复制或 vendor 其 Python 源码、权重、注释或 UI。模型使用者仍应自行复核当前模型页面条款。
 
 模型卡：https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler

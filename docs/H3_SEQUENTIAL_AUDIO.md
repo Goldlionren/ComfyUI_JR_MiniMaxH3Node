@@ -2,6 +2,8 @@
 
 This workflow generates a long audio-driven MiniMax H3 video as a series of independent ComfyUI prompts. It is different from `JR_H3_TemporalChunkSampler`: the temporal sampler divides one already-created long AV latent inside one execution, while the sequential audio workflow creates, samples, decodes and commits one complete H3-sized clip per execution.
 
+Development update (2026-09-17): `JR_H3_ProgressiveGuidedSampler` now accepts this workflow's exact 12-token hard prefix plus fully locked audio, using clean low-resolution context copies and original high-resolution anchors. Connect Continuation Guide's positive/latent directly to Guided, Driver's chunk_seed to RandomNoise, and Guided's latent to the existing checkpoint. Keep the original context chain, decode, output and queue unchanged. Standard Euler and a full denoise schedule are required; other masks and sampled generation suffixes remain unsupported. See [progressive wiring, limits and A/B checklist](H3_PROGRESSIVE_SAMPLER.md). This is not a production deployment or a quality/speed guarantee.
+
 ## Recommended wiring
 
 ```text
