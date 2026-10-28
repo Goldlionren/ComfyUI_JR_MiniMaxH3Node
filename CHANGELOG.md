@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align the pinned GitHub CI runtime with the validated ComfyUI 0.39.0 production source (`926d828`). The old 0.34.0 H3 attention layout breaks TST/Streaming integration regressions; existing Unified/Sol-H3 implementations are unchanged.
+
 - Added independent experimental `JR_H3_VedaAttention`, using the installed official VEDA extension with lazy dependencies and explicit compatibility guards. Existing Unified/Sol-H3 implementations and defaults remain unchanged. See `docs/H3_VEDA_ATTENTION.md`.
 
 - Added `JR Cut Audio`: local upload/file selection, waveform and draggable playhead/range, second-based selection, audition volume, original/cut downloads and an explicit Cut lock producing standard AUDIO. Preserves decoded PCM rate/channels/gain; saved sample ranges are source-hash checked. CPU-only PyAV, bounded requests and no automatic downstream queue. See `docs/CUT_AUDIO.md`; production deployment is separate.

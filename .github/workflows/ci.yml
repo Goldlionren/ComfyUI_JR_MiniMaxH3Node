@@ -27,11 +27,11 @@ jobs:
       - name: Check out plugin
         uses: actions/checkout@v7
 
-      - name: Check out pinned ComfyUI 0.34.0 runtime source
+      - name: Check out pinned ComfyUI 0.39.0 runtime source
         uses: actions/checkout@v7
         with:
           repository: Comfy-Org/ComfyUI
-          ref: 8a33128f2f8c5585c57486c07de481241e70a39c
+          ref: 926d828e37c6f369a3cf3582887da470f7dab515
           path: .ci/ComfyUI
 
       - name: Set up Python 3.13
