@@ -1,14 +1,16 @@
 """H3 video-only regeneration using native ComfyUI sampling and JR upscaling."""
 from __future__ import annotations
 
+import logging
 import math
 
 import torch
-import torch.nn.functional as F
 
 from . import h3_acceleration_adapters as acceleration
 from .h3_av_latent_split import split_h3_av_latent
 from .h3_neural_latent_upscaler import upscale_h3_video_latent
+from .h3_regenerate_windows import VideoWindowReader, encode_window, plan_windows
+from .h3_temporal_chunk_sampler import derive_chunk_seed
 
 ATTENTION_MODES = ("inherit", "auto", "sageattn_qk_int8_pv_fp8_cuda++", "sageattn_qk_int8_pv_fp8_cuda",
                    "sageattn_qk_int8_pv_fp16_triton")
@@ -36,53 +38,21 @@ def regenerate_sigmas(denoise, steps, sigma_schedule="low_denoise_shift6"):
 
 
 class VideoOnlyNoise:
-    def __init__(self, seed):
+    def __init__(self, seed, video_start=0):
         self.seed = seed
+        self.video_start = video_start
 
     def generate_noise(self, latent):
         from comfy.nested_tensor import NestedTensor
         video, audio = latent["samples"].unbind()
-        generator = torch.Generator(device="cpu").manual_seed(self.seed)
-        return NestedTensor((torch.randn(video.shape, dtype=torch.float32, generator=generator),
-                             torch.zeros(audio.shape, dtype=torch.float32)))
-
-
-def encode_input_video(video, vae, audio_vae):
-    from comfy.nested_tensor import NestedTensor
-    from comfy_extras.nodes_minimax_h3 import _encode_ref_audio, align_frame_count
-
-    if video is None or vae is None or audio_vae is None:
-        raise ValueError("VIDEO input requires video, video VAE and audio VAE")
-    components = video.get_components()
-    images = components.images
-    fps = float(components.frame_rate)
-    if not math.isfinite(fps) or fps <= 0 or images.ndim != 4 or images.shape[0] == 0:
-        raise ValueError("VIDEO must have decoded frames and a positive frame rate")
-    count = max(1, round(len(images) * 24 / fps))
-    indices = (torch.arange(count, dtype=torch.float64) * fps / 24).floor().long().clamp(max=len(images) - 1)
-    images = images.index_select(0, indices.to(images.device))[..., :3]
-    # Keep source detail; only align the native 16x VAE / 2x DiT spatial grid.
-    height, width = (max(32, round(n / 32) * 32) for n in images.shape[1:3])
-    if images.shape[1:3] != (height, width):
-        images = F.interpolate(images.movedim(-1, 1), size=(height, width), mode="bicubic",
-                               align_corners=False).movedim(1, -1).clamp(0, 1)
-    frame_count = align_frame_count(max(5, count))
-    images = torch.cat((images, images[-1:].expand(frame_count - count, -1, -1, -1)), dim=0)
-    visual = vae.encode(images)
-    sample_rate = getattr(audio_vae, "audio_sample_rate", 32000)
-    source_audio = components.audio
-    if source_audio is None:
-        audio = {"waveform": torch.zeros(1, 2, round(frame_count / 24 * sample_rate)),
-                 "sample_rate": sample_rate}
-    else:
-        audio = dict(source_audio)
-        waveform = audio["waveform"]
-        target = round(frame_count / 24 * audio["sample_rate"])
-        audio["waveform"] = F.pad(waveform[..., :target], (0, max(0, target - waveform.shape[-1])))
-    sound, _ = _encode_ref_audio(audio_vae, audio)
-    return {"samples": NestedTensor((visual, sound)),
-            "jr_h3_regenerate_video": {"source_frames_24fps": count, "encoded_frames": frame_count,
-                                       "frame_rate": 24, "source_audio": source_audio}}
+        noise = torch.empty(video.shape, dtype=torch.float32, device="cpu")
+        generator = torch.Generator(device="cpu")
+        # Each absolute token has its own deterministic stream. Window partitioning
+        # cannot change noise in the overlap; the sampler itself always gets seed.
+        for t in range(video.shape[2]):
+            generator.manual_seed(derive_chunk_seed(self.seed, self.video_start + t))
+            noise[:, :, t] = torch.randn(noise[:, :, t].shape, generator=generator)
+        return NestedTensor((noise, torch.zeros(audio.shape, dtype=torch.float32)))
 
 
 def select_attention(model, attention):
@@ -98,58 +68,103 @@ def select_attention(model, attention):
 
 def regenerate(model, clip, source_mode, denoise, steps, seed, prompt, attention,
                resize_mode, scale, target_megapixels, upscaler_model,
-               latent=None, video=None, vae=None, audio_vae=None, sigma_schedule="low_denoise_shift6"):
+               latent=None, video=None, vae=None, audio_vae=None, sigma_schedule="low_denoise_shift6",
+               chunk_mode="off"):
+    from comfy.model_management import throw_exception_if_processing_interrupted
     from comfy.nested_tensor import NestedTensor
     from comfy.samplers import ksampler
+    from comfy.utils import ProgressBar
     from comfy_extras.nodes_custom_sampler import BasicGuider, SamplerCustomAdvanced
     from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
 
     sigmas = regenerate_sigmas(denoise, steps, sigma_schedule)
     acceleration.ensure_minimax_h3_model(model)
     selected = select_attention(model, attention)
+    if resize_mode not in ("keep", "scale", "megapixels"):
+        raise ValueError("Unknown Regenerate resize mode")
+    reader, original_audio, raw_audio, original_video = None, None, None, None
     if source_mode == "video":
         if latent is not None:
             raise ValueError("Connect only VIDEO when source_mode is video")
-        source = encode_input_video(video, vae, audio_vae)
+        if video is None or vae is None:
+            raise ValueError("VIDEO input requires video and video VAE; audio VAE is not used")
+        reader = VideoWindowReader(video)
+        raw_audio, video_t = reader.audio, reader.video_t
+        source = {"jr_h3_regenerate_video": {
+            "source_frames_24fps": reader.count, "encoded_frames": (video_t - 2) // 5 * 17 + 5,
+            "frame_rate": 24}}
     elif source_mode == "H3 latent":
         if video is not None:
             raise ValueError("Connect only H3 LATENT when source_mode is H3 latent")
+        if latent is None:
+            raise ValueError("Connect an H3 LATENT")
         source = latent
+        if isinstance(source["samples"], NestedTensor):
+            video_latent, audio_latent = split_h3_av_latent(source)
+            original_video, original_audio = video_latent["samples"], audio_latent["samples"]
+        else:
+            original_video = source["samples"]
+        if original_video.ndim != 5 or original_video.shape[1] != 24:
+            raise ValueError("H3 video latent must have shape [1,24,T,H,W]")
+        if original_video.shape[0] != 1 or any(n % 2 for n in original_video.shape[-2:]):
+            raise ValueError("H3 requires batch 1 and even latent spatial dimensions")
+        video_t = original_video.shape[2]
     else:
         raise ValueError("Unknown Regenerate source mode")
-    video_latent, audio_latent = split_h3_av_latent(source)
-    original_video, original_audio = video_latent["samples"], audio_latent["samples"]
-    if original_video.shape[0] != 1:
-        raise ValueError("Native H3 regeneration currently requires batch size 1")
-    if any(n % 2 for n in original_video.shape[-2:]):
-        raise ValueError("H3 video latent spatial dimensions must be even (32-pixel image grid)")
-    if resize_mode == "keep":
-        upscaled, upscale_status = video_latent, "Input latent size retained"
-    elif resize_mode in ("scale", "megapixels"):
-        upscaled, upscale_status = upscale_h3_video_latent(
-            video_latent, resize_mode, scale, target_megapixels, model_name=upscaler_model)
-    else:
-        raise ValueError("Unknown Regenerate resize mode")
-    visual = upscaled["samples"]
-    # Preserve every upstream FFN/attention patch. SigmaShift only clones the
-    # patcher and updates the native AV schedule, just like the existing flow.
+    windows = plan_windows(video_t, chunk_mode)
+    # SigmaShift preserves upstream LoRA curves, Unified FFN and attention patches.
     selected = MiniMaxH3SigmaShift.execute(selected, 6., 3.)[0]
     positive = clip.encode_from_tokens_scheduled(clip.tokenize(prompt))
-    working = dict(source)
-    working["samples"] = NestedTensor((visual, original_audio))
-    working["noise_mask"] = NestedTensor((torch.ones_like(visual), torch.zeros_like(original_audio)))
     guider = BasicGuider.execute(selected, positive)[0]
-    sampled = SamplerCustomAdvanced.execute(VideoOnlyNoise(seed), guider, ksampler("euler"), sigmas, working)[0]
+    progress = ProgressBar(len(windows))
+    output = None
+    upscale_status = "Input latent size retained"
+    for index, window in enumerate(windows):
+        throw_exception_if_processing_interrupted()
+        logging.info("H3 Regenerate window %d/%d: tokens [%d, %d), fixed seed %d, locked prefix %d",
+                     index + 1, len(windows), window.start, window.end, seed, window.prefix)
+        if reader is not None:
+            visual = encode_window(reader, window, vae)
+        else:
+            visual = original_video[:, :, window.start:window.end].detach().cpu().clone()
+        if visual.shape[2] != window.end - window.start:
+            raise ValueError("Video VAE returned an unexpected H3 temporal grid")
+        if resize_mode != "keep":
+            upscaled, upscale_status = upscale_h3_video_latent(
+                {"samples": visual}, resize_mode, scale, target_megapixels, model_name=upscaler_model)
+            visual = upscaled["samples"].cpu()
+            del upscaled
+        if output is None:
+            output = torch.empty((1, 24, video_t, *visual.shape[-2:]), dtype=visual.dtype, device="cpu")
+        mask = torch.ones_like(visual)
+        if window.prefix:
+            visual[:, :, :window.prefix] = output[:, :, window.start:window.start + window.prefix]
+            mask[:, :, :window.prefix] = 0
+        # Native H3 is a joint AV model. Bounded neutral audio tokens satisfy its
+        # interface; source audio is NEVER supplied, sliced, encoded or sampled.
+        dummy_audio = torch.zeros((1, 32, 2, round(window.frames * 40 / 24)), dtype=visual.dtype)
+        working = {"samples": NestedTensor((visual, dummy_audio)),
+                   "noise_mask": NestedTensor((mask, torch.zeros_like(dummy_audio)))}
+        sampled = SamplerCustomAdvanced.execute(
+            VideoOnlyNoise(seed, window.start), guider, ksampler("euler"), sigmas, working)[0]
+        refined = sampled["samples"].unbind()[0]
+        keep = window.start + window.prefix
+        output[:, :, keep:window.end].copy_(refined[:, :, window.prefix:].detach().cpu())
+        del refined, sampled, working, mask, visual, dummy_audio
+        progress.update_absolute(index + 1)
     result = dict(source)
-    output_video = sampled["samples"].unbind()[0]
-    # Native inpainting freezes audio throughout denoising. Reattach the exact
-    # input tensor as well: normalization/casting must not drift its output bits.
-    result["samples"] = NestedTensor((output_video, original_audio))
-    result["noise_mask"] = working["noise_mask"]
+    # Old masks/batch indices refer to source dimensions. Do not propagate them.
+    result.pop("noise_mask", None)
+    result.pop("batch_index", None)
+    result["samples"] = NestedTensor((output, original_audio)) if original_audio is not None else output
+    result["jr_h3_regenerate_windows"] = {
+        "mode": chunk_mode, "count": len(windows), "seed": seed,
+        "max_window_frames": max(w.frames for w in windows), "overlap_frames": 39 if len(windows) > 1 else 0}
     marker = selected.model_options.get("jr_h3_regenerate_lora")
     status = (f"H3 Regenerate: Euler / CFG 1 / {steps} steps / start sigma {sigmas[0].item():.6f}\n"
               f"schedule: {sigma_schedule} (release_original ignores denoise)\n"
               f"sigmas: {sigmas.tolist()}\nattention: {attention}; upstream FFN preserved\n"
               f"Regenerate adapter: {marker or 'not loaded by JR loader; verify input MODEL'}\n"
-              f"audio: exact original tensor, locked at every step\n{upscale_status}")
-    return result, status
+              f"windows: {len(windows)} / {chunk_mode}; fixed seed {seed}; global-coordinate noise; hard video prefix\n"
+              f"audio: original bypass, never passed to sampler\n{upscale_status}")
+    return result, status, raw_audio

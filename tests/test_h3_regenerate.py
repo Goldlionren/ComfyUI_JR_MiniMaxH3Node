@@ -112,8 +112,8 @@ def test_real_h3_audio_locked_each_step_and_patcher_isolation(monkeypatch, dtype
     model.add_object_patch("diffusion_model.blocks.0.mlp.forward", chunked_ffn)
     handle = dit.audio_patch_proj.register_forward_pre_hook(
         lambda module, args: captured.append(args[0].detach().cpu().clone()))
-    result, status = regen.regenerate(**args)
-    repeated, _ = regen.regenerate(**args)
+    result, status, bypass = regen.regenerate(**args)
+    repeated, _, _ = regen.regenerate(**args)
     handle.remove()
     assert len(captured) == 6 and ffn_calls
     # _forward sees normalized clean audio, not a denoised/re-noised audio stream.
@@ -124,7 +124,7 @@ def test_real_h3_audio_locked_each_step_and_patcher_isolation(monkeypatch, dtype
     assert torch.equal(result["samples"].unbind()[0], repeated["samples"].unbind()[0])
     assert not torch.equal(result["samples"].unbind()[0], before_video)
     assert result["metadata"] is args["latent"]["metadata"]
-    assert "locked at every step" in status
+    assert "never passed to sampler" in status and bypass is None
     context = model.object_patches["diffusion_model.time_embedder.forward"].context
     assert context.coords is None
     model.unpatch_model()
@@ -142,21 +142,6 @@ def test_sage_selection_is_explicit_and_preserves_inherit(monkeypatch):
     model.model_options["transformer_options"] = {}
     regen.select_attention(model, "sageattn_qk_int8_pv_fp8_cuda++")
     assert calls == [{"sage_attention": "sageattn_qk_int8_pv_fp8_cuda++", "allow_compile": False}]
-
-
-def test_video_input_encodes_audio_once_and_resamples_frames():
-    calls = []
-    video = SimpleNamespace(get_components=lambda: SimpleNamespace(
-        images=torch.rand(5, 64, 64, 3), frame_rate=30,
-        audio={"waveform": torch.ones(1, 2, 6000), "sample_rate": 32000}))
-    vae = SimpleNamespace(encode=lambda frames: calls.append(("video", frames.clone())) or torch.zeros(1, 24, 2, 4, 4))
-    audio_vae = SimpleNamespace(audio_sample_rate=32000,
-        encode=lambda sound: calls.append(("audio", sound.clone())) or torch.ones(1, 32, 2, 8))
-    value = regen.encode_input_video(video, vae, audio_vae)
-    assert [name for name, _ in calls] == ["video", "audio"]
-    assert calls[0][1].shape[0] == 5
-    assert value["jr_h3_regenerate_video"]["source_frames_24fps"] == 4
-    assert value["samples"].unbind()[1].shape == (1, 32, 2, 8)
 
 
 def test_original_release_schedules_are_not_generic_truncation():

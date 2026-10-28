@@ -2,7 +2,7 @@
 
 以原生 ComfyUI MODEL / ModelPatcher 接入 Open-H3-Regenerate-2K。两个节点可以独立使用：
 **JR MiniMax H3 Regenerate LoRA** 输出普通 MODEL，可直接接现有二采；
-**JR MiniMax H3 Regenerate** 接 VIDEO 或原生 H3 AV LATENT，输出 H3 AV LATENT。
+**JR MiniMax H3 Regenerate** 接 VIDEO 或原生 H3 LATENT。VIDEO 模式输出视频 LATENT + 原音频 AUDIO；AV LATENT 模式保留整条音频 latent。
 
 ## 推荐接线
 
@@ -11,18 +11,55 @@
   → JR MiniMax H3 Regenerate LoRA
   → JR Unified Acceleration（可选；Sage 2++ / FFN）
   → JR MiniMax H3 Regenerate（attention = inherit）
-  → Split AV Latent → 原生视频 / 音频 VAE Decode
+  → 视频 LATENT → 原生视频 VAE Decode → CreateVideo
+  → original_audio ────────────────────→ CreateVideo.audio
 ```
 
 使用 [完整 VIDEO 示例](../examples/JR_H3_Regenerate_Video.json)，API 版本见同名 .api.json。
-默认截取前 5 秒，并在输出端裁掉 H3 网格补帧；更改片段长度时，同时修改前后两个 Video Slice。
+默认截取最多 15 秒，按 5s 档分窗，并在输出端裁掉 H3 网格补帧；更改片段长度时，同时修改前后两个 Video Slice。
 H3 latent 模式：断开 video，改 source_mode 为 H3 latent，连接已有 AV LATENT 到 latent。
-该模式不需要 VAE 输入。它接受 ComfyUI NestedTensor 的 video [1,24,T,H,W]、
+AV 模式输出仍经过 Split AV Latent 再分别解码。该模式不需要 VAE 输入。它接受 ComfyUI NestedTensor 的 video [1,24,T,H,W]、
 audio [1,32,2,A]；不把 Diffusers 的归一化 .pt 文件当成 ComfyUI LATENT。
 
-VIDEO 模式需要 H3 video VAE 和 audio VAE。视频按时间戳采样到 24 fps，空间对齐到 32 像素，
-尾部复制末帧补齐原生 17k+5 帧网格；音频只编码一次，之后锁定。无音轨时编码等时长静音。
-视频已经是 768p 时不会主动降成 576p。分辨率 / 时长越大，显存和时间开销越大；节点没有隐式长视频分窗。
+VIDEO 模式只需要 H3 video VAE。旧 audio_vae 插口保留以便加载旧工作流，但不使用；
+请断开它并按新示例重接，VIDEO 输出不再是 AV NestedTensor。
+普通视频 LATENT 也可接 latent 输入，返回普通视频 LATENT，original_audio 为 None；
+AV 输入则返回 AV NestedTensor，音频 tensor 保持同一对象。无音轨 VIDEO 的 AUDIO 输出为 None。
+
+视频按全局帧索引以源平均帧率重采样到 24 fps，空间对齐到 32 像素，尾部复制末帧补齐
+17k+5 网格。不主动把 768p 降为 576p。文件 VIDEO 支持原生 LoadVideo / Video Slice；
+CreateVideo 的帧本来已在内存里，节点不会再次展开整条副本。
+
+## 分窗与完全音频旁路（2026-10-29）
+
+面板追加 chunk_mode，已有控件顺序和前两个输出槽号保持不变。新节点默认 5s，
+未传入此选项的旧 API 请求仍按 off 执行。
+
+| chunk_mode | 单窗上限 | 后续窗口锁定的前缀 |
+|---|---|---|
+| 5s | 124 帧，约 5.167 秒 | 39 帧 / 12 个 video tokens |
+| 8s | 192 帧，8 秒 | 同上 |
+| 10s | 243 帧，10.125 秒 | 同上 |
+| off | 整条输入 | 无 |
+
+时间长度必须满足 H3 原生压缩网格；最后一窗可短于上限。窗口顺序执行，
+逐窗读取、视频 VAE 编码、神经放大、采样。结果写入预分配 CPU latent，释放每窗的中间张量，
+不会先把长视频全部解码或编码再切段。整个过程不创建临时视频、文件缓存或新依赖。
+
+所有窗口给原生采样器的 seed 固定不变。噪声按“固定 seed + 绝对 video token 索引”
+确定，因此同一个重叠位置不会随分窗重新随机；后续窗使用上一窗已重建的末尾 12 tokens，
+以 noise_mask=0 锁住，并且只提交新区域，避免重复、漏帧或反复覆盖已完成前缀。
+相比旧版本，噪声布局和音频条件均有变化，不能期待相同 seed 重现旧版本像素。
+
+原音频不进入任何窗口。文件音轨仅一次解码成原采样率、原声道的 AUDIO；已存在的 AUDIO
+直接返回原对象，不编码音频 latent、不按窗口切片。AV 输入的整条音频 latent 原样挂回。
+原生 H3 联合模型内部仍需要 AV 接口，因此每窗只配等长的零音频占位 latent，并锁定其 mask；
+占位音频被丢弃，不是对原音频做采样。最终 MP4 是否重编码音轨由下游合成节点决定。
+
+固定噪声和硬前缀可减少接缝，但窗口上下文不同，不能保证完全无色差或与整段采样一致。
+默认不做自动逐段色彩校正，以免改变真实光照变化。较短窗主要降低峰值内存和显存；
+重叠和模型切换有开销，不能保证必然加速。最终完整视频 latent 仍驻留 CPU，
+下游 VAE 解码/合成若展开整条 2K 视频，仍可能消耗较多内存，建议使用 VAEDecodeTiled。
 
 ## LoRA 完整性与转换
 
@@ -55,8 +92,8 @@ python tools/convert_h3_regenerate_lora.py --lora <原发布包>/lora/open_h3_re
 ## 节点内置 sigma，不接外部调度器
 
 采样固定原生 Euler、CFG=1、video shift=6、audio shift=3。
-音频通过原生 H3 每步 mask / audio-scale 校正作为 clean 条件，不参与随机加噪和去噪；
-最终重新挂回输入的**同一个音频 tensor**，避免归一化回转或 dtype 转换改变输出值。
+原音频完全旁路；内部零音频占位通过每步 mask 锁定，不作为输出。
+AV 输入最终重新挂回**同一个音频 tensor**，避免归一化回转或 dtype 转换改变输出值。
 原视频流整体重建，旧 video noise_mask 不作为局部修复区域继承。
 
 | sigma_schedule | 行为 |
@@ -91,7 +128,22 @@ FFN 由 Unified 控制，可按自己的显存调整。稀疏 attention 的速�
 keep 可接已经放大的 latent；scale / megapixels 内部先神经放大再二采。
 2048² 选 4.194304 MP；2560×1440 选 3.6864 MP（依输入比例及原有网格对齐规则）。
 
-## 验证记录（2026-10-28）
+## 分窗版验证记录（2026-10-29）
+
+- 全仓回归 1262 passed / 9 skipped；随后补充 29.97 fps 逐窗帧一致性用例通过。
+  新版覆盖完整范围、前缀锁定、全局噪声分区不变、固定种子复现、音频对象保留、
+  44.1 kHz 立体声 PCM 逐值旁路和逐窗编码上限。38 节点注册与 36 工作流结构检查通过。
+- 生产 Python 3.13 / Torch 2.11 / ComfyUI 0.43 运行时执行三个真实原生 H3 微型模型窗口通过，
+  并实际读取指定 MP4 的两个窗口。API 示例通过原生 prompt 校验。
+- RTX 5090：指定样片 800×800 / 175 帧 / 24 fps → 2048×2048 / 175 帧 / 24 fps。
+  完整 BF16 Ref2VA、208 组主投影 + 50 个 Sharp 分支、现有 Sage 2++ / Unified FFN，
+  3 步 / 0.30 / seed 1766580932 / 5s 档，共两个窗口（124 帧、90 帧；重叠 39 帧）。
+- 输出原音频 AUDIO 与源解码 PCM 逐值相等，MP4 有音轨；最终合成会重新编码音轨。
+  窗口交界附近检查未见明显全局色彩跳变，不能外推为所有素材都无接缝。
+- 本次总耗时约 836 秒；含加载与逐窗重建约 739 秒。重建阶段 PyTorch peak allocated
+  26.93 GiB、reserved 27.86 GiB。没有同素材整段 A/B 时间与内存基线，不能据此声称加速倍率。
+
+## 上一版整段实现验证记录（2026-10-28）
 
 - 开发源码先合并 GitHub main 7849887；既有未提交内容保存到本地 backup/pre-regenerate-20261028。
 - 隔离运行时使用 JR 最新 CI 的 ComfyUI 0.39.0，926d828。

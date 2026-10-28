@@ -1,6 +1,6 @@
 {
   "last_node_id": 16,
-  "last_link_id": 17,
+  "last_link_id": 13,
   "nodes": [
     {
       "id": 1,
@@ -194,7 +194,7 @@
           "type": "VAE",
           "links": [
             7,
-            11
+            9
           ],
           "slot_index": 0
         }
@@ -204,39 +204,6 @@
       },
       "widgets_values": [
         "minimax_h3_video_vae_fp16.safetensors"
-      ]
-    },
-    {
-      "id": 6,
-      "type": "VAELoader",
-      "pos": [
-        0,
-        550
-      ],
-      "size": [
-        370,
-        250
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "VAE",
-          "type": "VAE",
-          "links": [
-            8,
-            13
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "VAELoader"
-      },
-      "widgets_values": [
-        "minimax_h3_audio_vae_fp32.safetensors"
       ]
     },
     {
@@ -311,7 +278,7 @@
       },
       "widgets_values": [
         0.0,
-        5.0,
+        15.0,
         false
       ]
     },
@@ -358,15 +325,15 @@
         {
           "name": "audio_vae",
           "type": "VAE",
-          "link": 8
+          "link": null
         }
       ],
       "outputs": [
         {
-          "name": "h3_av_latent",
+          "name": "h3_latent",
           "type": "LATENT",
           "links": [
-            9
+            8
           ],
           "slot_index": 0
         },
@@ -375,6 +342,14 @@
           "type": "STRING",
           "links": [],
           "slot_index": 1
+        },
+        {
+          "name": "original_audio",
+          "type": "AUDIO",
+          "links": [
+            11
+          ],
+          "slot_index": 2
         }
       ],
       "properties": {
@@ -391,52 +366,9 @@
         "megapixels",
         2.0,
         4.194304,
-        "minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors"
+        "auto",
+        "5s"
       ]
-    },
-    {
-      "id": 10,
-      "type": "JR_H3_SplitAVLatent",
-      "pos": [
-        1700,
-        100
-      ],
-      "size": [
-        370,
-        250
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "av_latent",
-          "type": "LATENT",
-          "link": 9
-        }
-      ],
-      "outputs": [
-        {
-          "name": "video_latent",
-          "type": "LATENT",
-          "links": [
-            10
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "audio_latent",
-          "type": "LATENT",
-          "links": [
-            12
-          ],
-          "slot_index": 1
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "JR_H3_SplitAVLatent"
-      },
-      "widgets_values": []
     },
     {
       "id": 11,
@@ -456,12 +388,12 @@
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 10
+          "link": 8
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 11
+          "link": 9
         }
       ],
       "outputs": [
@@ -469,7 +401,7 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            14
+            10
           ],
           "slot_index": 0
         }
@@ -483,47 +415,6 @@
         32,
         8
       ]
-    },
-    {
-      "id": 12,
-      "type": "VAEDecodeAudio",
-      "pos": [
-        2100,
-        450
-      ],
-      "size": [
-        370,
-        250
-      ],
-      "flags": {},
-      "order": 11,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "samples",
-          "type": "LATENT",
-          "link": 12
-        },
-        {
-          "name": "vae",
-          "type": "VAE",
-          "link": 13
-        }
-      ],
-      "outputs": [
-        {
-          "name": "AUDIO",
-          "type": "AUDIO",
-          "links": [
-            15
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "VAEDecodeAudio"
-      },
-      "widgets_values": []
     },
     {
       "id": 13,
@@ -543,12 +434,12 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 14
+          "link": 10
         },
         {
           "name": "audio",
           "type": "AUDIO",
-          "link": 15
+          "link": 11
         },
         {
           "name": "bit_depth",
@@ -571,7 +462,7 @@
           "name": "VIDEO",
           "type": "VIDEO",
           "links": [
-            16
+            12
           ],
           "slot_index": 0
         }
@@ -601,7 +492,7 @@
         {
           "name": "video",
           "type": "VIDEO",
-          "link": 16
+          "link": 12
         }
       ],
       "outputs": [
@@ -609,7 +500,7 @@
           "name": "VIDEO",
           "type": "VIDEO",
           "links": [
-            17
+            13
           ],
           "slot_index": 0
         }
@@ -619,7 +510,7 @@
       },
       "widgets_values": [
         0.0,
-        5.0,
+        15.0,
         false
       ]
     },
@@ -641,7 +532,7 @@
         {
           "name": "video",
           "type": "VIDEO",
-          "link": 17
+          "link": 13
         }
       ],
       "outputs": [
@@ -679,7 +570,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "先测试前 5 秒。MODEL 顺序：BF16 H3 → Regenerate LoRA → Unified → Regenerate。\n不要再叠加 Turbo / Sharp。默认 3 步、0.30、内置 shift-6；release_original 会忽略 denoise 并使用作者原始 2/3 步。\n切换 H3 latent 时断开 video，连接已有 H3 AV LATENT 到 latent。音频 latent 锁定并原样返回。\n2K 方形用 4.194304 MP；2560×1440 用 3.6864 MP。32GB 卡建议 FFN 32 chunks。\n最终 Video Slice 仅裁掉 H3 帧网格补帧；需要更长测试时同时调整前后两个 duration。"
+        "示例截取最多 15 秒，按 5s 档分窗。MODEL 顺序：BF16 H3 → Regenerate LoRA → Unified → Regenerate。\n不要再叠加 Turbo / Sharp。默认 3 步、0.30、内置 shift-6；release_original 会忽略 denoise 并使用作者原始 2/3 步。\n切换 H3 latent 时断开 video，连接已有 H3 AV LATENT 到 latent。音频 latent 整条旁路并原样返回；AV 模式仍需 Split AV Latent。\n2K 方形用 4.194304 MP；2560×1440 用 3.6864 MP。32GB 卡建议 FFN 32 chunks。\n最终 Video Slice 仅裁掉 H3 帧网格补帧；需要更长测试时同时调整前后两个 duration。VIDEO 模式 latent 直连视频 VAE Decode，original_audio 直连 CreateVideo；不再连接音频 VAE。"
       ]
     }
   ],
@@ -742,54 +633,22 @@
     ],
     [
       8,
-      6,
+      9,
       0,
+      11,
+      0,
+      "LATENT"
+    ],
+    [
       9,
       5,
-      "VAE"
-    ],
-    [
-      9,
-      9,
-      0,
-      10,
-      0,
-      "LATENT"
-    ],
-    [
-      10,
-      10,
-      0,
-      11,
-      0,
-      "LATENT"
-    ],
-    [
-      11,
-      5,
       0,
       11,
       1,
       "VAE"
     ],
     [
-      12,
       10,
-      1,
-      12,
-      0,
-      "LATENT"
-    ],
-    [
-      13,
-      6,
-      0,
-      12,
-      1,
-      "VAE"
-    ],
-    [
-      14,
       11,
       0,
       13,
@@ -797,15 +656,15 @@
       "IMAGE"
     ],
     [
-      15,
-      12,
-      0,
+      11,
+      9,
+      2,
       13,
       1,
       "AUDIO"
     ],
     [
-      16,
+      12,
       13,
       0,
       14,
@@ -813,7 +672,7 @@
       "VIDEO"
     ],
     [
-      17,
+      13,
       14,
       0,
       15,

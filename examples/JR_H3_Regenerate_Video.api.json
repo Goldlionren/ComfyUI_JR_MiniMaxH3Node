@@ -60,12 +60,6 @@
       "vae_name": "minimax_h3_video_vae_fp16.safetensors"
     }
   },
-  "6": {
-    "class_type": "VAELoader",
-    "inputs": {
-      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
-    }
-  },
   "7": {
     "class_type": "LoadVideo",
     "inputs": {
@@ -80,7 +74,7 @@
         0
       ],
       "start_time": 0.0,
-      "duration": 5.0,
+      "duration": 15.0,
       "strict_duration": false
     }
   },
@@ -106,34 +100,22 @@
         "5",
         0
       ],
-      "audio_vae": [
-        "6",
-        0
-      ],
       "source_mode": "video",
+      "chunk_mode": "5s",
       "sigma_schedule": "low_denoise_shift6",
       "steps": 3,
       "denoise": 0.3,
       "attention": "inherit",
       "resize_mode": "megapixels",
       "target_megapixels": 4.194304,
-      "upscaler_model": "minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors"
-    }
-  },
-  "10": {
-    "class_type": "JR_H3_SplitAVLatent",
-    "inputs": {
-      "av_latent": [
-        "9",
-        0
-      ]
+      "upscaler_model": "auto"
     }
   },
   "11": {
     "class_type": "VAEDecodeTiled",
     "inputs": {
       "samples": [
-        "10",
+        "9",
         0
       ],
       "vae": [
@@ -146,19 +128,6 @@
       "temporal_overlap": 8
     }
   },
-  "12": {
-    "class_type": "VAEDecodeAudio",
-    "inputs": {
-      "samples": [
-        "10",
-        1
-      ],
-      "vae": [
-        "6",
-        0
-      ]
-    }
-  },
   "13": {
     "class_type": "CreateVideo",
     "inputs": {
@@ -167,8 +136,8 @@
         0
       ],
       "audio": [
-        "12",
-        0
+        "9",
+        2
       ],
       "fps": 24.0
     }
@@ -181,7 +150,7 @@
         0
       ],
       "start_time": 0.0,
-      "duration": 5.0,
+      "duration": 15.0,
       "strict_duration": false
     }
   },

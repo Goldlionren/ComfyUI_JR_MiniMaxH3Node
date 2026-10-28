@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..utils.h3_neural_latent_upscaler import list_h3_upscaler_models
 from ..utils.h3_regenerate import ATTENTION_MODES, regenerate
 from ..utils.h3_regenerate_lora import patch_regenerate_bundle
+from ..utils.h3_regenerate_windows import CHUNK_MODES
 
 
 class JR_H3_RegenerateLoRA:
@@ -39,13 +40,13 @@ class JR_H3_RegenerateLoRA:
 class JR_H3_Regenerate:
     CATEGORY = "JR MiniMax H3/Sampling"
     FUNCTION = "sample"
-    RETURN_TYPES = ("LATENT", "STRING")
-    RETURN_NAMES = ("h3_av_latent", "status")
+    RETURN_TYPES = ("LATENT", "STRING", "AUDIO")
+    RETURN_NAMES = ("h3_latent", "status", "original_audio")
     EXPERIMENTAL = True
     DESCRIPTION = (
-        "Video-only H3 regeneration: native VIDEO + H3 VAEs or an existing H3 AV LATENT. "
+        "Video-only H3 regeneration: native VIDEO + video VAE or an existing H3 LATENT. "
         "Use MODEL from Regenerate LoRA then optional Unified. Inherit preserves Unified's Sage/FFN. "
-        "Audio is locked throughout sampling and the exact source audio latent is returned. "
+        "VIDEO returns video LATENT plus original AUDIO bypass. AV input retains the exact audio latent. "
         "VIDEO is sampled at 24 fps and end-padded to H3's frame grid; trim on decode if needed."
     )
 
@@ -71,7 +72,10 @@ class JR_H3_Regenerate:
                 "upscaler_model": (list_h3_upscaler_models(), {"default": "auto"}),
             },
             "optional": {
-                "latent": ("LATENT",), "video": ("VIDEO",), "vae": ("VAE",), "audio_vae": ("VAE",),
+                "latent": ("LATENT",), "video": ("VIDEO",), "vae": ("VAE",),
+                "audio_vae": ("VAE", {"tooltip": "Legacy socket; unused. Original audio bypasses the node."}),
+                "chunk_mode": (list(CHUNK_MODES), {"default": "5s",
+                    "tooltip": "Sequential hard-prefix windows: 5s=124 frames, 8s=192, 10s=243 at 24 fps. 39-frame overlap. Fixed seed and global noise. off processes the full clip."}),
             },
         }
 
