@@ -21,6 +21,7 @@ from .nodes.h3_neural_latent_upscaler import JR_MiniMaxH3NeuralLatentUpscaler
 from .nodes.h3_openai_prompt_optimizer import JR_H3_OpenAICompatiblePromptOptimizer
 from .nodes.h3_progressive_guided_sampler import JR_H3_ProgressiveGuidedSampler
 from .nodes.h3_progressive_sampler import JR_H3_ProgressiveSampler
+from .nodes.h3_regenerate import JR_H3_Regenerate, JR_H3_RegenerateLoRA
 from .nodes.h3_sequential_audio import (
     JR_H3_SequentialAudioChunkDriver,
     JR_H3_SequentialContinuationGuide,
@@ -49,6 +50,8 @@ register_director_media_routes()
 register_cut_audio_routes()
 
 NODE_CLASS_MAPPINGS = {
+    "JR_H3_Regenerate": JR_H3_Regenerate,
+    "JR_H3_RegenerateLoRA": JR_H3_RegenerateLoRA,
     "JR_H3ToLTXLatentAdapter": JR_H3ToLTXLatentAdapter,
     "JR_H3LTXRefineSetup": JR_H3LTXRefineSetup,
     "JR_H3LTXFinishMedia": JR_H3LTXFinishMedia,
@@ -89,6 +92,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "JR_H3_Regenerate": "JR MiniMax H3 Regenerate",
+    "JR_H3_RegenerateLoRA": "JR MiniMax H3 Regenerate LoRA",
     "JR_H3ToLTXLatentAdapter": "JR H3 → LTX Latent Adapter (Experimental)",
     "JR_H3LTXRefineSetup": "JR H3 → LTX Refine Setup (Experimental)",
     "JR_H3LTXFinishMedia": "JR H3 → LTX Finish Media (Experimental)",

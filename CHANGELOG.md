@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add JR H3 Regenerate and Regenerate LoRA: complete Refiner/Turbo/Sharp conversion, all 50 curve branches, native audio-locked video refinement, internal low-denoise and original-release sigma schedules, and existing Unified FFN/Sage delegation. See docs/H3_REGENERATE.md.
+
 - Align the pinned GitHub CI runtime with the validated ComfyUI 0.39.0 production source (`926d828`). The old 0.34.0 H3 attention layout breaks TST/Streaming integration regressions; existing Unified/Sol-H3 implementations are unchanged.
 
 - Added independent experimental `JR_H3_VedaAttention`, using the installed official VEDA extension with lazy dependencies and explicit compatibility guards. Existing Unified/Sol-H3 implementations and defaults remain unchanged. See `docs/H3_VEDA_ATTENTION.md`.

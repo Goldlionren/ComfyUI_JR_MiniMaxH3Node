@@ -2,6 +2,7 @@ import importlib
 import sys
 
 EXPECTED = {
+    "JR_H3_Regenerate", "JR_H3_RegenerateLoRA",
     "JR_H3_VedaAttention",
     "JR_LTXBridgeTextEncoderLoader",
     "JR_H3ToLTXLatentAdapter", "JR_H3LTXRefineSetup", "JR_H3LTXFinishMedia",

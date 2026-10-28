@@ -1,5 +1,7 @@
 # ComfyUI JR MiniMax H3 Node
 
+新增实验性 [H3 Regenerate：完整 LoRA、视频／latent 重建、内置 sigma、音频锁定](docs/H3_REGENERATE.md)。
+
 面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 36 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
 当前包版本：`0.20.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
