@@ -1,12 +1,84 @@
 # ComfyUI JR MiniMax H3 Node
 
-新增实验性 [H3 Regenerate：完整 LoRA、视频／latent 重建、内置 sigma、音频旁路](docs/H3_REGENERATE.md)。
-
-Regenerate 现支持 5s / 8s / 10s 硬前缀分窗，固定全局噪声，VIDEO 的原音频 AUDIO 完全旁路。旧 VIDEO 工作流请按 [更新接线](docs/H3_REGENERATE.md) 连接第三个输出。
-
-面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 38 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
+面向 MiniMax H3 工作流的 ComfyUI 自定义节点套件。当前版本注册 38 个 V1 Python 节点，覆盖混合模型加载、多模态导演时间线、标准媒体与 Director PIPE 互转、H3 提示词生成与校验、人工审核、原生 H3 conditioning、AV latent 构建与拆分、音频驱动 latent 注入与锁定、H3 neural latent 空间放大、顺序时间分块采样、实验性渐进分辨率采样、Regenerate 视频重建与分窗放大、模型加速、实验性缓存、分辨率规划、RTX 后处理、视频编码和末帧续接。
 
 当前包版本：`0.20.0`。请以 Git 提交和 [CHANGELOG.md](CHANGELOG.md) 为准。
+
+## 新功能：H3 Regenerate 视频重建与分窗放大（2026-10-29）
+
+新增实验性 Regenerate 流程，通过两个节点将 Open-H3-Regenerate-2K 接入原生 ComfyUI 工作流：
+
+- **JR MiniMax H3 Regenerate LoRA**：加载完整的 Refiner / Turbo / Sharp 主适配器，以及全部 **50 个 Sharp 时间曲线分支**。输出标准 MODEL，可接 Regenerate 或其他兼容二采流程。
+- **JR MiniMax H3 Regenerate**：接原生 VIDEO、H3 视频 LATENT 或 H3 AV LATENT，进行神经 latent 放大与低降噪重建；支持逐窗处理长视频，原音频完全旁路。
+
+先导入 [VIDEO 示例工作流](examples/JR_H3_Regenerate_Video.json)；自动化调用可参考 [API 示例](examples/JR_H3_Regenerate_Video.api.json)。
+示例最多截取前 15 秒，使用 5s 分窗；需要更长视频时，同时修改输入端与输出端 Video Slice 的时长。
+
+### 模型与参数
+
+使用完整 time-embedding 的 **BF16 H3 底模**；已验证 Ref2VA BF16。不将 pruned INT8 / curve-form 底模列为兼容配置。
+VIDEO 模式需要 H3 视频 VAE 和匹配的 H3 文本编码器；选择放大时，还需已安装的 H3 neural latent upscaler。
+模型不随节点分发，也不会自动下载。
+
+Regenerate 权重必须按 [转换说明](docs/H3_REGENERATE.md#lora-完整性与转换) 转成完整 ComfyUI bundle，放入 `models/loras`，再用 **JR Regenerate LoRA** 加载。
+普通 LoRA Loader 不会执行额外的 Sharp 曲线；不要再叠加 Turbo 或 Sharp LoRA。
+
+| 参数 | 起步设置与用途 |
+| --- | --- |
+| `steps` / `denoise` | 建议先试 **3 步 / 0.30**；降噪范围 0.15–0.35，较低值减少重绘。 |
+| `seed` | 全部窗口使用固定采样种子；重叠位置的噪声按绝对时间索引保持一致。 |
+| `prompt` | 可编辑画面描述，默认强调保留运动、构图、颜色和细节。 |
+| `attention` | 上游有 Unified 时选 **inherit**，沿用其 attention / FFN 配置；SageAttention 2++ 在 Unified 中选择。 |
+| `resize_mode` | `keep` 保持尺寸；`scale` 按倍数放大；`megapixels` 按目标像素量放大。2048² 使用 4.194304 MP。 |
+| `upscaler_model` | 默认 `auto`，选择现有 H3 放大模型；也可指定已安装的 checkpoint。 |
+| `sigma_schedule` | 默认 `low_denoise_shift6`，节点内置 Euler / CFG 1 路线；`release_original` 使用作者固定的 2／3 步 sigma，**忽略 denoise**。 |
+
+这些起步值来自当前素材测试，不是所有输入的画质保证。完整模型条件、sigma 数值和转换细节见 [Regenerate 文档](docs/H3_REGENERATE.md)。
+
+### 分窗降低单次处理规模
+
+`chunk_mode` 可选 `5s / 8s / 10s / off`，新节点默认 **5s**。窗口长度对齐 H3 原生时间网格：
+
+| 档位 | 单窗上限（24 fps） | 后续窗口锁定前缀 |
+| --- | --- | --- |
+| 5s | 124 帧，约 5.167 秒 | 39 帧 / 12 个 video tokens |
+| 8s | 192 帧，8 秒 | 同上 |
+| 10s | 243 帧，10.125 秒 | 同上 |
+| off | 整条视频 | 无 |
+
+文件 VIDEO 逐窗读取、VAE 编码、放大和采样，不先展开整条视频再切段。
+后续窗锁定上一窗末尾的已重建 latent，只提交新区域；固定全局噪声，减少窗口间的随机跳变。
+最后一窗可以短于上限，输出不会重复拼入重叠帧。
+
+分窗主要控制重建阶段的峰值占用。重叠计算有额外开销，不保证必然加速或完全无接缝。
+最终完整 latent 保留在 CPU；下游解码、合成仍可能占用较多内存，建议使用 `VAEDecodeTiled`。
+
+### VIDEO 接线与音频旁路
+
+```text
+BF16 H3 MODEL → JR Regenerate LoRA → Unified（可选）→ JR Regenerate.model
+H3 CLIP ─────────────────────────────────────────→ JR Regenerate.clip
+LoadVideo / Video Slice ─────────────────────────→ JR Regenerate.video
+H3 视频 VAE ────────────────────────────────────→ JR Regenerate.vae
+
+JR Regenerate.h3_latent → VAEDecodeTiled → CreateVideo.images
+H3 视频 VAE ─────────────→ VAEDecodeTiled.vae
+JR Regenerate.original_audio ────────────→ CreateVideo.audio
+                                          fps = 24 → 裁掉尾部补帧 → SaveVideo
+```
+
+**旧 VIDEO 工作流需要重新接线**：`source_mode=video` 时，第一个输出现在是纯视频 LATENT，
+直接接视频 VAE 解码；第三个输出 `original_audio` 直接接合成节点。不再接 Split AV Latent 或音频 VAE。
+原音轨只解码一次为原采样率、原声道 AUDIO，不参与窗口切割、音频 VAE 编码或重建。
+无音轨时该输出为 None；最终 MP4 的音频编码由下游合成节点决定。
+
+`source_mode=H3 latent` 时，断开 video 并连接 latent：
+AV LATENT 输入保留整条音频 latent 的原对象，输出仍可接 Split AV Latent；
+纯视频 LATENT 输入返回纯视频 LATENT。这两种输入模式的第三个 AUDIO 输出均为 None。
+
+已在 RTX 5090 32GB 上验证完整适配器 + Sage 2++ / Unified FFN 的两个窗口重建：
+800×800 / 175 帧输入 → 2048×2048 / 175 帧输出，原音频旁路逐值校验通过。
+具体测试范围、显存数据和限制见 [验证记录](docs/H3_REGENERATE.md#分窗版验证记录2026-10-29)。
 
 本地第二阶段实验：Unified 新增默认关闭的 `enable_tst` / `tst_strength`，在视频 Q 预变换后继续交给 Sol/Sage；见 [TST 测试说明](docs/H3_TST_EXPERIMENT.md)。[可选 VAE 兼容探测](docs/H3_VAE_COMPATIBILITY.md) 不引入 TensorRT 依赖，目前不声明 TRT Guided 已兼容。
 
@@ -47,6 +119,8 @@ Regenerate 现支持 5s / 8s / 10s 硬前缀分窗，固定全局噪声，VIDEO 
 | JR MiniMax H3 AV Latent Builder | `JR_MiniMaxH3AVLatentBuilder` | Latent | H3 AV `LATENT`、校验状态 |
 | JR MiniMax H3 Split AV Latent | `JR_H3_SplitAVLatent` | Latent | 独立 video/audio `LATENT` |
 | JR MiniMax H3 Neural Latent Upscaler | `JR_MiniMaxH3NeuralLatentUpscaler` | Latent | neural 放大后的 video `LATENT`、状态 |
+| JR MiniMax H3 Regenerate LoRA | `JR_H3_RegenerateLoRA` | Loader | 带完整主 LoRA 与 Sharp 曲线的 MODEL |
+| JR MiniMax H3 Regenerate | `JR_H3_Regenerate` | Sampling | H3 视频／AV LATENT、状态、原音频 AUDIO 旁路 |
 | JR MiniMax H3 Temporal Chunk Sampler | `JR_H3_TemporalChunkSampler` | Sampling | 分块采样后的 H3 AV `LATENT`、状态 |
 | JR MiniMax H3 Progressive Sampler (Experimental) | `JR_H3_ProgressiveSampler` | Sampling | 渐进分辨率 H3 AV `LATENT`、状态 |
 | JR MiniMax H3 Progressive Guided Sampler (Experimental) | `JR_H3_ProgressiveGuidedSampler` | Sampling | 参考图／首尾帧／锁定音频渐进采样 |
